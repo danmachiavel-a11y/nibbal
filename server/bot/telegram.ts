@@ -37,22 +37,33 @@ export class TelegramBot {
         }])
       };
 
+      // Format welcome message with HTML line breaks
+      const welcomeMessage = (botConfig?.welcomeMessage || "Welcome! Please select a service:")
+        .split('\n')
+        .join('<br>');
+
       if (botConfig?.welcomeImageUrl) {
         try {
           await ctx.replyWithPhoto(
             botConfig.welcomeImageUrl,
             {
-              caption: botConfig.welcomeMessage,
+              caption: welcomeMessage,
               reply_markup: keyboard,
               parse_mode: 'HTML'
             }
           );
         } catch (error) {
           console.error("Failed to send welcome image:", error);
-          await ctx.reply(botConfig?.welcomeMessage || "Welcome! Please select a service:", { reply_markup: keyboard });
+          await ctx.reply(welcomeMessage, { 
+            reply_markup: keyboard,
+            parse_mode: 'HTML'
+          });
         }
       } else {
-        await ctx.reply(botConfig?.welcomeMessage || "Welcome! Please select a service:", { reply_markup: keyboard });
+        await ctx.reply(welcomeMessage, { 
+          reply_markup: keyboard,
+          parse_mode: 'HTML'
+        });
       }
     });
 
@@ -65,10 +76,15 @@ export class TelegramBot {
       const category = await storage.getCategory(categoryId);
       if (!category) return;
 
+      // Format service summary with HTML line breaks
+      const serviceSummary = category.serviceSummary
+        .split('\n')
+        .join('<br>');
+
       // Service summary with detailed description and photo
       const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
       const summary = `<b>${category.name} Service</b>\n\n` +
-        category.serviceSummary + '\n\n' +
+        serviceSummary + '\n\n' +
         `<b>How it works:</b>\n` +
         `1. Answer our questions\n` +
         `2. A ticket will be created\n` +
@@ -76,7 +92,6 @@ export class TelegramBot {
         `Let's begin with some questions:`;
 
       try {
-        // Send photo with caption (combined message)
         await ctx.replyWithPhoto(
           { url: photoUrl },
           {
@@ -85,7 +100,6 @@ export class TelegramBot {
           }
         );
       } catch (error) {
-        // Fallback to text-only if photo fails
         await ctx.reply(summary, { parse_mode: 'HTML' });
       }
 

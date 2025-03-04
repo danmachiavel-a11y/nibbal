@@ -126,10 +126,11 @@ export default function Settings() {
                     <FormItem>
                       <FormLabel>Welcome Message</FormLabel>
                       <FormDescription>
-                        This message will be shown when users first start the bot
+                        This message will be shown when users first start the bot.
+                        Use new lines to format your message.
                       </FormDescription>
                       <FormControl>
-                        <Input {...field} />
+                        <Textarea {...field} rows={5} />
                       </FormControl>
                     </FormItem>
                   )}
@@ -223,10 +224,11 @@ export default function Settings() {
                     <FormItem>
                       <FormLabel>Service Summary</FormLabel>
                       <FormDescription>
-                        Description of this service shown when users select it
+                        Description of this service shown when users select it.
+                        Use new lines to format your message.
                       </FormDescription>
                       <FormControl>
-                        <Input {...field} />
+                        <Textarea {...field} rows={5} />
                       </FormControl>
                     </FormItem>
                   )}
@@ -398,10 +400,11 @@ function CategoryEditor({ category }: { category: Category }) {
                 <FormItem>
                   <FormLabel>Service Summary</FormLabel>
                   <FormDescription>
-                    Description of this service shown when users select it
+                    Description of this service shown when users select it.
+                    Use new lines to format your message.
                   </FormDescription>
                   <FormControl>
-                    <Input {...field} />
+                    <Textarea {...field} rows={5} />
                   </FormControl>
                 </FormItem>
               )}
