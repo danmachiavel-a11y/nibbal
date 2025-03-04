@@ -24,6 +24,8 @@ export const categories = pgTable("categories", {
   questions: text("questions").array().notNull(),
   serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
   serviceImageUrl: text("service_image_url"),
+  displayOrder: integer("display_order").default(0), // Lower numbers appear first
+  buttonsPerRow: integer("buttons_per_row").default(1), // Number of buttons to show per row
 });
 
 export const tickets = pgTable("tickets", {

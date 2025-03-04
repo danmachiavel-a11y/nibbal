@@ -30,14 +30,33 @@ export class TelegramBot {
       const botConfig = await storage.getBotConfig();
       const categories = await storage.getCategories();
 
-      const keyboard = {
-        inline_keyboard: categories.map(c => [{
-          text: c.name,
-          callback_data: `category_${c.id}`
-        }])
-      };
+      // Sort categories by display order
+      const sortedCategories = [...categories].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
-      // Format welcome message without HTML tags, just newlines
+      // Create keyboard with proper row layout
+      const keyboard: { text: string; callback_data: string; }[][] = [];
+      let currentRow: { text: string; callback_data: string; }[] = [];
+
+      for (const category of sortedCategories) {
+        const button = {
+          text: category.name,
+          callback_data: `category_${category.id}`
+        };
+
+        currentRow.push(button);
+
+        // Start a new row when we reach the desired buttons per row
+        if (currentRow.length >= (category.buttonsPerRow || 1)) {
+          keyboard.push([...currentRow]);
+          currentRow = [];
+        }
+      }
+
+      // Add any remaining buttons
+      if (currentRow.length > 0) {
+        keyboard.push(currentRow);
+      }
+
       const welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
 
       if (botConfig?.welcomeImageUrl) {
@@ -46,15 +65,19 @@ export class TelegramBot {
             botConfig.welcomeImageUrl,
             {
               caption: welcomeMessage,
-              reply_markup: keyboard
+              reply_markup: { inline_keyboard: keyboard }
             }
           );
         } catch (error) {
           console.error("Failed to send welcome image:", error);
-          await ctx.reply(welcomeMessage, { reply_markup: keyboard });
+          await ctx.reply(welcomeMessage, {
+            reply_markup: { inline_keyboard: keyboard }
+          });
         }
       } else {
-        await ctx.reply(welcomeMessage, { reply_markup: keyboard });
+        await ctx.reply(welcomeMessage, {
+          reply_markup: { inline_keyboard: keyboard }
+        });
       }
     });
 

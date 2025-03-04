@@ -25,6 +25,8 @@ const categorySchema = z.object({
   questions: z.string().transform(str => str.split("\n").filter(q => q.trim())),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
+  displayOrder: z.number().int().default(0),
+  buttonsPerRow: z.number().int().min(1).max(3).default(1),
 });
 
 export default function Settings() {
@@ -56,6 +58,8 @@ export default function Settings() {
       questions: "",
       serviceSummary: "Our team is ready to assist you!",
       serviceImageUrl: "",
+      displayOrder: 0,
+      buttonsPerRow: 1,
     }
   });
 
@@ -249,7 +253,42 @@ export default function Settings() {
                     </FormItem>
                   )}
                 />
-
+                <FormField
+                  control={categoryForm.control}
+                  name="displayOrder"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Display Order</FormLabel>
+                      <FormDescription>
+                        Lower numbers appear first in the list (0 is first)
+                      </FormDescription>
+                      <FormControl>
+                        <Input type="number" {...field} onChange={e => field.onChange(parseInt(e.target.value))} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={categoryForm.control}
+                  name="buttonsPerRow"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Buttons Per Row</FormLabel>
+                      <FormDescription>
+                        Number of buttons to show in each row (1-3)
+                      </FormDescription>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min="1"
+                          max="3"
+                          {...field}
+                          onChange={e => field.onChange(parseInt(e.target.value))}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
                 <Button type="submit">Create Category</Button>
               </form>
             </Form>
@@ -287,6 +326,8 @@ function CategoryEditor({ category }: { category: Category }) {
       questions: category.questions.join("\n"),
       serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
       serviceImageUrl: category.serviceImageUrl || "",
+      displayOrder: category.displayOrder || 0,
+      buttonsPerRow: category.buttonsPerRow || 1,
     }
   });
 
@@ -425,7 +466,42 @@ function CategoryEditor({ category }: { category: Category }) {
                 </FormItem>
               )}
             />
-
+            <FormField
+              control={form.control}
+              name="displayOrder"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Display Order</FormLabel>
+                  <FormDescription>
+                    Lower numbers appear first in the list (0 is first)
+                  </FormDescription>
+                  <FormControl>
+                    <Input type="number" {...field} onChange={e => field.onChange(parseInt(e.target.value))} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="buttonsPerRow"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Buttons Per Row</FormLabel>
+                  <FormDescription>
+                    Number of buttons to show in each row (1-3)
+                  </FormDescription>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="3"
+                      {...field}
+                      onChange={e => field.onChange(parseInt(e.target.value))}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
             <Button type="submit">Update Category</Button>
           </form>
         </Form>
