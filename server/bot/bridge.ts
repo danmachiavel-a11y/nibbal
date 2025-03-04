@@ -28,7 +28,6 @@ export class BridgeManager {
       log("Bots initialization completed");
     } catch (error) {
       log(`Error starting bots: ${error}`, "error");
-      // Don't throw, allow partial functionality
     }
   }
 
@@ -58,15 +57,15 @@ export class BridgeManager {
     log(`Creating ticket channel: ${channelName}`);
 
     try {
+      // Create Discord channel
       const channelId = await this.discordBot.createTicketChannel(
         category.discordCategoryId,
         channelName
       );
-
       log(`Discord channel created with ID: ${channelId}`);
 
-      // Update ticket with channel ID and send initial message
-      await storage.updateTicketStatus(ticket.id, "open", channelId);
+      // Update ticket with Discord channel ID - fixed the storage
+      await storage.updateTicketDiscordChannel(ticket.id, channelId);
 
       const updatedTicket = await storage.getTicket(ticket.id);
       log(`Updated ticket status: ${JSON.stringify(updatedTicket)}`);
@@ -84,9 +83,9 @@ export class BridgeManager {
       log(`Ticket channel created: ${channelName}`);
     } catch (error) {
       log(`Error creating Discord channel: ${error}`, "error");
-      // Don't rethrow - the ticket is still valid even without Discord channel
-      // Just update the status to indicate it's a Telegram-only ticket
-      await storage.updateTicketStatus(ticket.id, "open", null);
+      // Update the ticket status to indicate failure
+      await storage.updateTicketStatus(ticket.id, "open");
+      throw error;
     }
   }
 

@@ -22,8 +22,9 @@ export interface IStorage {
   getTicketByDiscordChannel(channelId: string): Promise<Ticket | undefined>;
   updateTicketStatus(id: number, status: string, claimedBy?: string): Promise<void>;
   updateTicketAmount(id: number, amount: number): Promise<void>;
+  updateTicketDiscordChannel(id: number, channelId: string): Promise<void>;
   getTicketsByCategory(categoryId: number): Promise<Ticket[]>;
-  
+
   // Message operations
   createMessage(message: InsertMessage): Promise<Message>;
   getTicketMessages(ticketId: number): Promise<Message[]>;
@@ -63,7 +64,13 @@ export class MemStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = this.currentIds.users++;
-    const user = { ...insertUser, id };
+    const user = { 
+      ...insertUser, 
+      id,
+      telegramId: insertUser.telegramId || null,
+      discordId: insertUser.discordId || null,
+      isBanned: insertUser.isBanned || false
+    };
     this.users.set(id, user);
     return user;
   }
@@ -92,7 +99,17 @@ export class MemStorage implements IStorage {
 
   async createTicket(insertTicket: InsertTicket): Promise<Ticket> {
     const id = this.currentIds.tickets++;
-    const ticket = { ...insertTicket, id };
+    const ticket = {
+      ...insertTicket,
+      id,
+      status: insertTicket.status || "open",
+      discordChannelId: insertTicket.discordChannelId || null,
+      claimedBy: insertTicket.claimedBy || null,
+      amount: insertTicket.amount || null,
+      answers: insertTicket.answers || null,
+      userId: insertTicket.userId || null,
+      categoryId: insertTicket.categoryId || null
+    };
     this.tickets.set(id, ticket);
     return ticket;
   }
@@ -108,7 +125,21 @@ export class MemStorage implements IStorage {
   async updateTicketStatus(id: number, status: string, claimedBy?: string): Promise<void> {
     const ticket = await this.getTicket(id);
     if (ticket) {
-      this.tickets.set(id, { ...ticket, status, claimedBy });
+      this.tickets.set(id, { 
+        ...ticket, 
+        status,
+        claimedBy: claimedBy || null
+      });
+    }
+  }
+
+  async updateTicketDiscordChannel(id: number, channelId: string): Promise<void> {
+    const ticket = await this.getTicket(id);
+    if (ticket) {
+      this.tickets.set(id, {
+        ...ticket,
+        discordChannelId: channelId
+      });
     }
   }
 
@@ -125,7 +156,12 @@ export class MemStorage implements IStorage {
 
   async createMessage(insertMessage: InsertMessage): Promise<Message> {
     const id = this.currentIds.messages++;
-    const message = { ...insertMessage, id };
+    const message = {
+      ...insertMessage,
+      id,
+      ticketId: insertMessage.ticketId || null,
+      authorId: insertMessage.authorId || null
+    };
     this.messages.set(id, message);
     return message;
   }
