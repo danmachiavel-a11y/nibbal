@@ -1,6 +1,8 @@
 import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { 
   DndContext, 
   DragEndEvent, 
@@ -13,13 +15,15 @@ import {
 } from "@dnd-kit/core";
 import { restrictToParentElement } from "@dnd-kit/modifiers";
 import type { Category } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
 
 interface SortableItemProps {
   id: number;
   category: Category;
+  onNewRowToggle: (id: number, newRow: boolean) => void;
 }
 
-function SortableItem({ id, category }: SortableItemProps) {
+function SortableItem({ id, category, onNewRowToggle }: SortableItemProps) {
   const {
     attributes,
     listeners,
@@ -48,6 +52,16 @@ function SortableItem({ id, category }: SortableItemProps) {
         <CardHeader className="p-3">
           <CardTitle className="text-sm font-medium">{category.name}</CardTitle>
         </CardHeader>
+        <CardContent>
+          <div className="flex items-center space-x-2">
+            <Switch 
+              id={`new-row-${id}`}
+              checked={category.newRow}
+              onCheckedChange={(checked) => onNewRowToggle(id, checked)}
+            />
+            <Label htmlFor={`new-row-${id}`}>Start new row</Label>
+          </div>
+        </CardContent>
       </Card>
     </div>
   );
@@ -79,15 +93,28 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
     }
   }
 
-  // Group categories into rows based on their positions
-  const rows = [];
-  let currentRow = [];
+  const handleNewRowToggle = async (id: number, newRow: boolean) => {
+    try {
+      await apiRequest("PATCH", `/api/categories/${id}`, { newRow });
+    } catch (error) {
+      console.error("Failed to update category:", error);
+    }
+  };
+
+  // Group categories into rows based on newRow property
+  const rows: Category[][] = [];
+  let currentRow: Category[] = [];
 
   for (const category of categories) {
-    currentRow.push(category);
-    if (currentRow.length === 2) { // Fixed 2 buttons per row
-      rows.push([...currentRow]);
-      currentRow = [];
+    if (category.newRow && currentRow.length > 0) {
+      rows.push(currentRow);
+      currentRow = [category];
+    } else {
+      currentRow.push(category);
+      if (currentRow.length === 2) {
+        rows.push(currentRow);
+        currentRow = [];
+      }
     }
   }
 
@@ -97,7 +124,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
 
   return (
     <div className="border rounded-lg p-4 bg-gray-50">
-      <h3 className="text-sm font-medium mb-4">Drag categories to rearrange them. They will be displayed 2 per row in Telegram.</h3>
+      <h3 className="text-sm font-medium mb-4">Drag categories to rearrange them. Toggle "Start new row" to control button layout.</h3>
       <DndContext
         sensors={sensors}
         collisionDetection={pointerWithin}
@@ -115,6 +142,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
                   key={category.id}
                   id={category.id}
                   category={category}
+                  onNewRowToggle={handleNewRowToggle}
                 />
               ))}
             </div>
@@ -123,7 +151,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       </DndContext>
 
       <div className="mt-8 p-4 border rounded bg-white">
-        <h4 className="text-sm font-medium mb-4">Telegram Preview (2 buttons per row)</h4>
+        <h4 className="text-sm font-medium mb-4">Telegram Preview</h4>
         <div className="space-y-2">
           {rows.map((row, rowIndex) => (
             <div key={rowIndex} className="flex gap-2">

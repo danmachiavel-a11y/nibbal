@@ -26,6 +26,7 @@ export const categories = pgTable("categories", {
   serviceImageUrl: text("service_image_url"),
   displayOrder: integer("display_order").default(0), // Lower numbers appear first
   buttonsPerRow: integer("buttons_per_row").default(1), // Number of buttons to show per row
+  newRow: boolean("new_row").default(false), // Whether this button starts a new row
 });
 
 export const tickets = pgTable("tickets", {

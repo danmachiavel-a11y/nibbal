@@ -43,16 +43,18 @@ export class TelegramBot {
           callback_data: `category_${category.id}`
         };
 
-        currentRow.push(button);
-
-        // Start a new row when we reach the desired buttons per row
-        if (currentRow.length >= (category.buttonsPerRow || 1)) {
+        if (category.newRow && currentRow.length > 0) {
           keyboard.push([...currentRow]);
-          currentRow = [];
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) { // Changed condition to handle buttons per row
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
         }
       }
 
-      // Add any remaining buttons
       if (currentRow.length > 0) {
         keyboard.push(currentRow);
       }
