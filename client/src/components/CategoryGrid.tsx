@@ -10,7 +10,6 @@ import {
   useSensors,
   DragOverlay,
   pointerWithin,
-  getFirstCollision
 } from "@dnd-kit/core";
 import { restrictToParentElement } from "@dnd-kit/modifiers";
 import type { Category } from "@shared/schema";
@@ -45,7 +44,7 @@ function SortableItem({ id, category }: SortableItemProps) {
       {...listeners}
       className="p-2"
     >
-      <Card className="bg-white">
+      <Card className="bg-white hover:bg-gray-50 transition-colors">
         <CardHeader className="p-3">
           <CardTitle className="text-sm font-medium">{category.name}</CardTitle>
         </CardHeader>
@@ -81,16 +80,24 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
   }
 
   // Group categories into rows based on their positions
-  const rows = categories.reduce((acc, category, index) => {
-    const rowIndex = Math.floor(index / (category.buttonsPerRow || 1));
-    if (!acc[rowIndex]) acc[rowIndex] = [];
-    acc[rowIndex].push(category);
-    return acc;
-  }, [] as Category[][]);
+  const rows = [];
+  let currentRow = [];
+
+  for (const category of categories) {
+    currentRow.push(category);
+    if (currentRow.length === 2) { // Fixed 2 buttons per row
+      rows.push([...currentRow]);
+      currentRow = [];
+    }
+  }
+
+  if (currentRow.length > 0) {
+    rows.push(currentRow);
+  }
 
   return (
     <div className="border rounded-lg p-4 bg-gray-50">
-      <h3 className="text-sm font-medium mb-4">Drag categories horizontally to group them in rows. Each row can have 1-3 buttons.</h3>
+      <h3 className="text-sm font-medium mb-4">Drag categories to rearrange them. They will be displayed 2 per row in Telegram.</h3>
       <DndContext
         sensors={sensors}
         collisionDetection={pointerWithin}
@@ -102,7 +109,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
             items={categories.map(cat => cat.id)}
             strategy={rectSortingStrategy}
           >
-            <div className="grid grid-cols-3 gap-4 min-h-[100px] bg-white p-4 rounded-lg border-2 border-dashed border-gray-200">
+            <div className="flex flex-wrap gap-4 min-h-[100px] bg-white p-4 rounded-lg border-2 border-dashed border-gray-200">
               {categories.map(category => (
                 <SortableItem
                   key={category.id}
@@ -116,12 +123,12 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       </DndContext>
 
       <div className="mt-8 p-4 border rounded bg-white">
-        <h4 className="text-sm font-medium mb-4">Telegram Preview</h4>
+        <h4 className="text-sm font-medium mb-4">Telegram Preview (2 buttons per row)</h4>
         <div className="space-y-2">
           {rows.map((row, rowIndex) => (
             <div key={rowIndex} className="flex gap-2">
               {row.map((category, index) => (
-                <button key={index} className="px-4 py-2 text-sm bg-blue-100 rounded">
+                <button key={index} className="flex-1 px-4 py-2 text-sm bg-blue-100 rounded text-center">
                   {category.name}
                 </button>
               ))}
