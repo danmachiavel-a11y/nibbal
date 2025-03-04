@@ -37,10 +37,8 @@ export class TelegramBot {
         }])
       };
 
-      // Format welcome message with HTML line breaks
-      const welcomeMessage = (botConfig?.welcomeMessage || "Welcome! Please select a service:")
-        .split('\n')
-        .join('<br>');
+      // Format welcome message without HTML tags, just newlines
+      const welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
 
       if (botConfig?.welcomeImageUrl) {
         try {
@@ -48,22 +46,15 @@ export class TelegramBot {
             botConfig.welcomeImageUrl,
             {
               caption: welcomeMessage,
-              reply_markup: keyboard,
-              parse_mode: 'HTML'
+              reply_markup: keyboard
             }
           );
         } catch (error) {
           console.error("Failed to send welcome image:", error);
-          await ctx.reply(welcomeMessage, { 
-            reply_markup: keyboard,
-            parse_mode: 'HTML'
-          });
+          await ctx.reply(welcomeMessage, { reply_markup: keyboard });
         }
       } else {
-        await ctx.reply(welcomeMessage, { 
-          reply_markup: keyboard,
-          parse_mode: 'HTML'
-        });
+        await ctx.reply(welcomeMessage, { reply_markup: keyboard });
       }
     });
 
@@ -76,16 +67,11 @@ export class TelegramBot {
       const category = await storage.getCategory(categoryId);
       if (!category) return;
 
-      // Format service summary with HTML line breaks
-      const serviceSummary = category.serviceSummary
-        .split('\n')
-        .join('<br>');
-
       // Service summary with detailed description and photo
       const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-      const summary = `<b>${category.name} Service</b>\n\n` +
-        serviceSummary + '\n\n' +
-        `<b>How it works:</b>\n` +
+      const summary = `*${category.name} Service*\n\n` +
+        `${category.serviceSummary}\n\n` +
+        `*How it works:*\n` +
         `1. Answer our questions\n` +
         `2. A ticket will be created\n` +
         `3. Our team will assist you promptly\n\n` +
@@ -96,11 +82,11 @@ export class TelegramBot {
           { url: photoUrl },
           {
             caption: summary,
-            parse_mode: 'HTML'
+            parse_mode: 'Markdown'
           }
         );
       } catch (error) {
-        await ctx.reply(summary, { parse_mode: 'HTML' });
+        await ctx.reply(summary, { parse_mode: 'Markdown' });
       }
 
       // Initialize user state
