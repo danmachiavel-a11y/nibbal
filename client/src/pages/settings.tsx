@@ -91,7 +91,21 @@ export default function Settings() {
 
   async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
     try {
-      const res = await apiRequest("POST", "/api/categories", data);
+      const submitData = {
+        name: data.name,
+        isSubmenu: data.isSubmenu,
+        // Only include these fields if it's not a submenu
+        ...(data.isSubmenu ? {} : {
+          discordRoleId: data.discordRoleId,
+          discordCategoryId: data.discordCategoryId,
+          questions: data.questions,
+          serviceSummary: data.serviceSummary,
+          serviceImageUrl: data.serviceImageUrl,
+          parentId: data.parentId
+        })
+      };
+
+      const res = await apiRequest("POST", "/api/categories", submitData);
       if (!res.ok) throw new Error("Failed to create category");
 
       toast({
