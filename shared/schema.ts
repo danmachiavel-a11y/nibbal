@@ -69,3 +69,11 @@ export type InsertCategory = z.infer<typeof insertCategorySchema>;
 export type InsertTicket = z.infer<typeof insertTicketSchema>;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
+
+// Add new type for date range filtering
+export type DateRangeFilter = {
+  startDate: Date;
+  endDate: Date;
+} | {
+  period: 'week' | 'month' | 'all';
+};

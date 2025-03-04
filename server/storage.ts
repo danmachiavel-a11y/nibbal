@@ -74,6 +74,27 @@ export interface IStorage {
     periodStart: Date;
     periodEnd: Date;
   }>>;
+  getUserStatsByDateRange(discordId: string, startDate: Date, endDate: Date): Promise<{
+    totalEarnings: number;
+    ticketCount: number;
+    categoryStats: Array<{
+      categoryId: number;
+      categoryName: string;
+      earnings: number;
+      ticketCount: number;
+    }>;
+    periodStart: Date;
+    periodEnd: Date;
+  }>;
+
+  getAllWorkerStatsByDateRange(startDate: Date, endDate: Date): Promise<Array<{
+    discordId: string;
+    username: string;
+    totalEarnings: number;
+    ticketCount: number;
+    periodStart: Date;
+    periodEnd: Date;
+  }>>;
 }
 
 export class MemStorage implements IStorage {
@@ -490,6 +511,73 @@ export class MemStorage implements IStorage {
     })).sort((a, b) => b.totalEarnings - a.totalEarnings);
   }
 
+  async getUserStatsByDateRange(discordId: string, startDate: Date, endDate: Date) {
+    const userTickets = Array.from(this.tickets.values())
+      .filter(t => t.claimedBy === discordId && 
+                   t.status === "paid" && 
+                   t.completedAt &&
+                   t.completedAt >= startDate &&
+                   t.completedAt <= endDate);
+
+    const totalEarnings = userTickets.reduce((sum, ticket) => sum + (ticket.amount || 0), 0);
+    const ticketCount = userTickets.length;
+
+    const categoryMap = new Map<number, { earnings: number; ticketCount: number }>();
+
+    for (const ticket of userTickets) {
+      const stats = categoryMap.get(ticket.categoryId!) || { earnings: 0, ticketCount: 0 };
+      stats.earnings += ticket.amount || 0;
+      stats.ticketCount += 1;
+      categoryMap.set(ticket.categoryId!, stats);
+    }
+
+    const categoryStats = await Promise.all(
+      Array.from(categoryMap.entries()).map(async ([categoryId, stats]) => {
+        const category = await this.getCategory(categoryId);
+        return {
+          categoryId,
+          categoryName: category?.name || "Unknown Category",
+          earnings: stats.earnings,
+          ticketCount: stats.ticketCount
+        };
+      })
+    );
+
+    return {
+      totalEarnings,
+      ticketCount,
+      categoryStats,
+      periodStart: startDate,
+      periodEnd: endDate
+    };
+  }
+
+  async getAllWorkerStatsByDateRange(startDate: Date, endDate: Date) {
+    const paidTickets = Array.from(this.tickets.values())
+      .filter(t => t.status === "paid" && 
+                   t.claimedBy && 
+                   t.completedAt &&
+                   t.completedAt >= startDate &&
+                   t.completedAt <= endDate);
+
+    const workerMap = new Map<string, { totalEarnings: number; ticketCount: number }>();
+
+    for (const ticket of paidTickets) {
+      const stats = workerMap.get(ticket.claimedBy!) || { totalEarnings: 0, ticketCount: 0 };
+      stats.totalEarnings += ticket.amount || 0;
+      stats.ticketCount += 1;
+      workerMap.set(ticket.claimedBy!, stats);
+    }
+
+    return Array.from(workerMap.entries()).map(([discordId, stats]) => ({
+      discordId,
+      username: discordId,
+      totalEarnings: stats.totalEarnings,
+      ticketCount: stats.ticketCount,
+      periodStart: startDate,
+      periodEnd: endDate
+    })).sort((a, b) => b.totalEarnings - a.totalEarnings);
+  }
 }
 
 export const storage = new MemStorage();

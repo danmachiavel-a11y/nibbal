@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Calendar } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 
 interface UserStats {
   totalEarnings: number;
@@ -28,19 +31,26 @@ interface WorkerStats {
   periodEnd: string;
 }
 
-type Period = 'week' | 'month' | 'all';
+type Period = 'week' | 'month' | 'all' | 'custom';
 
 export default function Stats() {
-  // Get the Discord user ID from the authenticated user
   const discordId = "1273639721972531382"; // TODO: Get this from auth
   const [period, setPeriod] = useState<Period>('all');
+  const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
+    from: new Date(),
+    to: new Date()
+  });
+
+  const queryParams = period === 'custom' 
+    ? { startDate: dateRange.from.toISOString(), endDate: dateRange.to.toISOString() }
+    : { period };
 
   const { data: stats, isLoading } = useQuery<UserStats>({
-    queryKey: [`/api/users/${discordId}/stats`, period]
+    queryKey: [`/api/users/${discordId}/stats`, queryParams]
   });
 
   const { data: workerStats } = useQuery<WorkerStats[]>({
-    queryKey: ["/api/workers/stats", period]
+    queryKey: ["/api/workers/stats", queryParams]
   });
 
   const formatDate = (dateStr: string) => {
@@ -71,7 +81,7 @@ export default function Stats() {
       </div>
 
       <div className="mb-6">
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap items-center">
           <Button 
             variant={period === 'week' ? 'default' : 'outline'}
             onClick={() => setPeriod('week')}
@@ -90,12 +100,60 @@ export default function Stats() {
           >
             All Time
           </Button>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant={period === 'custom' ? 'default' : 'outline'}
+                className={cn(
+                  "justify-start text-left font-normal",
+                  !dateRange && "text-muted-foreground"
+                )}
+              >
+                <Calendar className="mr-2 h-4 w-4" />
+                {period === 'custom' ? (
+                  <>
+                    {format(dateRange.from, "LLL dd, y")} -{" "}
+                    {format(dateRange.to, "LLL dd, y")}
+                  </>
+                ) : (
+                  "Pick a date range"
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <CalendarComponent
+                initialFocus
+                mode="range"
+                defaultMonth={dateRange.from}
+                selected={{
+                  from: dateRange.from,
+                  to: dateRange.to,
+                }}
+                onSelect={(range) => {
+                  if (range?.from && range?.to) {
+                    setDateRange({ from: range.from, to: range.to });
+                    setPeriod('custom');
+                  }
+                }}
+                numberOfMonths={2}
+              />
+            </PopoverContent>
+          </Popover>
         </div>
-        {period !== 'all' && stats && (
-          <p className="text-sm text-muted-foreground mt-2">
-            Showing data from {formatDate(stats.periodStart)} to {formatDate(stats.periodEnd)}
-          </p>
-        )}
+
+        <p className="text-sm text-muted-foreground mt-2">
+          {period === 'custom' ? (
+            <>
+              Showing data from {format(dateRange.from, "MMM d, yyyy")} to {format(dateRange.to, "MMM d, yyyy")}
+            </>
+          ) : period !== 'all' && stats ? (
+            <>
+              Showing data from {formatDate(stats.periodStart)} to {formatDate(stats.periodEnd)}
+            </>
+          ) : null}
+          <span className="ml-2 text-xs">(Times shown in {Intl.DateTimeFormat().resolvedOptions().timeZone})</span>
+        </p>
       </div>
 
       <div className="grid gap-6">

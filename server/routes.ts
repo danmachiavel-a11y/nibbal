@@ -170,24 +170,38 @@ export async function registerRoutes(app: Express) {
     res.json(messages);
   });
 
+  // Update the stats routes to handle custom date ranges
   app.get("/api/users/:discordId/stats", async (req, res) => {
     const discordId = req.params.discordId;
-    const period = (req.query.period as 'week' | 'month' | 'all') || 'all';
+    const period = req.query.period as 'week' | 'month' | 'all';
+    const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+    const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
 
     try {
-      const stats = await storage.getUserStatsByPeriod(discordId, period);
+      let stats;
+      if (startDate && endDate) {
+        stats = await storage.getUserStatsByDateRange(discordId, startDate, endDate);
+      } else {
+        stats = await storage.getUserStatsByPeriod(discordId, period || 'all');
+      }
       res.json(stats);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch user stats" });
     }
   });
 
-  // Add new route for getting all worker stats
   app.get("/api/workers/stats", async (req, res) => {
-    const period = (req.query.period as 'week' | 'month' | 'all') || 'all';
+    const period = req.query.period as 'week' | 'month' | 'all';
+    const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+    const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
 
     try {
-      const stats = await storage.getAllWorkerStatsByPeriod(period);
+      let stats;
+      if (startDate && endDate) {
+        stats = await storage.getAllWorkerStatsByDateRange(startDate, endDate);
+      } else {
+        stats = await storage.getAllWorkerStatsByPeriod(period || 'all');
+      }
       res.json(stats);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch worker stats" });
