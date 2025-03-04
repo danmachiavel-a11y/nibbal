@@ -9,6 +9,23 @@ export async function registerRoutes(app: Express) {
   log("Setting up HTTP server...");
   const httpServer = createServer(app);
 
+  // Create default test category if none exist
+  const categories = await storage.getCategories();
+  if (categories.length === 0) {
+    log("Creating default test category...");
+    await storage.createCategory({
+      name: "Test Service",
+      discordRoleId: "123456789",  // Default test role ID
+      discordCategoryId: "987654321", // Default test category ID
+      questions: [
+        "What is your issue?",
+        "When did this start?",
+        "Have you tried any solutions?"
+      ]
+    });
+    log("Default test category created");
+  }
+
   // Initialize bot bridge asynchronously
   log("Initializing bot bridge...");
   const bridge = new BridgeManager();
