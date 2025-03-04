@@ -96,6 +96,8 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
   const handleNewRowToggle = async (id: number, newRow: boolean) => {
     try {
       await apiRequest("PATCH", `/api/categories/${id}`, { newRow });
+      // No need to manually refresh as the parent component will handle this
+      // through the react-query cache invalidation
     } catch (error) {
       console.error("Failed to update category:", error);
     }
@@ -112,7 +114,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
     } else {
       currentRow.push(category);
       if (currentRow.length === 2) {
-        rows.push(currentRow);
+        rows.push([...currentRow]);
         currentRow = [];
       }
     }
