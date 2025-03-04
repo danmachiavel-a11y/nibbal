@@ -93,8 +93,11 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       const [removed] = newCategories.splice(oldIndex, 1);
       newCategories.splice(newIndex, 0, removed);
 
-      // Update the display order in the database
       try {
+        // First notify parent of the new order
+        onReorder(newCategories);
+
+        // Then update display orders in the database
         for (let i = 0; i < newCategories.length; i++) {
           const category = newCategories[i];
           await apiRequest("PATCH", `/api/categories/${category.id}`, {
@@ -102,8 +105,10 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
           });
         }
 
-        // Update local state through parent component
-        onReorder(newCategories);
+        toast({
+          title: "Success",
+          description: "Category order updated successfully"
+        });
 
         // Force refresh categories
         queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
@@ -119,6 +124,21 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
 
   const handleNewRowToggle = async (id: number, newRow: boolean) => {
     try {
+      // First find and update the category in local state
+      const categoryIndex = categories.findIndex(c => c.id === id);
+      if (categoryIndex === -1) return;
+
+      // Create a new array with the updated category
+      const updatedCategories = [...categories];
+      updatedCategories[categoryIndex] = {
+        ...updatedCategories[categoryIndex],
+        newRow
+      };
+
+      // Update UI first
+      onReorder(updatedCategories);
+
+      // Then update the database
       const res = await apiRequest("PATCH", `/api/categories/${id}`, { 
         newRow 
       });
@@ -127,14 +147,13 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
         throw new Error("Failed to update category");
       }
 
-      // Force refresh the categories
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-
       toast({
         title: "Success",
         description: `Category will ${newRow ? 'start' : 'not start'} a new row`,
       });
 
+      // Force refresh the categories
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
     } catch (error) {
       toast({
         title: "Error",
