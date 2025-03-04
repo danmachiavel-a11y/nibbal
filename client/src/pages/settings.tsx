@@ -435,13 +435,27 @@ function CategoryEditor({ category }: { category: Category }) {
       serviceImageUrl: category.serviceImageUrl || "",
       isSubmenu: category.isSubmenu || false,
       parentId: category.parentId || null,
-
     }
   });
 
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"]
+  });
+
+  // Get available submenus for the dropdown
+  const submenus = categories?.filter(cat =>
+    cat.isSubmenu && cat.id !== category.id
+  ) || [];
+
   async function onSubmit(data: z.infer<typeof categorySchema>) {
     try {
-      const res = await apiRequest("PATCH", `/api/categories/${category.id}`, data);
+      // Only include parentId if it's not a submenu
+      const submitData = {
+        ...data,
+        parentId: data.isSubmenu ? null : data.parentId
+      };
+
+      const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
       if (!res.ok) throw new Error("Failed to update category");
 
       toast({
@@ -495,13 +509,63 @@ function CategoryEditor({ category }: { category: Category }) {
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Category Name</FormLabel>
+                  <FormLabel>Name</FormLabel>
                   <FormControl>
                     <Input {...field} />
                   </FormControl>
                 </FormItem>
               )}
             />
+
+            <FormField
+              control={form.control}
+              name="isSubmenu"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Type</FormLabel>
+                  <FormControl>
+                    <select
+                      className="w-full rounded-md border border-input bg-background px-3 py-2"
+                      value={field.value ? "submenu" : "category"}
+                      onChange={(e) => field.onChange(e.target.value === "submenu")}
+                      disabled={category.isSubmenu} // Can't change from submenu to category if it has children
+                    >
+                      <option value="category">Category</option>
+                      <option value="submenu">Submenu</option>
+                    </select>
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            {!form.watch("isSubmenu") && (
+              <FormField
+                control={form.control}
+                name="parentId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Parent Submenu</FormLabel>
+                    <FormDescription>
+                      Choose which submenu this category belongs to
+                    </FormDescription>
+                    <FormControl>
+                      <select
+                        className="w-full rounded-md border border-input bg-background px-3 py-2"
+                        value={field.value || ""}
+                        onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                      >
+                        <option value="">None (Root Level)</option>
+                        {submenus.map(submenu => (
+                          <option key={submenu.id} value={submenu.id}>
+                            {submenu.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            )}
 
             <FormField
               control={form.control}
@@ -574,7 +638,8 @@ function CategoryEditor({ category }: { category: Category }) {
                 </FormItem>
               )}
             />
-            <Button type="submit">Update Category</Button>
+
+            <Button type="submit">Update {category.isSubmenu ? "Submenu" : "Category"}</Button>
           </form>
         </Form>
       </CardContent>

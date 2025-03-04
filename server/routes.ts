@@ -82,6 +82,8 @@ export async function registerRoutes(app: Express) {
       questions: z.array(z.string()),
       serviceSummary: z.string().optional(),
       serviceImageUrl: z.string().nullable().optional(),
+      parentId: z.number().nullable().optional(),
+      isSubmenu: z.boolean().optional(),
     });
 
     const result = schema.safeParse(req.body);
@@ -108,6 +110,8 @@ export async function registerRoutes(app: Express) {
       serviceImageUrl: z.string().nullable().optional(),
       displayOrder: z.number().optional(),
       newRow: z.boolean().optional(),
+      parentId: z.number().nullable().optional(), // Added parentId for editing
+      isSubmenu: z.boolean().optional(), // Added isSubmenu for editing
     });
 
     const result = schema.safeParse(req.body);
