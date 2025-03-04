@@ -119,8 +119,8 @@ export async function registerRoutes(app: Express) {
       serviceImageUrl: z.string().nullable().optional(),
       displayOrder: z.number().optional(),
       newRow: z.boolean().optional(),
-      parentId: z.number().nullable().optional(), 
-      isSubmenu: z.boolean().optional(), 
+      parentId: z.number().nullable().optional(),
+      isSubmenu: z.boolean().optional(),
     });
 
     const result = schema.safeParse(req.body);
@@ -168,6 +168,16 @@ export async function registerRoutes(app: Express) {
 
     const messages = await storage.getTicketMessages(ticketId);
     res.json(messages);
+  });
+
+  app.get("/api/users/:discordId/stats", async (req, res) => {
+    const discordId = req.params.discordId;
+    try {
+      const stats = await storage.getUserStats(discordId);
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch user stats" });
+    }
   });
 
   log("Routes registered successfully");

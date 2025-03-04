@@ -5,7 +5,9 @@ import {
   Webhook,
   CategoryChannel,
   ChannelType,
-  EmbedBuilder
+  EmbedBuilder,
+  ApplicationCommandType,
+  ApplicationCommandOptionType
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -34,61 +36,75 @@ export class DiscordBot {
   }
 
   private setupHandlers() {
-    this.client.on("ready", () => {
+    this.client.on("ready", async () => {
       log("Discord bot ready");
+
+      // Register the /paid slash command
+      try {
+        await this.client.application?.commands.create({
+          name: 'paid',
+          description: 'Mark a ticket as paid with the specified amount',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'amount',
+              description: 'The payment amount',
+              type: ApplicationCommandOptionType.Integer,
+              required: true,
+              min_value: 1
+            }
+          ]
+        });
+        log("Registered /paid slash command");
+      } catch (error) {
+        log(`Error registering slash command: ${error}`, "error");
+      }
     });
 
-    this.client.on("messageCreate", async (message) => {
-      // Ignore bot messages to prevent loops
-      if (message.author.bot) return;
+    // Handle slash commands
+    this.client.on('interactionCreate', async (interaction) => {
+      if (!interaction.isChatInputCommand()) return;
 
-      // Check for /paid command
-      if (message.content.startsWith('/paid')) {
-        const amount = parseInt(message.content.split(' ')[1]);
+      if (interaction.commandName === 'paid') {
+        const amount = interaction.options.getInteger('amount', true);
+        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
 
-        if (isNaN(amount)) {
-          await message.reply("Please specify a valid amount, e.g., `/paid 50`");
-          return;
-        }
-
-        const ticket = await storage.getTicketByDiscordChannel(message.channelId);
         if (!ticket) {
-          await message.reply("This command can only be used in ticket channels!");
+          await interaction.reply({
+            content: "This command can only be used in ticket channels!",
+            ephemeral: true
+          });
           return;
         }
 
         try {
-          await storage.updateTicketPayment(ticket.id, amount, message.author.id);
+          await storage.updateTicketPayment(ticket.id, amount, interaction.user.id);
 
           // Create an embed for the payment confirmation
           const embed = new EmbedBuilder()
             .setColor(0x00FF00)
             .setTitle('💰 Payment Recorded')
-            .setDescription(`Ticket marked as paid by ${message.author.username}`)
+            .setDescription(`Ticket marked as paid by ${interaction.user.username}`)
             .addFields(
               { name: 'Amount', value: `$${amount}`, inline: true },
               { name: 'Status', value: 'Completed & Paid', inline: true }
             )
             .setTimestamp();
 
-          await message.channel.send({ embeds: [embed] });
-
-          // Forward the payment info to Telegram
-          await this.bridge.forwardToTelegram(
-            `💰 Ticket marked as paid ($${amount}) by ${message.author.username}`,
-            ticket.id,
-            "System"
-          );
-
-          return;
+          await interaction.reply({ embeds: [embed] });
         } catch (error) {
           log(`Error processing payment: ${error}`, "error");
-          await message.reply("Failed to process payment. Please try again.");
-          return;
+          await interaction.reply({
+            content: "Failed to process payment. Please try again.",
+            ephemeral: true
+          });
         }
       }
+    });
 
-      // Regular message handling continues here...
+    this.client.on("messageCreate", async (message) => {
+      // Ignore bot messages to prevent loops
+      if (message.author.bot) return;
       if (message.content.startsWith('.')) return;
 
       const ticket = await storage.getTicketByDiscordChannel(message.channelId);
