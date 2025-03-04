@@ -111,7 +111,8 @@ export class MemStorage implements IStorage {
   }
 
   async getCategories(): Promise<Category[]> {
-    return Array.from(this.categories.values());
+    return Array.from(this.categories.values())
+      .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
   }
 
   async getCategory(id: number): Promise<Category | undefined> {

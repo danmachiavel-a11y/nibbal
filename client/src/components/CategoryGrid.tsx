@@ -55,7 +55,7 @@ function SortableItem({ id, category, onNewRowToggle }: SortableItemProps) {
             onClick={() => onNewRowToggle(id)}
             className="w-full"
           >
-            {category.newRow ? "Start New Row: ON" : "Start New Row: OFF"}
+            Start New Row: {category.newRow ? "ON" : "OFF"}
           </Button>
         </CardContent>
       </Card>
@@ -89,16 +89,23 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
     const [moved] = newCategories.splice(oldIndex, 1);
     newCategories.splice(newIndex, 0, moved);
 
-    // First update UI
-    onReorder(newCategories);
-
     try {
-      // Update all categories with new display orders
+      // Update display orders in the database
       const updatePromises = newCategories.map((category, index) => 
         fetch(`/api/categories/${category.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ displayOrder: index })
+          body: JSON.stringify({ 
+            displayOrder: index,
+            // Include all existing properties to prevent overwriting
+            name: category.name,
+            discordRoleId: category.discordRoleId,
+            discordCategoryId: category.discordCategoryId,
+            questions: category.questions,
+            serviceSummary: category.serviceSummary,
+            serviceImageUrl: category.serviceImageUrl,
+            newRow: category.newRow
+          })
         })
       );
 
@@ -110,16 +117,20 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
         throw new Error('Failed to update some categories');
       }
 
-      // Refresh categories from server
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      // Update local state
+      onReorder(newCategories);
+
+      // Invalidate cache to trigger a refetch
+      await queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+
     } catch (error) {
-      // Revert to original order on error
-      onReorder(categories);
       toast({
         title: "Error",
         description: "Failed to update category order",
         variant: "destructive"
       });
+      // Reset to original order
+      onReorder(categories);
     }
   };
 
@@ -133,12 +144,22 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       const res = await fetch(`/api/categories/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newRow })
+        body: JSON.stringify({ 
+          newRow,
+          // Include all existing properties
+          name: category.name,
+          discordRoleId: category.discordRoleId,
+          discordCategoryId: category.discordCategoryId,
+          questions: category.questions,
+          serviceSummary: category.serviceSummary,
+          serviceImageUrl: category.serviceImageUrl,
+          displayOrder: category.displayOrder
+        })
       });
 
       if (!res.ok) throw new Error('Failed to update category');
 
-      // Update local state through parent
+      // Update local state
       const updatedCategories = categories.map(cat => 
         cat.id === id ? { ...cat, newRow } : cat
       );
