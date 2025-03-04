@@ -48,6 +48,32 @@ export interface IStorage {
       ticketCount: number;
     }>;
   }>;
+  getAllWorkerStats(): Promise<Array<{
+    discordId: string;
+    username: string;
+    totalEarnings: number;
+    ticketCount: number;
+  }>>;
+  getUserStatsByPeriod(discordId: string, period: 'week' | 'month' | 'all'): Promise<{
+    totalEarnings: number;
+    ticketCount: number;
+    categoryStats: Array<{
+      categoryId: number;
+      categoryName: string;
+      earnings: number;
+      ticketCount: number;
+    }>;
+    periodStart: Date;
+    periodEnd: Date;
+  }>;
+  getAllWorkerStatsByPeriod(period: 'week' | 'month' | 'all'): Promise<Array<{
+    discordId: string;
+    username: string;
+    totalEarnings: number;
+    ticketCount: number;
+    periodStart: Date;
+    periodEnd: Date;
+  }>>;
 }
 
 export class MemStorage implements IStorage {
@@ -313,6 +339,157 @@ export class MemStorage implements IStorage {
       categoryStats
     };
   }
+  async getUserStatsByPeriod(discordId: string, period: 'week' | 'month' | 'all'): Promise<{
+    totalEarnings: number;
+    ticketCount: number;
+    categoryStats: Array<{
+      categoryId: number;
+      categoryName: string;
+      earnings: number;
+      ticketCount: number;
+    }>;
+    periodStart: Date;
+    periodEnd: Date;
+  }> {
+    // Get all paid tickets claimed by this user
+    const userTickets = Array.from(this.tickets.values())
+      .filter(t => t.claimedBy === discordId && t.status === "paid" && t.completedAt);
+
+    // Filter tickets by time period
+    const now = new Date();
+    let periodStart = new Date(0); // Default to all time
+    let periodEnd = now;
+
+    if (period === 'week') {
+      // Get start of current week (Sunday)
+      periodStart = new Date(now);
+      periodStart.setDate(now.getDate() - now.getDay());
+      periodStart.setHours(0, 0, 0, 0);
+    } else if (period === 'month') {
+      // Get start of current month
+      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    const filteredTickets = userTickets.filter(ticket => 
+      ticket.completedAt! >= periodStart && ticket.completedAt! <= periodEnd
+    );
+
+    // Calculate total earnings and ticket count for the period
+    const totalEarnings = filteredTickets.reduce((sum, ticket) => sum + (ticket.amount || 0), 0);
+    const ticketCount = filteredTickets.length;
+
+    // Group tickets by category and calculate stats
+    const categoryMap = new Map<number, { earnings: number; ticketCount: number }>();
+
+    for (const ticket of filteredTickets) {
+      const stats = categoryMap.get(ticket.categoryId!) || { earnings: 0, ticketCount: 0 };
+      stats.earnings += ticket.amount || 0;
+      stats.ticketCount += 1;
+      categoryMap.set(ticket.categoryId!, stats);
+    }
+
+    // Get category names and build final stats
+    const categoryStats = await Promise.all(
+      Array.from(categoryMap.entries()).map(async ([categoryId, stats]) => {
+        const category = await this.getCategory(categoryId);
+        return {
+          categoryId,
+          categoryName: category?.name || "Unknown Category",
+          earnings: stats.earnings,
+          ticketCount: stats.ticketCount
+        };
+      })
+    );
+
+    return {
+      totalEarnings,
+      ticketCount,
+      categoryStats,
+      periodStart,
+      periodEnd
+    };
+  }
+
+  async getAllWorkerStats(): Promise<Array<{
+    discordId: string;
+    username: string;
+    totalEarnings: number;
+    ticketCount: number;
+  }>> {
+    // Get all paid tickets
+    const paidTickets = Array.from(this.tickets.values())
+      .filter(t => t.status === "paid" && t.claimedBy);
+
+    // Group tickets by worker (claimedBy)
+    const workerMap = new Map<string, { totalEarnings: number; ticketCount: number }>();
+
+    for (const ticket of paidTickets) {
+      const stats = workerMap.get(ticket.claimedBy!) || { totalEarnings: 0, ticketCount: 0 };
+      stats.totalEarnings += ticket.amount || 0;
+      stats.ticketCount += 1;
+      workerMap.set(ticket.claimedBy!, stats);
+    }
+
+    // Convert to array and sort by earnings
+    return Array.from(workerMap.entries()).map(([discordId, stats]) => ({
+      discordId,
+      username: discordId, // In a real app, you'd get the username from Discord
+      totalEarnings: stats.totalEarnings,
+      ticketCount: stats.ticketCount
+    })).sort((a, b) => b.totalEarnings - a.totalEarnings);
+  }
+  async getAllWorkerStatsByPeriod(period: 'week' | 'month' | 'all'): Promise<Array<{
+    discordId: string;
+    username: string;
+    totalEarnings: number;
+    ticketCount: number;
+    periodStart: Date;
+    periodEnd: Date;
+  }>> {
+    // Get all paid tickets
+    const paidTickets = Array.from(this.tickets.values())
+      .filter(t => t.status === "paid" && t.claimedBy && t.completedAt);
+
+    // Filter tickets by time period
+    const now = new Date();
+    let periodStart = new Date(0); // Default to all time
+    let periodEnd = now;
+
+    if (period === 'week') {
+      // Get start of current week (Sunday)
+      periodStart = new Date(now);
+      periodStart.setDate(now.getDate() - now.getDay());
+      periodStart.setHours(0, 0, 0, 0);
+    } else if (period === 'month') {
+      // Get start of current month
+      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    const filteredTickets = paidTickets.filter(ticket => 
+      ticket.completedAt! >= periodStart && ticket.completedAt! <= periodEnd
+    );
+
+    // Group tickets by worker (claimedBy)
+    const workerMap = new Map<string, { totalEarnings: number; ticketCount: number }>();
+
+    for (const ticket of filteredTickets) {
+      const stats = workerMap.get(ticket.claimedBy!) || { totalEarnings: 0, ticketCount: 0 };
+      stats.totalEarnings += ticket.amount || 0;
+      stats.ticketCount += 1;
+      workerMap.set(ticket.claimedBy!, stats);
+    }
+
+    // Convert to array and sort by earnings
+    return Array.from(workerMap.entries()).map(([discordId, stats]) => ({
+      discordId,
+      username: discordId, // In a real app, you'd get the username from Discord
+      totalEarnings: stats.totalEarnings,
+      ticketCount: stats.ticketCount,
+      periodStart,
+      periodEnd
+    })).sort((a, b) => b.totalEarnings - a.totalEarnings);
+  }
+
 }
 
 export const storage = new MemStorage();

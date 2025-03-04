@@ -172,11 +172,25 @@ export async function registerRoutes(app: Express) {
 
   app.get("/api/users/:discordId/stats", async (req, res) => {
     const discordId = req.params.discordId;
+    const period = (req.query.period as 'week' | 'month' | 'all') || 'all';
+
     try {
-      const stats = await storage.getUserStats(discordId);
+      const stats = await storage.getUserStatsByPeriod(discordId, period);
       res.json(stats);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch user stats" });
+    }
+  });
+
+  // Add new route for getting all worker stats
+  app.get("/api/workers/stats", async (req, res) => {
+    const period = (req.query.period as 'week' | 'month' | 'all') || 'all';
+
+    try {
+      const stats = await storage.getAllWorkerStatsByPeriod(period);
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch worker stats" });
     }
   });
 
