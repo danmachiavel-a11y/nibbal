@@ -15,8 +15,8 @@ export async function registerRoutes(app: Express) {
     log("Creating default test category...");
     await storage.createCategory({
       name: "Test Service",
-      discordRoleId: "123456789",  // Default test role ID
-      discordCategoryId: "987654321", // Default test category ID
+      discordRoleId: "1346324056244490363",  // Real Discord role ID
+      discordCategoryId: "1345983179353362447", // Real Discord category ID
       questions: [
         "What is your issue?",
         "When did this start?",
