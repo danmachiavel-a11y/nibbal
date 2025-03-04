@@ -1,8 +1,7 @@
 import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { 
   DndContext, 
   DragEndEvent, 
@@ -10,7 +9,6 @@ import {
   TouchSensor, 
   useSensor, 
   useSensors,
-  DragOverlay,
   pointerWithin,
 } from "@dnd-kit/core";
 import { restrictToParentElement } from "@dnd-kit/modifiers";
@@ -53,17 +51,13 @@ function SortableItem({ id, category, onNewRowToggle }: SortableItemProps) {
           <CardTitle className="text-sm font-medium cursor-grab">{category.name}</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center space-x-2">
-            <Checkbox 
-              id={`new-row-${id}`}
-              checked={category.newRow || false}
-              onCheckedChange={(checked) => onNewRowToggle(id, checked === true)}
-              className="h-5 w-5"
-            />
-            <Label htmlFor={`new-row-${id}`} className="cursor-pointer">
-              Start new row
-            </Label>
-          </div>
+          <Button 
+            variant={category.newRow ? "default" : "outline"}
+            onClick={() => onNewRowToggle(id, !category.newRow)}
+            className="w-full"
+          >
+            Start New Row: {category.newRow ? "ON" : "OFF"}
+          </Button>
         </CardContent>
       </Card>
     </div>
@@ -90,12 +84,16 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       const oldIndex = categories.findIndex(cat => cat.id === active.id);
       const newIndex = categories.findIndex(cat => cat.id === over.id);
 
+      // Create new array with updated order
       const newCategories = [...categories];
       const [removed] = newCategories.splice(oldIndex, 1);
       newCategories.splice(newIndex, 0, removed);
 
+      // Update local state first
+      onReorder(newCategories);
+
+      // Then persist to database
       try {
-        // First update display orders in the database
         for (let i = 0; i < newCategories.length; i++) {
           const category = newCategories[i];
           const res = await apiRequest("PATCH", `/api/categories/${category.id}`, {
@@ -104,20 +102,12 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
           if (!res.ok) throw new Error("Failed to update category order");
         }
 
-        // Then notify parent component to update state
-        onReorder(newCategories);
-
-        toast({
-          title: "Success",
-          description: "Category order updated"
-        });
-
-        // Force refresh categories
+        // Refresh categories from server
         queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
       } catch (error) {
         toast({
           title: "Error",
-          description: "Failed to update category order",
+          description: "Failed to save category order",
           variant: "destructive"
         });
       }
@@ -125,6 +115,17 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
   }
 
   const handleNewRowToggle = async (id: number, newRow: boolean) => {
+    // Find the category to update
+    const categoryToUpdate = categories.find(c => c.id === id);
+    if (!categoryToUpdate) return;
+
+    // Update local state first
+    const updatedCategories = categories.map(cat => 
+      cat.id === id ? { ...cat, newRow } : cat
+    );
+    onReorder(updatedCategories);
+
+    // Then persist to database
     try {
       const res = await apiRequest("PATCH", `/api/categories/${id}`, { 
         newRow 
@@ -134,18 +135,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
         throw new Error("Failed to update category");
       }
 
-      // Update local categories array
-      const updatedCategories = categories.map(cat => 
-        cat.id === id ? { ...cat, newRow } : cat
-      );
-      onReorder(updatedCategories);
-
-      toast({
-        title: "Success",
-        description: `Category will ${newRow ? 'start' : 'not start'} a new row`,
-      });
-
-      // Force refresh the categories
+      // Refresh categories from server
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
     } catch (error) {
       toast({
@@ -180,9 +170,9 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
   return (
     <div className="border rounded-lg p-4 bg-gray-50">
       <h3 className="text-sm font-medium mb-4">
-        • Drag the category name to reorder
+        • Drag category names to reorder them
         <br />
-        • Check "Start new row" to control button layout
+        • Click "Start New Row" button to control button layout
       </h3>
       <DndContext
         sensors={sensors}
