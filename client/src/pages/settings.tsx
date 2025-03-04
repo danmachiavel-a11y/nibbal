@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormDescription } from "@/components/ui/form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Link } from "wouter";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,6 +27,8 @@ const categorySchema = z.object({
   questions: z.string().transform(str => str.split("\n").filter(q => q.trim())),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
+  parentId: z.number().nullable().optional(),
+  isSubmenu: z.boolean().optional(),
 });
 
 export default function Settings() {
@@ -39,6 +42,10 @@ export default function Settings() {
   const { data: categories } = useQuery<Category[]>({
     queryKey: ["/api/categories"]
   });
+
+  // Separate root menus (submenus) and their child categories
+  const submenus = categories?.filter(cat => cat.isSubmenu) || [];
+  const rootCategories = categories?.filter(cat => !cat.parentId && !cat.isSubmenu) || [];
 
   const botConfigForm = useForm({
     resolver: zodResolver(botConfigSchema),
@@ -57,6 +64,8 @@ export default function Settings() {
       questions: "",
       serviceSummary: "Our team is ready to assist you!",
       serviceImageUrl: "",
+      isSubmenu: false,
+      parentId: null,
     }
   });
 
@@ -87,7 +96,7 @@ export default function Settings() {
 
       toast({
         title: "Success",
-        description: "Category created successfully"
+        description: `${data.isSubmenu ? "Submenu" : "Category"} created successfully`
       });
 
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
@@ -100,30 +109,6 @@ export default function Settings() {
       });
     }
   }
-
-  const handleReorder = async (reorderedCategories: Category[]) => {
-    for (let i = 0; i < reorderedCategories.length; i++) {
-      const category = reorderedCategories[i];
-      try {
-        await apiRequest("PATCH", `/api/categories/${category.id}`, {
-          displayOrder: i
-        });
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to update category order",
-          variant: "destructive"
-        });
-        return;
-      }
-    }
-
-    queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-    toast({
-      title: "Success",
-      description: "Category order updated"
-    });
-  };
 
   return (
     <div className="container mx-auto p-6">
@@ -185,17 +170,42 @@ export default function Settings() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Create New Category</CardTitle>
+            <CardTitle>Create New Menu Item</CardTitle>
           </CardHeader>
           <CardContent>
             <Form {...categoryForm}>
               <form onSubmit={categoryForm.handleSubmit(onCategorySubmit)} className="space-y-4">
                 <FormField
                   control={categoryForm.control}
+                  name="isSubmenu"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Type</FormLabel>
+                      <FormDescription>
+                        Choose whether this is a submenu (like "Food") or a category (like "Grubhub")
+                      </FormDescription>
+                      <FormControl>
+                        <Tabs
+                          value={field.value ? "submenu" : "category"}
+                          onValueChange={(value) => field.onChange(value === "submenu")}
+                          className="w-full"
+                        >
+                          <TabsList className="grid w-full grid-cols-2">
+                            <TabsTrigger value="category">Category</TabsTrigger>
+                            <TabsTrigger value="submenu">Submenu</TabsTrigger>
+                          </TabsList>
+                        </Tabs>
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={categoryForm.control}
                   name="name"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Category Name</FormLabel>
+                      <FormLabel>Name</FormLabel>
                       <FormControl>
                         <Input {...field} />
                       </FormControl>
@@ -203,95 +213,194 @@ export default function Settings() {
                   )}
                 />
 
-                <FormField
-                  control={categoryForm.control}
-                  name="discordRoleId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Discord Role ID</FormLabel>
-                      <FormControl>
-                        <Input {...field} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
+                {!categoryForm.watch("isSubmenu") && (
+                  <>
+                    <FormField
+                      control={categoryForm.control}
+                      name="parentId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Parent Submenu</FormLabel>
+                          <FormDescription>
+                            Choose which submenu this category belongs to
+                          </FormDescription>
+                          <FormControl>
+                            <select
+                              className="w-full rounded-md border border-input bg-background px-3 py-2"
+                              value={field.value || ""}
+                              onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                            >
+                              <option value="">None (Root Level)</option>
+                              {submenus.map(submenu => (
+                                <option key={submenu.id} value={submenu.id}>
+                                  {submenu.name}
+                                </option>
+                              ))}
+                            </select>
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
 
-                <FormField
-                  control={categoryForm.control}
-                  name="discordCategoryId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Discord Category ID</FormLabel>
-                      <FormControl>
-                        <Input {...field} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
+                    <FormField
+                      control={categoryForm.control}
+                      name="discordRoleId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Discord Role ID</FormLabel>
+                          <FormControl>
+                            <Input {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
 
-                <FormField
-                  control={categoryForm.control}
-                  name="questions"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Questions (one per line)</FormLabel>
-                      <FormControl>
-                        <Textarea {...field} rows={5} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
+                    <FormField
+                      control={categoryForm.control}
+                      name="discordCategoryId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Discord Category ID</FormLabel>
+                          <FormControl>
+                            <Input {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
 
-                <FormField
-                  control={categoryForm.control}
-                  name="serviceSummary"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Service Summary</FormLabel>
-                      <FormDescription>
-                        Description of this service shown when users select it.
-                        Use new lines to format your message.
-                      </FormDescription>
-                      <FormControl>
-                        <Textarea {...field} rows={5} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
+                    <FormField
+                      control={categoryForm.control}
+                      name="questions"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Questions (one per line)</FormLabel>
+                          <FormControl>
+                            <Textarea {...field} rows={5} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
 
-                <FormField
-                  control={categoryForm.control}
-                  name="serviceImageUrl"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Service Image URL</FormLabel>
-                      <FormDescription>
-                        Optional: URL of an image to show with the service description
-                      </FormDescription>
-                      <FormControl>
-                        <Input {...field} value={field.value || ''} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <Button type="submit">Create Category</Button>
+                    <FormField
+                      control={categoryForm.control}
+                      name="serviceSummary"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Service Summary</FormLabel>
+                          <FormDescription>
+                            Description of this service shown when users select it.
+                            Use new lines to format your message.
+                          </FormDescription>
+                          <FormControl>
+                            <Textarea {...field} rows={5} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={categoryForm.control}
+                      name="serviceImageUrl"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Service Image URL</FormLabel>
+                          <FormDescription>
+                            Optional: URL of an image to show with the service description
+                          </FormDescription>
+                          <FormControl>
+                            <Input {...field} value={field.value || ''} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
+
+                <Button type="submit">
+                  Create {categoryForm.watch("isSubmenu") ? "Submenu" : "Category"}
+                </Button>
               </form>
             </Form>
           </CardContent>
         </Card>
 
         {categories && categories.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Category Layout</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <CategoryGrid
-                categories={categories}
-                onReorder={handleReorder}
-              />
-            </CardContent>
-          </Card>
+          <Tabs defaultValue="root" className="w-full">
+            <TabsList>
+              <TabsTrigger value="root">Root Menu</TabsTrigger>
+              {submenus.map(submenu => (
+                <TabsTrigger key={submenu.id} value={submenu.id.toString()}>
+                  {submenu.name}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+
+            <TabsContent value="root">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Root Menu Layout</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <CategoryGrid
+                    categories={rootCategories}
+                    onReorder={async (newCategories) => {
+                      try {
+                        // Update all categories with new display orders
+                        for (let i = 0; i < newCategories.length; i++) {
+                          const res = await apiRequest("PATCH", `/api/categories/${newCategories[i].id}`, {
+                            displayOrder: i
+                          });
+                          if (!res.ok) throw new Error("Failed to update category order");
+                        }
+
+                        queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+                      } catch (error) {
+                        toast({
+                          title: "Error",
+                          description: "Failed to update category order",
+                          variant: "destructive"
+                        });
+                      }
+                    }}
+                  />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {submenus.map(submenu => (
+              <TabsContent key={submenu.id} value={submenu.id.toString()}>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>{submenu.name} Layout</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CategoryGrid
+                      categories={categories.filter(cat => cat.parentId === submenu.id)}
+                      onReorder={async (newCategories) => {
+                        try {
+                          // Update all categories with new display orders
+                          for (let i = 0; i < newCategories.length; i++) {
+                            const res = await apiRequest("PATCH", `/api/categories/${newCategories[i].id}`, {
+                              displayOrder: i
+                            });
+                            if (!res.ok) throw new Error("Failed to update category order");
+                          }
+
+                          queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+                        } catch (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to update category order",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            ))}
+          </Tabs>
         )}
         {categories && categories.length > 0 && (
           <Card>
@@ -324,6 +433,9 @@ function CategoryEditor({ category }: { category: Category }) {
       questions: category.questions.join("\n"),
       serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
       serviceImageUrl: category.serviceImageUrl || "",
+      isSubmenu: category.isSubmenu || false,
+      parentId: category.parentId || null,
+
     }
   });
 
