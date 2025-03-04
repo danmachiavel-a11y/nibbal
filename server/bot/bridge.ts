@@ -64,26 +64,27 @@ export class BridgeManager {
       );
       log(`Discord channel created with ID: ${channelId}`);
 
-      // Update ticket with Discord channel ID - fixed the storage
+      // Update ticket with Discord channel ID
       await storage.updateTicketDiscordChannel(ticket.id, channelId);
 
       const updatedTicket = await storage.getTicket(ticket.id);
       log(`Updated ticket status: ${JSON.stringify(updatedTicket)}`);
 
-      // Send initial message with answers
+      // Format Q&A for embed
       const questions = category.questions;
       const answers = ticket.answers || [];
-      let message = `New ticket from ${user.username}\n\n`;
+      let message = '';
 
       for (let i = 0; i < questions.length; i++) {
-        message += `**${questions[i]}**\n${answers[i] || 'No answer provided'}\n\n`;
+        message += `**Q: ${questions[i]}**\n`;
+        message += `A: ${answers[i] || 'No answer provided'}\n\n`;
       }
 
-      await this.discordBot.sendMessage(channelId, message, "Ticket Bot");
+      // Send and pin the formatted Q&A
+      await this.discordBot.sendMessage(channelId, message, "Ticket Bot", undefined, true);
       log(`Ticket channel created: ${channelName}`);
     } catch (error) {
       log(`Error creating Discord channel: ${error}`, "error");
-      // Update the ticket status to indicate failure
       await storage.updateTicketStatus(ticket.id, "open");
       throw error;
     }

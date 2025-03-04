@@ -4,7 +4,8 @@ import {
   TextChannel, 
   Webhook,
   CategoryChannel,
-  ChannelType
+  ChannelType,
+  EmbedBuilder
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -119,7 +120,7 @@ export class DiscordBot {
     }
   }
 
-  async sendMessage(channelId: string, content: string, username: string, avatarUrl?: string) {
+  async sendMessage(channelId: string, content: string, username: string, avatarUrl?: string, embed?: boolean): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 
@@ -140,12 +141,27 @@ export class DiscordBot {
         log(`Created webhook: ${webhook.id} for channel ${channelId}`);
       }
 
-      // Send message via webhook with dynamic username and avatar
-      await webhook.send({
-        content,
-        username,
-        avatarURL: avatarUrl
-      });
+      if (embed) {
+        // Send as embed
+        const embedMessage = await channel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(content)
+              .setColor(0x0099FF)
+          ]
+        });
+
+        // Pin the embed message
+        await embedMessage.pin();
+        log(`Pinned embed message in channel ${channelId}`);
+      } else {
+        // Send regular message via webhook
+        await webhook.send({
+          content,
+          username,
+          avatarURL: avatarUrl
+        });
+      }
 
       log(`Successfully sent message to Discord channel ${channelId}`);
     } catch (error) {
