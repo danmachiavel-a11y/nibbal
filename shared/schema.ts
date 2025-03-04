@@ -24,18 +24,20 @@ export const categories = pgTable("categories", {
   questions: text("questions").array().notNull(),
   serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
   serviceImageUrl: text("service_image_url"),
-  displayOrder: integer("display_order").default(0), // Lower numbers appear first
-  buttonsPerRow: integer("buttons_per_row").default(1), // Number of buttons to show per row
-  newRow: boolean("new_row").default(false), // Whether this button starts a new row
+  displayOrder: integer("display_order").default(0),
+  newRow: boolean("new_row").default(false),
+  // New fields for submenu support
+  parentId: integer("parent_id").references(() => categories.id),
+  isSubmenu: boolean("is_submenu").default(false),
 });
 
 export const tickets = pgTable("tickets", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id),
   categoryId: integer("category_id").references(() => categories.id),
-  status: text("status").notNull(), // open, claimed, closed
+  status: text("status").notNull(),
   discordChannelId: text("discord_channel_id"),
-  claimedBy: text("claimed_by"), // Discord user ID
+  claimedBy: text("claimed_by"),
   amount: integer("amount"),
   answers: text("answers").array(),
 });
@@ -45,7 +47,7 @@ export const messages = pgTable("messages", {
   ticketId: integer("ticket_id").references(() => tickets.id),
   content: text("content").notNull(),
   authorId: integer("author_id").references(() => users.id),
-  platform: text("platform").notNull(), // telegram or discord
+  platform: text("platform").notNull(),
   timestamp: timestamp("timestamp").notNull(),
 });
 
