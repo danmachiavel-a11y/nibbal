@@ -7,13 +7,15 @@ if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
 }
 
+interface UserState {
+  categoryId: number;
+  currentQuestion: number;
+  answers: string[];
+}
+
 export class TelegramBot {
   private bot: Telegraf;
-  private userStates: Map<number, {
-    categoryId?: number;
-    currentQuestion?: number;
-    answers: string[];
-  }>;
+  private userStates: Map<number, UserState>;
   private bridge: BridgeManager;
 
   constructor(bridge: BridgeManager) {
@@ -42,17 +44,42 @@ export class TelegramBot {
 
     // Category selection
     this.bot.on("callback_query", async (ctx) => {
-      if (!ctx.callbackQuery.data) return;
-
-      const data = ctx.callbackQuery.data;
-      if (!data.startsWith("category_")) return;
+      const data = ctx.callbackQuery?.data;
+      if (!data?.startsWith("category_")) return;
 
       const categoryId = parseInt(data.split("_")[1]);
       const category = await storage.getCategory(categoryId);
       if (!category) return;
 
+      // Service summary with detailed description
+      const summary = `*${category.name} Service*\n\n` +
+        `Welcome to our ${category.name.toLowerCase()} support service! 📋\n\n` +
+        `Our team specializes in handling all your ${category.name.toLowerCase()}-related needs. ` +
+        `We'll guide you through a few questions to better understand your request.\n\n` +
+        `*How it works:*\n` +
+        `1. Answer our questions\n` +
+        `2. A ticket will be created\n` +
+        `3. Our team will assist you promptly\n\n` +
+        `Let's begin with some questions:`;
+
+      // Send service summary
+      await ctx.reply(summary, {
+        parse_mode: 'Markdown'
+      });
+
+      // Try to send service photo
+      try {
+        // You can replace this with actual category-specific images
+        const photoUrl = `https://picsum.photos/seed/${category.name.toLowerCase()}/500/300`;
+        await ctx.replyWithPhoto({ url: photoUrl });
+      } catch (error) {
+        console.log(`Could not send photo for ${category.name}:`, error);
+      }
+
       // Initialize user state
-      const userId = ctx.from.id;
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
       this.userStates.set(userId, {
         categoryId,
         currentQuestion: 0,
@@ -61,56 +88,142 @@ export class TelegramBot {
 
       // Ask first question
       await ctx.reply(category.questions[0]);
+
+      // Answer the callback query to remove loading state
+      await ctx.answerCbQuery();
     });
 
-    // Handle answers
+    // Handle messages
     this.bot.on("text", async (ctx) => {
-      const userId = ctx.from.id;
-      const state = this.userStates.get(userId);
-      if (!state?.categoryId) return;
+      const userId = ctx.from?.id;
+      if (!userId) return;
 
-      const category = await storage.getCategory(state.categoryId);
-      if (!category) return;
+      const messageText = ctx.message?.text;
+      if (!messageText) return;
 
-      // Store answer
-      state.answers.push(ctx.message.text);
-
-      // Move to next question or create ticket
-      if (state.currentQuestion !== undefined && state.currentQuestion < category.questions.length - 1) {
-        state.currentQuestion++;
-        await ctx.reply(category.questions[state.currentQuestion]);
-      } else {
-        // Create user if doesn't exist
-        let user = await storage.getUserByTelegramId(ctx.from.id.toString());
-        if (!user) {
-          user = await storage.createUser({
-            telegramId: ctx.from.id.toString(),
-            discordId: null,
-            username: ctx.from.username || "Unknown",
-            isBanned: false
-          });
+      // First check if this is a message for an active ticket
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const tickets = await this.findActiveTicket(user.id);
+        if (tickets.length > 0) {
+          await this.handleActiveTicketMessage(ctx, user, tickets[0], messageText);
+          return;
         }
-
-        // Create ticket
-        const ticket = await storage.createTicket({
-          userId: user.id,
-          categoryId: state.categoryId,
-          status: "open",
-          discordChannelId: null,
-          claimedBy: null,
-          amount: null,
-          answers: state.answers
-        });
-
-        // Create Discord channel through bridge
-        await this.bridge.createTicketChannel(ticket);
-
-        // Clear user state
-        this.userStates.delete(userId);
-
-        await ctx.reply("Ticket created! We'll get back to you shortly.");
       }
+
+      // If not a ticket message, handle as questionnaire response
+      await this.handleQuestionnaireResponse(ctx, userId, messageText);
     });
+  }
+
+  private async findActiveTicket(userId: number) {
+    const categories = await storage.getCategories();
+    const activeTickets = [];
+
+    for (const category of categories) {
+      const tickets = await storage.getTicketsByCategory(category.id);
+      const active = tickets.find(t =>
+        t.userId === userId &&
+        t.status !== "closed" &&
+        t.discordChannelId
+      );
+      if (active) activeTickets.push(active);
+    }
+
+    return activeTickets;
+  }
+
+  private async handleActiveTicketMessage(ctx: Context, user: any, ticket: any, messageText: string) {
+    try {
+      // Store message in database
+      await storage.createMessage({
+        ticketId: ticket.id,
+        content: messageText,
+        authorId: user.id,
+        platform: "telegram",
+        timestamp: new Date()
+      });
+
+      // Get user's photo if available
+      let photoUrl: string | undefined;
+      try {
+        const photos = await ctx.telegram.getUserProfilePhotos(user.telegramId);
+        if (photos.total_count > 0) {
+          const fileId = photos.photos[0][0].file_id;
+          const file = await ctx.telegram.getFile(fileId);
+          photoUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        }
+      } catch (error) {
+        console.log("Could not get user photo:", error);
+      }
+
+      // Forward to Discord
+      await this.bridge.forwardToDiscord(
+        messageText,
+        ticket.id,
+        ctx.from?.username || "Unknown",
+        photoUrl
+      );
+    } catch (error) {
+      console.error("Error handling ticket message:", error);
+      await ctx.reply("Sorry, there was an error sending your message. Please try again.");
+    }
+  }
+
+  private async handleQuestionnaireResponse(ctx: Context, userId: number, messageText: string) {
+    const state = this.userStates.get(userId);
+    if (!state?.categoryId) return;
+
+    const category = await storage.getCategory(state.categoryId);
+    if (!category) return;
+
+    // Store answer
+    state.answers.push(messageText);
+
+    // Move to next question or create ticket
+    if (state.currentQuestion < category.questions.length - 1) {
+      state.currentQuestion++;
+      await ctx.reply(category.questions[state.currentQuestion]);
+    } else {
+      await this.createTicket(ctx, userId, state);
+    }
+  }
+
+  private async createTicket(ctx: Context, userId: number, state: UserState) {
+    try {
+      // Create or get user
+      let user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        user = await storage.createUser({
+          telegramId: userId.toString(),
+          discordId: null,
+          username: ctx.from?.username || "Unknown",
+          isBanned: false
+        });
+      }
+
+      // Create ticket
+      const ticket = await storage.createTicket({
+        userId: user.id,
+        categoryId: state.categoryId,
+        status: "open",
+        discordChannelId: null,
+        claimedBy: null,
+        amount: null,
+        answers: state.answers
+      });
+
+      // Create Discord channel
+      await this.bridge.createTicketChannel(ticket);
+
+      // Clear user state
+      this.userStates.delete(userId);
+
+      await ctx.reply("✅ Ticket created! We'll get back to you shortly.");
+    } catch (error) {
+      console.error("Error creating ticket:", error);
+      await ctx.reply("Sorry, there was an error creating your ticket. Please try again.");
+    }
   }
 
   async start() {
