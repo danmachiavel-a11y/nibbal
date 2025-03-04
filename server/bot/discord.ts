@@ -43,6 +43,20 @@ export class DiscordBot {
       const ticket = await storage.getTicketByDiscordChannel(message.channelId);
       if (!ticket) return;
 
+      console.log(`Forwarding message from Discord to Telegram for ticket ${ticket.id}`);
+
+      // Store message in database
+      const user = await storage.getUserByDiscordId(message.author.id);
+      if (user) {
+        await storage.createMessage({
+          ticketId: ticket.id,
+          content: message.content,
+          authorId: user.id,
+          platform: "discord",
+          timestamp: new Date()
+        });
+      }
+
       // Forward message to Telegram
       await this.bridge.forwardToTelegram(message.content, ticket.id, message.author.username);
     });

@@ -125,8 +125,7 @@ export class TelegramBot {
       const categoryTickets = await storage.getTicketsByCategory(category.id);
       const activeTicket = categoryTickets.find(t =>
         t.userId === userId &&
-        t.status !== "closed" &&
-        t.discordChannelId // Only include if Discord channel exists
+        t.status !== "closed"
       );
       if (activeTicket) tickets.push(activeTicket);
     }
@@ -167,6 +166,8 @@ export class TelegramBot {
         ctx.from?.username || "Unknown",
         photoUrl
       );
+
+      console.log(`Message forwarded to Discord for ticket ${ticket.id}`);
     } catch (error) {
       console.error("Error handling ticket message:", error);
       await ctx.reply("Sorry, there was an error sending your message. Please try again.");
