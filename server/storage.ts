@@ -35,6 +35,19 @@ export interface IStorage {
   // Message operations
   createMessage(message: InsertMessage): Promise<Message>;
   getTicketMessages(ticketId: number): Promise<Message[]>;
+
+  // New methods for payment tracking
+  updateTicketPayment(id: number, amount: number, claimedBy: string): Promise<void>;
+  getUserStats(discordId: string): Promise<{
+    totalEarnings: number;
+    ticketCount: number;
+    categoryStats: Array<{
+      categoryId: number;
+      categoryName: string;
+      earnings: number;
+      ticketCount: number;
+    }>;
+  }>;
 }
 
 export class MemStorage implements IStorage {
@@ -238,6 +251,67 @@ export class MemStorage implements IStorage {
     return Array.from(this.messages.values())
       .filter(m => m.ticketId === ticketId)
       .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  }
+
+  async updateTicketPayment(id: number, amount: number, claimedBy: string): Promise<void> {
+    const ticket = await this.getTicket(id);
+    if (ticket) {
+      this.tickets.set(id, {
+        ...ticket,
+        amount,
+        status: "paid",
+        claimedBy,
+        completedAt: new Date()
+      });
+    }
+  }
+
+  async getUserStats(discordId: string): Promise<{
+    totalEarnings: number;
+    ticketCount: number;
+    categoryStats: Array<{
+      categoryId: number;
+      categoryName: string;
+      earnings: number;
+      ticketCount: number;
+    }>;
+  }> {
+    // Get all paid tickets claimed by this user
+    const userTickets = Array.from(this.tickets.values())
+      .filter(t => t.claimedBy === discordId && t.status === "paid");
+
+    // Calculate total earnings and ticket count
+    const totalEarnings = userTickets.reduce((sum, ticket) => sum + (ticket.amount || 0), 0);
+    const ticketCount = userTickets.length;
+
+    // Group tickets by category and calculate stats
+    const categoryMap = new Map<number, { earnings: number; ticketCount: number }>();
+
+    for (const ticket of userTickets) {
+      const stats = categoryMap.get(ticket.categoryId!) || { earnings: 0, ticketCount: 0 };
+      stats.earnings += ticket.amount || 0;
+      stats.ticketCount += 1;
+      categoryMap.set(ticket.categoryId!, stats);
+    }
+
+    // Get category names and build final stats
+    const categoryStats = await Promise.all(
+      Array.from(categoryMap.entries()).map(async ([categoryId, stats]) => {
+        const category = await this.getCategory(categoryId);
+        return {
+          categoryId,
+          categoryName: category?.name || "Unknown Category",
+          earnings: stats.earnings,
+          ticketCount: stats.ticketCount
+        };
+      })
+    );
+
+    return {
+      totalEarnings,
+      ticketCount,
+      categoryStats
+    };
   }
 }
 

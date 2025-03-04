@@ -42,7 +42,53 @@ export class DiscordBot {
       // Ignore bot messages to prevent loops
       if (message.author.bot) return;
 
-      // Ignore messages starting with . as specified
+      // Check for /paid command
+      if (message.content.startsWith('/paid')) {
+        const amount = parseInt(message.content.split(' ')[1]);
+
+        if (isNaN(amount)) {
+          await message.reply("Please specify a valid amount, e.g., `/paid 50`");
+          return;
+        }
+
+        const ticket = await storage.getTicketByDiscordChannel(message.channelId);
+        if (!ticket) {
+          await message.reply("This command can only be used in ticket channels!");
+          return;
+        }
+
+        try {
+          await storage.updateTicketPayment(ticket.id, amount, message.author.id);
+
+          // Create an embed for the payment confirmation
+          const embed = new EmbedBuilder()
+            .setColor(0x00FF00)
+            .setTitle('💰 Payment Recorded')
+            .setDescription(`Ticket marked as paid by ${message.author.username}`)
+            .addFields(
+              { name: 'Amount', value: `$${amount}`, inline: true },
+              { name: 'Status', value: 'Completed & Paid', inline: true }
+            )
+            .setTimestamp();
+
+          await message.channel.send({ embeds: [embed] });
+
+          // Forward the payment info to Telegram
+          await this.bridge.forwardToTelegram(
+            `💰 Ticket marked as paid ($${amount}) by ${message.author.username}`,
+            ticket.id,
+            "System"
+          );
+
+          return;
+        } catch (error) {
+          log(`Error processing payment: ${error}`, "error");
+          await message.reply("Failed to process payment. Please try again.");
+          return;
+        }
+      }
+
+      // Regular message handling continues here...
       if (message.content.startsWith('.')) return;
 
       const ticket = await storage.getTicketByDiscordChannel(message.channelId);

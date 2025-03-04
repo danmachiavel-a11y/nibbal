@@ -35,11 +35,12 @@ export const tickets = pgTable("tickets", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id),
   categoryId: integer("category_id").references(() => categories.id),
-  status: text("status").notNull(),
+  status: text("status").notNull(), // "open", "claimed", "completed", "paid"
   discordChannelId: text("discord_channel_id"),
-  claimedBy: text("claimed_by"),
-  amount: integer("amount"),
+  claimedBy: text("claimed_by"), // Discord user ID of who claimed/completed the ticket
+  amount: integer("amount"), // Amount paid for this ticket
   answers: text("answers").array(),
+  completedAt: timestamp("completed_at"), // When the ticket was marked as paid
 });
 
 export const messages = pgTable("messages", {
