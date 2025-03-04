@@ -15,6 +15,7 @@ export interface IStorage {
   getCategories(): Promise<Category[]>;
   getCategory(id: number): Promise<Category | undefined>;
   createCategory(category: InsertCategory): Promise<Category>;
+  updateCategory(id: number, category: Partial<InsertCategory>): Promise<Category | undefined>;
 
   // Ticket operations  
   createTicket(ticket: InsertTicket): Promise<Ticket>;
@@ -92,9 +93,27 @@ export class MemStorage implements IStorage {
 
   async createCategory(insertCategory: InsertCategory): Promise<Category> {
     const id = this.currentIds.categories++;
-    const category = { ...insertCategory, id };
+    const category = { 
+      ...insertCategory, 
+      id,
+      welcomeMessage: insertCategory.welcomeMessage || "Select a category:",
+      welcomeImageUrl: insertCategory.welcomeImageUrl || null
+    };
     this.categories.set(id, category);
     return category;
+  }
+
+  async updateCategory(id: number, updateData: Partial<InsertCategory>): Promise<Category | undefined> {
+    const category = await this.getCategory(id);
+    if (!category) return undefined;
+
+    const updatedCategory = {
+      ...category,
+      ...updateData,
+      id // Ensure ID remains unchanged
+    };
+    this.categories.set(id, updatedCategory);
+    return updatedCategory;
   }
 
   async createTicket(insertTicket: InsertTicket): Promise<Ticket> {

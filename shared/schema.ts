@@ -16,6 +16,8 @@ export const categories = pgTable("categories", {
   discordRoleId: text("discord_role_id").notNull(),
   discordCategoryId: text("discord_category_id").notNull(),
   questions: text("questions").array().notNull(),
+  welcomeMessage: text("welcome_message").default("Select a category:"),
+  welcomeImageUrl: text("welcome_image_url"),
 });
 
 export const tickets = pgTable("tickets", {

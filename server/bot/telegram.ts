@@ -28,14 +28,35 @@ export class TelegramBot {
     // Start command
     this.bot.command("start", async (ctx) => {
       const categories = await storage.getCategories();
-      await ctx.reply("Select a category:", {
-        reply_markup: {
-          inline_keyboard: categories.map(c => [{
-            text: c.name,
-            callback_data: `category_${c.id}`
-          }])
+      const firstCategory = categories[0];
+      const welcomeMessage = firstCategory?.welcomeMessage || "Select a category:";
+      const welcomeImageUrl = firstCategory?.welcomeImageUrl;
+
+      const keyboard = {
+        inline_keyboard: categories.map(c => [{
+          text: c.name,
+          callback_data: `category_${c.id}`
+        }])
+      };
+
+      if (welcomeImageUrl) {
+        try {
+          await ctx.replyWithPhoto(
+            welcomeImageUrl,
+            {
+              caption: welcomeMessage,
+              reply_markup: keyboard,
+              parse_mode: 'HTML'
+            }
+          );
+        } catch (error) {
+          // Fallback to text-only if image fails
+          console.error("Failed to send welcome image:", error);
+          await ctx.reply(welcomeMessage, { reply_markup: keyboard });
         }
-      });
+      } else {
+        await ctx.reply(welcomeMessage, { reply_markup: keyboard });
+      }
     });
 
     // Category selection

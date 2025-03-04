@@ -21,7 +21,9 @@ export async function registerRoutes(app: Express) {
         "What is your issue?",
         "When did this start?",
         "Have you tried any solutions?"
-      ]
+      ],
+      welcomeMessage: "Welcome to our Test Service! Please select a category:",
+      welcomeImageUrl: null
     });
     log("Default test category created");
   }
@@ -31,13 +33,70 @@ export async function registerRoutes(app: Express) {
   const bridge = new BridgeManager();
   bridge.start().catch(error => {
     log(`Error initializing bots: ${error.message}`, "error");
-    // Don't throw here, allow server to continue starting
   });
 
   // API Routes
   app.get("/api/categories", async (req, res) => {
     const categories = await storage.getCategories();
     res.json(categories);
+  });
+
+  app.get("/api/categories/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid category ID" });
+    }
+    const category = await storage.getCategory(id);
+    if (!category) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+    res.json(category);
+  });
+
+  app.post("/api/categories", async (req, res) => {
+    const schema = z.object({
+      name: z.string(),
+      discordRoleId: z.string(),
+      discordCategoryId: z.string(),
+      questions: z.array(z.string()),
+      welcomeMessage: z.string().optional(),
+      welcomeImageUrl: z.string().nullable().optional(),
+    });
+
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).json({ message: "Invalid request body" });
+    }
+
+    const category = await storage.createCategory(result.data);
+    res.json(category);
+  });
+
+  app.patch("/api/categories/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid category ID" });
+    }
+
+    const schema = z.object({
+      name: z.string().optional(),
+      discordRoleId: z.string().optional(),
+      discordCategoryId: z.string().optional(),
+      questions: z.array(z.string()).optional(),
+      welcomeMessage: z.string().optional(),
+      welcomeImageUrl: z.string().nullable().optional(),
+    });
+
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).json({ message: "Invalid request body" });
+    }
+
+    const category = await storage.updateCategory(id, result.data);
+    if (!category) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+    res.json(category);
   });
 
   app.get("/api/tickets", async (req, res) => {
@@ -58,23 +117,6 @@ export async function registerRoutes(app: Express) {
 
     const messages = await storage.getTicketMessages(ticketId);
     res.json(messages);
-  });
-
-  app.post("/api/categories", async (req, res) => {
-    const schema = z.object({
-      name: z.string(),
-      discordRoleId: z.string(),
-      discordCategoryId: z.string(),
-      questions: z.array(z.string())
-    });
-
-    const result = schema.safeParse(req.body);
-    if (!result.success) {
-      return res.status(400).json({ message: "Invalid request body" });
-    }
-
-    const category = await storage.createCategory(result.data);
-    res.json(category);
   });
 
   log("Routes registered successfully");
