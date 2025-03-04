@@ -16,6 +16,7 @@ import {
 import { restrictToParentElement } from "@dnd-kit/modifiers";
 import type { Category } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface SortableItemProps {
   id: number;
@@ -37,7 +38,6 @@ function SortableItem({ id, category, onNewRowToggle }: SortableItemProps) {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-    cursor: 'grab',
   };
 
   return (
@@ -45,21 +45,22 @@ function SortableItem({ id, category, onNewRowToggle }: SortableItemProps) {
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
-      className="p-2"
+      className="p-2 w-full sm:w-1/2"
     >
       <Card className="bg-white hover:bg-gray-50 transition-colors">
-        <CardHeader className="p-3">
-          <CardTitle className="text-sm font-medium">{category.name}</CardTitle>
+        <CardHeader className="p-3" {...listeners}>
+          <CardTitle className="text-sm font-medium cursor-grab">{category.name}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center space-x-2">
             <Switch 
               id={`new-row-${id}`}
-              checked={category.newRow}
+              checked={category.newRow || false}
               onCheckedChange={(checked) => onNewRowToggle(id, checked)}
             />
-            <Label htmlFor={`new-row-${id}`}>Start new row</Label>
+            <Label htmlFor={`new-row-${id}`} className="cursor-pointer">
+              Start new row
+            </Label>
           </div>
         </CardContent>
       </Card>
@@ -73,12 +74,13 @@ interface CategoryGridProps {
 }
 
 export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
+  const queryClient = useQueryClient();
   const sensors = useSensors(
     useSensor(MouseSensor),
     useSensor(TouchSensor)
   );
 
-  function handleDragEnd(event: DragEndEvent) {
+  async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
 
     if (over && active.id !== over.id) {
@@ -89,8 +91,8 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       const [removed] = newCategories.splice(oldIndex, 1);
       newCategories.splice(newIndex, 0, removed);
 
-      // Call onReorder to update the order in the database
-      onReorder(newCategories);
+      // Update display order for all affected categories
+      await onReorder(newCategories);
     }
   }
 
@@ -100,6 +102,8 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       if (!res.ok) {
         throw new Error("Failed to update category");
       }
+      // Invalidate categories cache to trigger a refresh
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
     } catch (error) {
       console.error("Failed to update category:", error);
     }
@@ -128,7 +132,11 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
 
   return (
     <div className="border rounded-lg p-4 bg-gray-50">
-      <h3 className="text-sm font-medium mb-4">Drag categories to rearrange them. Toggle "Start new row" to control button layout.</h3>
+      <h3 className="text-sm font-medium mb-4">
+        • Drag the category name to reorder
+        <br />
+        • Toggle "Start new row" to control button layout
+      </h3>
       <DndContext
         sensors={sensors}
         collisionDetection={pointerWithin}
