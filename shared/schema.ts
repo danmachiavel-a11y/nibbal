@@ -2,6 +2,12 @@ import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+export const botConfig = pgTable("bot_config", {
+  id: serial("id").primaryKey(),
+  welcomeMessage: text("welcome_message").default("Welcome to the support bot! Please select a service:"),
+  welcomeImageUrl: text("welcome_image_url"),
+});
+
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   telegramId: text("telegram_id").unique(),
@@ -16,8 +22,8 @@ export const categories = pgTable("categories", {
   discordRoleId: text("discord_role_id").notNull(),
   discordCategoryId: text("discord_category_id").notNull(),
   questions: text("questions").array().notNull(),
-  welcomeMessage: text("welcome_message").default("Select a category:"),
-  welcomeImageUrl: text("welcome_image_url"),
+  serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
+  serviceImageUrl: text("service_image_url"),
 });
 
 export const tickets = pgTable("tickets", {
@@ -44,13 +50,16 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertCategorySchema = createInsertSchema(categories).omit({ id: true });
 export const insertTicketSchema = createInsertSchema(tickets).omit({ id: true });
 export const insertMessageSchema = createInsertSchema(messages).omit({ id: true });
+export const insertBotConfigSchema = createInsertSchema(botConfig).omit({ id: true });
 
 export type User = typeof users.$inferSelect;
 export type Category = typeof categories.$inferSelect;
 export type Ticket = typeof tickets.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type BotConfig = typeof botConfig.$inferSelect;
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
 export type InsertTicket = z.infer<typeof insertTicketSchema>;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
+export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;

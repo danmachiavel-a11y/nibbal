@@ -11,37 +11,75 @@ import { Link } from "wouter";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { Category } from "@shared/schema";
+import type { Category, BotConfig } from "@shared/schema";
+
+const botConfigSchema = z.object({
+  welcomeMessage: z.string(),
+  welcomeImageUrl: z.string().nullable(),
+});
 
 const categorySchema = z.object({
   name: z.string().min(1, "Name is required"),
   discordRoleId: z.string().min(1, "Discord Role ID is required"),
   discordCategoryId: z.string().min(1, "Discord Category ID is required"),
   questions: z.string().transform(str => str.split("\n").filter(q => q.trim())),
-  welcomeMessage: z.string().optional(),
-  welcomeImageUrl: z.string().nullable().optional(),
+  serviceSummary: z.string().optional(),
+  serviceImageUrl: z.string().nullable().optional(),
 });
 
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const { data: botConfig } = useQuery<BotConfig>({
+    queryKey: ["/api/bot-config"]
+  });
+
   const { data: categories } = useQuery<Category[]>({
     queryKey: ["/api/categories"]
   });
 
-  const form = useForm({
+  const botConfigForm = useForm({
+    resolver: zodResolver(botConfigSchema),
+    defaultValues: {
+      welcomeMessage: botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:",
+      welcomeImageUrl: botConfig?.welcomeImageUrl || "",
+    }
+  });
+
+  const categoryForm = useForm({
     resolver: zodResolver(categorySchema),
     defaultValues: {
       name: "",
       discordRoleId: "",
       discordCategoryId: "",
       questions: "",
-      welcomeMessage: "Select a category:",
-      welcomeImageUrl: "",
+      serviceSummary: "Our team is ready to assist you!",
+      serviceImageUrl: "",
     }
   });
 
-  async function onSubmit(data: z.infer<typeof categorySchema>) {
+  async function onBotConfigSubmit(data: z.infer<typeof botConfigSchema>) {
+    try {
+      const res = await apiRequest("PATCH", "/api/bot-config", data);
+      if (!res.ok) throw new Error("Failed to update bot config");
+
+      toast({
+        title: "Success",
+        description: "Bot configuration updated successfully"
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["/api/bot-config"] });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update bot configuration",
+        variant: "destructive"
+      });
+    }
+  }
+
+  async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
     try {
       const res = await apiRequest("POST", "/api/categories", data);
       if (!res.ok) throw new Error("Failed to create category");
@@ -51,9 +89,8 @@ export default function Settings() {
         description: "Category created successfully"
       });
 
-      // Refresh categories list
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-      form.reset();
+      categoryForm.reset();
     } catch (error) {
       toast({
         title: "Error",
@@ -77,13 +114,58 @@ export default function Settings() {
       <div className="grid gap-6">
         <Card>
           <CardHeader>
+            <CardTitle>Bot Welcome Message</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Form {...botConfigForm}>
+              <form onSubmit={botConfigForm.handleSubmit(onBotConfigSubmit)} className="space-y-4">
+                <FormField
+                  control={botConfigForm.control}
+                  name="welcomeMessage"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Welcome Message</FormLabel>
+                      <FormDescription>
+                        This message will be shown when users first start the bot
+                      </FormDescription>
+                      <FormControl>
+                        <Input {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={botConfigForm.control}
+                  name="welcomeImageUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Welcome Image URL</FormLabel>
+                      <FormDescription>
+                        Optional: URL of an image to show with the welcome message
+                      </FormDescription>
+                      <FormControl>
+                        <Input {...field} value={field.value || ''} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <Button type="submit">Update Welcome Message</Button>
+              </form>
+            </Form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle>Create New Category</CardTitle>
           </CardHeader>
           <CardContent>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <Form {...categoryForm}>
+              <form onSubmit={categoryForm.handleSubmit(onCategorySubmit)} className="space-y-4">
                 <FormField
-                  control={form.control}
+                  control={categoryForm.control}
                   name="name"
                   render={({ field }) => (
                     <FormItem>
@@ -96,7 +178,7 @@ export default function Settings() {
                 />
 
                 <FormField
-                  control={form.control}
+                  control={categoryForm.control}
                   name="discordRoleId"
                   render={({ field }) => (
                     <FormItem>
@@ -109,7 +191,7 @@ export default function Settings() {
                 />
 
                 <FormField
-                  control={form.control}
+                  control={categoryForm.control}
                   name="discordCategoryId"
                   render={({ field }) => (
                     <FormItem>
@@ -122,7 +204,7 @@ export default function Settings() {
                 />
 
                 <FormField
-                  control={form.control}
+                  control={categoryForm.control}
                   name="questions"
                   render={({ field }) => (
                     <FormItem>
@@ -135,13 +217,13 @@ export default function Settings() {
                 />
 
                 <FormField
-                  control={form.control}
-                  name="welcomeMessage"
+                  control={categoryForm.control}
+                  name="serviceSummary"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Welcome Message</FormLabel>
+                      <FormLabel>Service Summary</FormLabel>
                       <FormDescription>
-                        This message will be shown when users start the bot
+                        Description of this service shown when users select it
                       </FormDescription>
                       <FormControl>
                         <Input {...field} />
@@ -151,13 +233,13 @@ export default function Settings() {
                 />
 
                 <FormField
-                  control={form.control}
-                  name="welcomeImageUrl"
+                  control={categoryForm.control}
+                  name="serviceImageUrl"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Welcome Image URL</FormLabel>
+                      <FormLabel>Service Image URL</FormLabel>
                       <FormDescription>
-                        Optional: URL of an image to show with the welcome message
+                        Optional: URL of an image to show with the service description
                       </FormDescription>
                       <FormControl>
                         <Input {...field} value={field.value || ''} />
@@ -201,8 +283,8 @@ function CategoryEditor({ category }: { category: Category }) {
       discordRoleId: category.discordRoleId,
       discordCategoryId: category.discordCategoryId,
       questions: category.questions.join("\n"),
-      welcomeMessage: category.welcomeMessage || "Select a category:",
-      welcomeImageUrl: category.welcomeImageUrl || "",
+      serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
+      serviceImageUrl: category.serviceImageUrl || "",
     }
   });
 
@@ -216,7 +298,6 @@ function CategoryEditor({ category }: { category: Category }) {
         description: "Category updated successfully"
       });
 
-      // Refresh categories list
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
     } catch (error) {
       toast({
@@ -227,10 +308,33 @@ function CategoryEditor({ category }: { category: Category }) {
     }
   }
 
+  async function onDelete() {
+    if (!confirm(`Are you sure you want to delete ${category.name}?`)) return;
+
+    try {
+      const res = await apiRequest("DELETE", `/api/categories/${category.id}`, undefined);
+      if (!res.ok) throw new Error("Failed to delete category");
+
+      toast({
+        title: "Success",
+        description: "Category deleted successfully"
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete category",
+        variant: "destructive"
+      });
+    }
+  }
+
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Edit {category.name}</CardTitle>
+        <Button variant="destructive" onClick={onDelete}>Delete</Button>
       </CardHeader>
       <CardContent>
         <Form {...form}>
@@ -289,12 +393,12 @@ function CategoryEditor({ category }: { category: Category }) {
 
             <FormField
               control={form.control}
-              name="welcomeMessage"
+              name="serviceSummary"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Welcome Message</FormLabel>
+                  <FormLabel>Service Summary</FormLabel>
                   <FormDescription>
-                    This message will be shown when users start the bot
+                    Description of this service shown when users select it
                   </FormDescription>
                   <FormControl>
                     <Input {...field} />
@@ -305,12 +409,12 @@ function CategoryEditor({ category }: { category: Category }) {
 
             <FormField
               control={form.control}
-              name="welcomeImageUrl"
+              name="serviceImageUrl"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Welcome Image URL</FormLabel>
+                  <FormLabel>Service Image URL</FormLabel>
                   <FormDescription>
-                    Optional: URL of an image to show with the welcome message
+                    Optional: URL of an image to show with the service description
                   </FormDescription>
                   <FormControl>
                     <Input {...field} value={field.value || ''} />

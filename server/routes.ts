@@ -22,8 +22,8 @@ export async function registerRoutes(app: Express) {
         "When did this start?",
         "Have you tried any solutions?"
       ],
-      welcomeMessage: "Welcome to our Test Service! Please select a category:",
-      welcomeImageUrl: null
+      serviceSummary: "Welcome to our Test Service! Our team specializes in handling test-related issues.",
+      serviceImageUrl: null
     });
     log("Default test category created");
   }
@@ -35,7 +35,28 @@ export async function registerRoutes(app: Express) {
     log(`Error initializing bots: ${error.message}`, "error");
   });
 
-  // API Routes
+  // Bot Config Routes
+  app.get("/api/bot-config", async (req, res) => {
+    const config = await storage.getBotConfig();
+    res.json(config);
+  });
+
+  app.patch("/api/bot-config", async (req, res) => {
+    const schema = z.object({
+      welcomeMessage: z.string().optional(),
+      welcomeImageUrl: z.string().nullable().optional(),
+    });
+
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).json({ message: "Invalid request body" });
+    }
+
+    const config = await storage.updateBotConfig(result.data);
+    res.json(config);
+  });
+
+  // Category Routes
   app.get("/api/categories", async (req, res) => {
     const categories = await storage.getCategories();
     res.json(categories);
@@ -59,8 +80,8 @@ export async function registerRoutes(app: Express) {
       discordRoleId: z.string(),
       discordCategoryId: z.string(),
       questions: z.array(z.string()),
-      welcomeMessage: z.string().optional(),
-      welcomeImageUrl: z.string().nullable().optional(),
+      serviceSummary: z.string().optional(),
+      serviceImageUrl: z.string().nullable().optional(),
     });
 
     const result = schema.safeParse(req.body);
@@ -83,8 +104,8 @@ export async function registerRoutes(app: Express) {
       discordRoleId: z.string().optional(),
       discordCategoryId: z.string().optional(),
       questions: z.array(z.string()).optional(),
-      welcomeMessage: z.string().optional(),
-      welcomeImageUrl: z.string().nullable().optional(),
+      serviceSummary: z.string().optional(),
+      serviceImageUrl: z.string().nullable().optional(),
     });
 
     const result = schema.safeParse(req.body);
@@ -99,6 +120,21 @@ export async function registerRoutes(app: Express) {
     res.json(category);
   });
 
+  app.delete("/api/categories/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid category ID" });
+    }
+
+    try {
+      await storage.deleteCategory(id);
+      res.json({ message: "Category deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete category" });
+    }
+  });
+
+  // Ticket Routes
   app.get("/api/tickets", async (req, res) => {
     const categoryId = parseInt(req.query.categoryId as string);
     if (isNaN(categoryId)) {

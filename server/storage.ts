@@ -1,9 +1,14 @@
 import { 
   User, InsertUser, Category, InsertCategory,
-  Ticket, InsertTicket, Message, InsertMessage 
+  Ticket, InsertTicket, Message, InsertMessage,
+  BotConfig, InsertBotConfig
 } from "@shared/schema";
 
 export interface IStorage {
+  // Bot config operations
+  getBotConfig(): Promise<BotConfig | undefined>;
+  updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig>;
+
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByTelegramId(telegramId: string): Promise<User | undefined>;
@@ -16,6 +21,7 @@ export interface IStorage {
   getCategory(id: number): Promise<Category | undefined>;
   createCategory(category: InsertCategory): Promise<Category>;
   updateCategory(id: number, category: Partial<InsertCategory>): Promise<Category | undefined>;
+  deleteCategory(id: number): Promise<void>;
 
   // Ticket operations  
   createTicket(ticket: InsertTicket): Promise<Ticket>;
@@ -36,6 +42,7 @@ export class MemStorage implements IStorage {
   private categories: Map<number, Category>;
   private tickets: Map<number, Ticket>;
   private messages: Map<number, Message>;
+  private botConfig: BotConfig;
   private currentIds: { [key: string]: number };
 
   constructor() {
@@ -47,8 +54,28 @@ export class MemStorage implements IStorage {
       users: 1,
       categories: 1,
       tickets: 1,
-      messages: 1
+      messages: 1,
+      botConfig: 1
     };
+    // Initialize default bot config
+    this.botConfig = {
+      id: 1,
+      welcomeMessage: "Welcome to the support bot! Please select a service:",
+      welcomeImageUrl: null
+    };
+  }
+
+  async getBotConfig(): Promise<BotConfig | undefined> {
+    return this.botConfig;
+  }
+
+  async updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig> {
+    this.botConfig = {
+      ...this.botConfig,
+      ...config,
+      id: 1
+    };
+    return this.botConfig;
   }
 
   async getUser(id: number): Promise<User | undefined> {
@@ -96,8 +123,8 @@ export class MemStorage implements IStorage {
     const category = { 
       ...insertCategory, 
       id,
-      welcomeMessage: insertCategory.welcomeMessage || "Select a category:",
-      welcomeImageUrl: insertCategory.welcomeImageUrl || null
+      serviceSummary: insertCategory.serviceSummary || "Our team is ready to assist you!",
+      serviceImageUrl: insertCategory.serviceImageUrl || null
     };
     this.categories.set(id, category);
     return category;
@@ -114,6 +141,10 @@ export class MemStorage implements IStorage {
     };
     this.categories.set(id, updatedCategory);
     return updatedCategory;
+  }
+
+  async deleteCategory(id: number): Promise<void> {
+    this.categories.delete(id);
   }
 
   async createTicket(insertTicket: InsertTicket): Promise<Ticket> {
@@ -152,6 +183,13 @@ export class MemStorage implements IStorage {
     }
   }
 
+  async updateTicketAmount(id: number, amount: number): Promise<void> {
+    const ticket = await this.getTicket(id);
+    if (ticket) {
+      this.tickets.set(id, { ...ticket, amount });
+    }
+  }
+
   async updateTicketDiscordChannel(id: number, channelId: string): Promise<void> {
     const ticket = await this.getTicket(id);
     if (ticket) {
@@ -159,13 +197,6 @@ export class MemStorage implements IStorage {
         ...ticket,
         discordChannelId: channelId
       });
-    }
-  }
-
-  async updateTicketAmount(id: number, amount: number): Promise<void> {
-    const ticket = await this.getTicket(id);
-    if (ticket) {
-      this.tickets.set(id, { ...ticket, amount });
     }
   }
 

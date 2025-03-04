@@ -27,10 +27,8 @@ export class TelegramBot {
   private async setupHandlers() {
     // Start command
     this.bot.command("start", async (ctx) => {
+      const botConfig = await storage.getBotConfig();
       const categories = await storage.getCategories();
-      const firstCategory = categories[0];
-      const welcomeMessage = firstCategory?.welcomeMessage || "Select a category:";
-      const welcomeImageUrl = firstCategory?.welcomeImageUrl;
 
       const keyboard = {
         inline_keyboard: categories.map(c => [{
@@ -39,23 +37,22 @@ export class TelegramBot {
         }])
       };
 
-      if (welcomeImageUrl) {
+      if (botConfig?.welcomeImageUrl) {
         try {
           await ctx.replyWithPhoto(
-            welcomeImageUrl,
+            botConfig.welcomeImageUrl,
             {
-              caption: welcomeMessage,
+              caption: botConfig.welcomeMessage,
               reply_markup: keyboard,
               parse_mode: 'HTML'
             }
           );
         } catch (error) {
-          // Fallback to text-only if image fails
           console.error("Failed to send welcome image:", error);
-          await ctx.reply(welcomeMessage, { reply_markup: keyboard });
+          await ctx.reply(botConfig?.welcomeMessage || "Welcome! Please select a service:", { reply_markup: keyboard });
         }
       } else {
-        await ctx.reply(welcomeMessage, { reply_markup: keyboard });
+        await ctx.reply(botConfig?.welcomeMessage || "Welcome! Please select a service:", { reply_markup: keyboard });
       }
     });
 
@@ -69,11 +66,9 @@ export class TelegramBot {
       if (!category) return;
 
       // Service summary with detailed description and photo
-      const photoUrl = `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
+      const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
       const summary = `<b>${category.name} Service</b>\n\n` +
-        `Welcome to our ${category.name.toLowerCase()} support service! 📋\n\n` +
-        `Our team specializes in handling all your ${category.name.toLowerCase()}-related needs. ` +
-        `We'll guide you through a few questions to better understand your request.\n\n` +
+        category.serviceSummary + '\n\n' +
         `<b>How it works:</b>\n` +
         `1. Answer our questions\n` +
         `2. A ticket will be created\n` +
