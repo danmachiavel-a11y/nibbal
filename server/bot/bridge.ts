@@ -63,8 +63,13 @@ export class BridgeManager {
         channelName
       );
 
+      log(`Discord channel created with ID: ${channelId}`);
+
       // Update ticket with channel ID and send initial message
       await storage.updateTicketStatus(ticket.id, "open", channelId);
+
+      const updatedTicket = await storage.getTicket(ticket.id);
+      log(`Updated ticket status: ${JSON.stringify(updatedTicket)}`);
 
       // Send initial message with answers
       const questions = category.questions;
@@ -88,12 +93,16 @@ export class BridgeManager {
   async forwardToTelegram(content: string, ticketId: number, username: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
+      log(`Forwarding to Telegram - Ticket: ${JSON.stringify(ticket)}`);
+
       if (!ticket || !ticket.userId) {
         log(`Invalid ticket or missing user ID: ${ticketId}`, "error");
         return;
       }
 
       const user = await storage.getUser(ticket.userId);
+      log(`Found user: ${JSON.stringify(user)}`);
+
       if (!user || !user.telegramId) {
         log(`Invalid user or missing Telegram ID for ticket: ${ticketId}`, "error");
         return;
@@ -118,6 +127,8 @@ export class BridgeManager {
   async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
+      log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
+
       if (!ticket || !ticket.discordChannelId) {
         log(`Invalid ticket or missing Discord channel: ${ticketId}`, "error");
         return;

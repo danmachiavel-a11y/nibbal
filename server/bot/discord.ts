@@ -4,11 +4,11 @@ import {
   TextChannel, 
   Webhook,
   CategoryChannel,
-  ChannelType,
-  CommandInteraction
+  ChannelType
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
+import { log } from "../vite";
 
 if (!process.env.DISCORD_BOT_TOKEN) {
   throw new Error("DISCORD_BOT_TOKEN is required");
@@ -34,82 +34,71 @@ export class DiscordBot {
 
   private setupHandlers() {
     this.client.on("ready", () => {
-      console.log("Discord bot ready");
+      log("Discord bot ready");
     });
 
     this.client.on("messageCreate", async (message) => {
       // Ignore bot messages to prevent loops
       if (message.author.bot) return;
 
+      // Ignore messages starting with . as specified
+      if (message.content.startsWith('.')) return;
+
       const ticket = await storage.getTicketByDiscordChannel(message.channelId);
-      if (!ticket) return;
-
-      console.log(`Forwarding message from Discord to Telegram for ticket ${ticket.id}`);
-
-      // Store message in database
-      const discordUser = await storage.getUserByDiscordId(message.author.id);
-      if (discordUser) {
-        await storage.createMessage({
-          ticketId: ticket.id,
-          content: message.content,
-          authorId: discordUser.id,
-          platform: "discord",
-          timestamp: new Date()
-        });
+      if (!ticket) {
+        log(`No ticket found for channel ${message.channelId}`);
+        return;
       }
 
-      // Forward to Telegram
+      log(`Processing Discord message for ticket ${ticket.id} in channel ${message.channelId}`);
+
+      try {
+        // Store message in database
+        const discordUser = await storage.getUserByDiscordId(message.author.id);
+        if (discordUser) {
+          await storage.createMessage({
+            ticketId: ticket.id,
+            content: message.content,
+            authorId: discordUser.id,
+            platform: "discord",
+            timestamp: new Date()
+          });
+          log(`Stored Discord message in database for ticket ${ticket.id}`);
+        }
+
+        // Forward to Telegram with the user's display name
+        await this.bridge.forwardToTelegram(
+          message.content,
+          ticket.id,
+          message.member?.displayName || message.author.username || "Unknown Discord User"
+        );
+
+      } catch (error) {
+        log(`Error handling Discord message: ${error}`, "error");
+      }
+    });
+
+    // Handle message edits
+    this.client.on("messageUpdate", async (oldMessage, newMessage) => {
+      if (newMessage.author?.bot) return;
+      if (!newMessage.content || newMessage.content.startsWith('.')) return;
+
+      const ticket = await storage.getTicketByDiscordChannel(newMessage.channelId);
+      if (!ticket) return;
+
+      log(`Processing edited Discord message for ticket ${ticket.id}`);
+
       await this.bridge.forwardToTelegram(
-        message.content,
+        `[EDITED] ${newMessage.content}`,
         ticket.id,
-        message.author.username || "Unknown Discord User"
+        newMessage.member?.displayName || newMessage.author?.username || "Unknown Discord User"
       );
     });
-
-    // Command handlers
-    this.client.on("interactionCreate", async (interaction) => {
-      if (!interaction.isCommand()) return;
-
-      const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
-      if (!ticket) return;
-
-      await this.handleCommand(interaction, ticket.id);
-    });
-  }
-
-  private async handleCommand(interaction: CommandInteraction, ticketId: number) {
-    switch (interaction.commandName) {
-      case "claim":
-        await storage.updateTicketStatus(ticketId, "claimed", interaction.user.id);
-        await interaction.reply("Ticket claimed!");
-        break;
-
-      case "unclaim":
-        await storage.updateTicketStatus(ticketId, "open", undefined);
-        await interaction.reply("Ticket unclaimed!");
-        break;
-
-      case "close":
-        await storage.updateTicketStatus(ticketId, "closed", undefined);
-        await interaction.reply("Ticket closed!");
-        break;
-
-      case "paid": {
-        const amount = interaction.options.get("amount")?.value;
-        if (typeof amount !== "number") {
-          await interaction.reply("Please provide a valid amount!");
-          return;
-        }
-        await storage.updateTicketAmount(ticketId, amount);
-        await interaction.reply(`Ticket marked as paid: $${amount}`);
-        break;
-      }
-    }
   }
 
   async createTicketChannel(categoryId: string, name: string): Promise<string> {
     try {
-      console.log(`Creating ticket channel ${name} in category ${categoryId}`);
+      log(`Creating ticket channel ${name} in category ${categoryId}`);
 
       const category = await this.client.channels.fetch(categoryId);
       if (!category || category.type !== ChannelType.GuildCategory) {
@@ -122,44 +111,45 @@ export class DiscordBot {
         type: ChannelType.GuildText
       });
 
-      console.log(`Successfully created channel ${channel.id}`);
+      log(`Successfully created channel ${channel.id}`);
       return channel.id;
     } catch (error) {
-      console.error(`Error creating ticket channel: ${error}`);
+      log(`Error creating ticket channel: ${error}`, "error");
       throw error;
     }
   }
 
   async sendMessage(channelId: string, content: string, username: string, avatarUrl?: string) {
     try {
-      console.log(`Attempting to send message to Discord channel ${channelId}`);
+      log(`Attempting to send message to Discord channel ${channelId}`);
 
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
         throw new Error(`Invalid channel type for channel ${channelId}`);
       }
 
-      // Create webhook if it doesn't exist
+      // Create or get webhook
       let webhook = this.webhooks.get(channelId);
       if (!webhook) {
-        console.log(`Creating new webhook for channel ${channelId}`);
+        log(`Creating new webhook for channel ${channelId}`);
         webhook = await channel.createWebhook({
-          name: username,
+          name: "Telegram Bridge",
           avatar: avatarUrl
         });
         this.webhooks.set(channelId, webhook);
+        log(`Created webhook: ${webhook.id} for channel ${channelId}`);
       }
 
-      // Send message via webhook
+      // Send message via webhook with dynamic username and avatar
       await webhook.send({
         content,
         username,
         avatarURL: avatarUrl
       });
 
-      console.log(`Successfully sent message to Discord channel ${channelId}`);
+      log(`Successfully sent message to Discord channel ${channelId}`);
     } catch (error) {
-      console.error(`Error sending message to Discord: ${error}`);
+      log(`Error sending message to Discord: ${error}`, "error");
       throw error;
     }
   }

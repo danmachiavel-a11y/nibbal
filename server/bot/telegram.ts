@@ -102,18 +102,28 @@ export class TelegramBot {
       const state = this.userStates.get(userId);
       console.log(`Received message from user ${userId}. Current state:`, state);
 
-      if (!state) {
-        // No active questionnaire, check for active ticket
-        const user = await storage.getUserByTelegramId(userId.toString());
-        if (user) {
-          // Handle message forwarding for active tickets
-          await this.handleActiveTicketMessage(ctx, user);
+      // Check if user has an active ticket first
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const categories = await storage.getCategories();
+        for (const category of categories) {
+          const tickets = await storage.getTicketsByCategory(category.id);
+          const activeTicket = tickets.find(t =>
+            t.userId === user.id &&
+            t.status !== "closed"
+          );
+
+          if (activeTicket) {
+            await this.handleTicketMessage(ctx, user, activeTicket);
+            return;
+          }
         }
-        return;
       }
 
-      // Handle questionnaire response
-      await this.handleQuestionnaireResponse(ctx, state);
+      // If no active ticket, handle as part of questionnaire
+      if (state) {
+        await this.handleQuestionnaireResponse(ctx, state);
+      }
     });
   }
 
@@ -147,59 +157,45 @@ export class TelegramBot {
     }
   }
 
-  private async handleActiveTicketMessage(ctx: Context, user: any) {
+  private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
     if (!ctx.message || !('text' in ctx.message)) return;
 
-    const categories = await storage.getCategories();
-    for (const category of categories) {
-      const tickets = await storage.getTicketsByCategory(category.id);
-      const activeTicket = tickets.find(t =>
-        t.userId === user.id &&
-        t.status !== "closed"
-      );
+    try {
+      // Store message in database
+      await storage.createMessage({
+        ticketId: ticket.id,
+        content: ctx.message.text,
+        authorId: user.id,
+        platform: "telegram",
+        timestamp: new Date()
+      });
 
-      if (activeTicket) {
-        console.log(`Found active ticket ${activeTicket.id} for message`);
-
-        try {
-          // Store message
-          await storage.createMessage({
-            ticketId: activeTicket.id,
-            content: ctx.message.text,
-            authorId: user.id,
-            platform: "telegram",
-            timestamp: new Date()
-          });
-
-          // Get user photo
-          let photoUrl: string | undefined;
-          try {
-            const photos = await ctx.telegram.getUserProfilePhotos(parseInt(user.telegramId));
-            if (photos?.total_count > 0) {
-              const fileId = photos.photos[0][0].file_id;
-              const file = await ctx.telegram.getFile(fileId);
-              if (file.file_path) {
-                photoUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-              }
-            }
-          } catch (error) {
-            console.log("Could not get user photo:", error);
+      // Get user's profile photo if available
+      let photoUrl: string | undefined;
+      try {
+        const photos = await ctx.telegram.getUserProfilePhotos(parseInt(user.telegramId));
+        if (photos?.total_count > 0) {
+          const fileId = photos.photos[0][0].file_id;
+          const file = await ctx.telegram.getFile(fileId);
+          if (file.file_path) {
+            photoUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
           }
-
-          // Forward to Discord
-          await this.bridge.forwardToDiscord(
-            ctx.message.text,
-            activeTicket.id,
-            ctx.from?.username || "Unknown",
-            photoUrl
-          );
-
-          return;
-        } catch (error) {
-          console.error("Error forwarding message:", error);
-          await ctx.reply("Sorry, there was an error sending your message. Please try again.");
         }
+      } catch (error) {
+        console.log("Could not get user photo:", error);
       }
+
+      // Forward message to Discord
+      await this.bridge.forwardToDiscord(
+        ctx.message.text,
+        ticket.id,
+        ctx.from.first_name || ctx.from.username || "Telegram User",
+        photoUrl
+      );
+      console.log(`Message forwarded to Discord for ticket ${ticket.id}`);
+    } catch (error) {
+      console.error("Error handling ticket message:", error);
+      await ctx.reply("Sorry, there was an error sending your message. Please try again.");
     }
   }
 
