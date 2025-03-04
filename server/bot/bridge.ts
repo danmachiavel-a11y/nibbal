@@ -1,0 +1,106 @@
+import { storage } from "../storage";
+import { TelegramBot } from "./telegram";
+import { DiscordBot } from "./discord";
+import type { Ticket } from "@shared/schema";
+import { log } from "../vite";
+
+export class BridgeManager {
+  private telegramBot: TelegramBot;
+  private discordBot: DiscordBot;
+
+  constructor() {
+    log("Initializing Bridge Manager");
+    this.telegramBot = new TelegramBot(this);
+    this.discordBot = new DiscordBot(this);
+  }
+
+  async start() {
+    log("Starting bots...");
+    try {
+      await Promise.allSettled([
+        this.telegramBot.start().catch(error => {
+          log(`Telegram bot error: ${error.message}`, "error");
+        }),
+        this.discordBot.start().catch(error => {
+          log(`Discord bot error: ${error.message}`, "error");
+        })
+      ]);
+      log("Bots initialization completed");
+    } catch (error) {
+      log(`Error starting bots: ${error}`, "error");
+      // Don't throw, allow partial functionality
+    }
+  }
+
+  async createTicketChannel(ticket: Ticket) {
+    if (!ticket.categoryId) {
+      throw new Error("Ticket must have a category");
+    }
+
+    const category = await storage.getCategory(ticket.categoryId);
+    if (!category) {
+      throw new Error("Category not found");
+    }
+
+    if (!ticket.userId) {
+      throw new Error("Ticket must have a user");
+    }
+
+    const user = await storage.getUser(ticket.userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const tickets = await storage.getTicketsByCategory(ticket.categoryId);
+    const ticketCount = tickets.length;
+    const channelName = `${category.name.toLowerCase()}-${ticketCount + 1}`;
+
+    log(`Creating ticket channel: ${channelName}`);
+    const channelId = await this.discordBot.createTicketChannel(
+      category.discordCategoryId,
+      channelName
+    );
+
+    // Update ticket with channel ID
+    await storage.updateTicketStatus(ticket.id, "open", null);
+
+    // Send initial message with answers
+    const questions = category.questions;
+    const answers = ticket.answers || [];
+    let message = `New ticket from ${user.username}\n\n`;
+
+    for (let i = 0; i < questions.length; i++) {
+      message += `**${questions[i]}**\n${answers[i] || 'No answer provided'}\n\n`;
+    }
+
+    await this.discordBot.sendMessage(channelId, message, "Ticket Bot");
+    log(`Ticket channel created: ${channelName}`);
+  }
+
+  async forwardToTelegram(content: string, ticketId: number, username: string) {
+    const ticket = await storage.getTicket(ticketId);
+    if (!ticket || !ticket.userId) return;
+
+    const user = await storage.getUser(ticket.userId);
+    if (!user || !user.telegramId) return;
+
+    try {
+      await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
+      log(`Message forwarded to Telegram user: ${user.username}`);
+    } catch (error) {
+      log(`Error forwarding to Telegram: ${error.message}`, "error");
+    }
+  }
+
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string) {
+    const ticket = await storage.getTicket(ticketId);
+    if (!ticket || !ticket.discordChannelId) return;
+
+    try {
+      await this.discordBot.sendMessage(ticket.discordChannelId, content, username, avatarUrl);
+      log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
+    } catch (error) {
+      log(`Error forwarding to Discord: ${error.message}`, "error");
+    }
+  }
+}
