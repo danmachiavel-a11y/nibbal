@@ -32,12 +32,13 @@ export class DiscordBot {
     this.setupHandlers();
   }
 
-  private async setupHandlers() {
+  private setupHandlers() {
     this.client.on("ready", () => {
       console.log("Discord bot ready");
     });
 
     this.client.on("messageCreate", async (message) => {
+      // Ignore bot messages to prevent loops
       if (message.author.bot) return;
 
       const ticket = await storage.getTicketByDiscordChannel(message.channelId);
@@ -46,19 +47,23 @@ export class DiscordBot {
       console.log(`Forwarding message from Discord to Telegram for ticket ${ticket.id}`);
 
       // Store message in database
-      const user = await storage.getUserByDiscordId(message.author.id);
-      if (user) {
+      const discordUser = await storage.getUserByDiscordId(message.author.id);
+      if (discordUser) {
         await storage.createMessage({
           ticketId: ticket.id,
           content: message.content,
-          authorId: user.id,
+          authorId: discordUser.id,
           platform: "discord",
           timestamp: new Date()
         });
       }
 
-      // Forward message to Telegram
-      await this.bridge.forwardToTelegram(message.content, ticket.id, message.author.username);
+      // Forward to Telegram
+      await this.bridge.forwardToTelegram(
+        message.content,
+        ticket.id,
+        message.author.username || "Unknown Discord User"
+      );
     });
 
     // Command handlers
@@ -80,12 +85,12 @@ export class DiscordBot {
         break;
 
       case "unclaim":
-        await storage.updateTicketStatus(ticketId, "open", null);
+        await storage.updateTicketStatus(ticketId, "open", undefined);
         await interaction.reply("Ticket unclaimed!");
         break;
 
       case "close":
-        await storage.updateTicketStatus(ticketId, "closed", null);
+        await storage.updateTicketStatus(ticketId, "closed", undefined);
         await interaction.reply("Ticket closed!");
         break;
 
@@ -155,14 +160,11 @@ export class DiscordBot {
       console.log(`Successfully sent message to Discord channel ${channelId}`);
     } catch (error) {
       console.error(`Error sending message to Discord: ${error}`);
-      throw error; // Re-throw to allow bridge to handle the error
+      throw error;
     }
   }
 
   async start() {
-    if (!process.env.DISCORD_BOT_TOKEN) {
-      throw new Error("DISCORD_BOT_TOKEN is required");
-    }
     await this.client.login(process.env.DISCORD_BOT_TOKEN);
   }
 }

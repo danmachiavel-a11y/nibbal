@@ -86,29 +86,47 @@ export class BridgeManager {
   }
 
   async forwardToTelegram(content: string, ticketId: number, username: string) {
-    const ticket = await storage.getTicket(ticketId);
-    if (!ticket || !ticket.userId) return;
-
-    const user = await storage.getUser(ticket.userId);
-    if (!user || !user.telegramId) return;
-
     try {
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket || !ticket.userId) {
+        log(`Invalid ticket or missing user ID: ${ticketId}`, "error");
+        return;
+      }
+
+      const user = await storage.getUser(ticket.userId);
+      if (!user || !user.telegramId) {
+        log(`Invalid user or missing Telegram ID for ticket: ${ticketId}`, "error");
+        return;
+      }
+
       await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
       log(`Message forwarded to Telegram user: ${user.username}`);
+
+      // Store the message
+      await storage.createMessage({
+        ticketId,
+        content,
+        authorId: user.id,
+        platform: "discord",
+        timestamp: new Date()
+      });
     } catch (error) {
-      log(`Error forwarding to Telegram: ${error.message}`, "error");
+      log(`Error forwarding to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   }
 
   async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string) {
-    const ticket = await storage.getTicket(ticketId);
-    if (!ticket || !ticket.discordChannelId) return;
-
     try {
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket || !ticket.discordChannelId) {
+        log(`Invalid ticket or missing Discord channel: ${ticketId}`, "error");
+        return;
+      }
+
       await this.discordBot.sendMessage(ticket.discordChannelId, content, username, avatarUrl);
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
-      log(`Error forwarding to Discord: ${error.message}`, "error");
+      log(`Error forwarding to Discord: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   }
 }

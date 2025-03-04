@@ -1,7 +1,6 @@
 import { Telegraf, Context } from "telegraf";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
-import { Message } from "telegraf/typings/core/types/typegram";
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
@@ -19,9 +18,6 @@ export class TelegramBot {
   private bridge: BridgeManager;
 
   constructor(bridge: BridgeManager) {
-    if (!process.env.TELEGRAM_BOT_TOKEN) {
-      throw new Error("TELEGRAM_BOT_TOKEN is required");
-    }
     this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
     this.userStates = new Map();
     this.bridge = bridge;
@@ -157,8 +153,8 @@ export class TelegramBot {
     const categories = await storage.getCategories();
     for (const category of categories) {
       const tickets = await storage.getTicketsByCategory(category.id);
-      const activeTicket = tickets.find(t => 
-        t.userId === user.id && 
+      const activeTicket = tickets.find(t =>
+        t.userId === user.id &&
         t.status !== "closed"
       );
 
