@@ -79,39 +79,47 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
 
-    if (over && active.id !== over.id) {
-      const oldIndex = categories.findIndex(cat => cat.id === active.id);
-      const newIndex = categories.findIndex(cat => cat.id === over.id);
+    if (!over || active.id === over.id) return;
 
-      // Create new array with updated order
-      const newCategories = [...categories];
-      const [removed] = newCategories.splice(oldIndex, 1);
-      newCategories.splice(newIndex, 0, removed);
+    const oldIndex = categories.findIndex(cat => cat.id === active.id);
+    const newIndex = categories.findIndex(cat => cat.id === over.id);
 
-      // Update display order for all affected categories
-      try {
-        for (let i = 0; i < newCategories.length; i++) {
-          const res = await fetch(`/api/categories/${newCategories[i].id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ displayOrder: i })
-          });
+    // Create new array with updated order
+    const newCategories = [...categories];
+    const [moved] = newCategories.splice(oldIndex, 1);
+    newCategories.splice(newIndex, 0, moved);
 
-          if (!res.ok) throw new Error('Failed to update category order');
-        }
+    // First update UI
+    onReorder(newCategories);
 
-        // Update local state through parent
-        onReorder(newCategories);
+    try {
+      // Update all categories with new display orders
+      const updatePromises = newCategories.map((category, index) => 
+        fetch(`/api/categories/${category.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ displayOrder: index })
+        })
+      );
 
-        // Force refresh the categories
-        queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to update category order",
-          variant: "destructive"
-        });
+      // Wait for all updates to complete
+      const results = await Promise.all(updatePromises);
+
+      // Check if any update failed
+      if (results.some(res => !res.ok)) {
+        throw new Error('Failed to update some categories');
       }
+
+      // Refresh categories from server
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    } catch (error) {
+      // Revert to original order on error
+      onReorder(categories);
+      toast({
+        title: "Error",
+        description: "Failed to update category order",
+        variant: "destructive"
+      });
     }
   };
 
