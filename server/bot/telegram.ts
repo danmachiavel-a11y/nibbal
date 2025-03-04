@@ -81,56 +81,105 @@ export class TelegramBot {
       const userId = ctx.from?.id;
       if (!userId) return;
 
+      console.log(`Initializing questionnaire for user ${userId}, category ${categoryId}`);
+
+      // Reset user state
       this.userStates.set(userId, {
         categoryId,
         currentQuestion: 0,
         answers: []
       });
 
-      // Ask first question
+      // Start with first question
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for better UX
       await ctx.reply(category.questions[0]);
 
-      // Answer the callback query to remove loading state
+      // Answer the callback query
       await ctx.answerCbQuery();
     });
 
-    // Handle messages
+    // Handle all text messages
     this.bot.on("text", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      const messageText = ctx.message?.text;
-      if (!messageText) return;
+      const state = this.userStates.get(userId);
+      console.log(`Received message from user ${userId}. Current state:`, state);
 
-      // First check if this is a message for an active ticket
-      try {
+      if (!state) {
+        // No active questionnaire, check for active ticket
         const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) return;
+        if (user) {
+          // Handle message forwarding for active tickets
+          await this.handleActiveTicketMessage(ctx, user);
+        }
+        return;
+      }
 
-        // Find any active tickets for this user
-        const activeTickets = await storage.getTicketsByCategory(user.id);
-        const activeTicket = activeTickets.find(t =>
-          t.userId === user.id &&
-          t.status !== "closed"
-        );
+      // Handle questionnaire response
+      await this.handleQuestionnaireResponse(ctx, state);
+    });
+  }
 
-        if (activeTicket) {
-          console.log(`Found active ticket ${activeTicket.id} for user ${user.username}`);
+  private async handleQuestionnaireResponse(ctx: Context, state: UserState) {
+    const category = await storage.getCategory(state.categoryId);
+    if (!category) {
+      console.error(`Category ${state.categoryId} not found`);
+      return;
+    }
 
-          // Store message in database
+    const userId = ctx.from?.id;
+    if (!userId || !ctx.message || !('text' in ctx.message)) return;
+
+    console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
+
+    // Store the answer
+    state.answers.push(ctx.message.text);
+
+    // Check if we have more questions
+    if (state.currentQuestion < category.questions.length - 1) {
+      // Move to next question
+      state.currentQuestion++;
+      this.userStates.set(userId, state); // Update state
+
+      console.log(`Moving to question ${state.currentQuestion + 1}`);
+      await ctx.reply(category.questions[state.currentQuestion]);
+    } else {
+      // All questions answered, create ticket
+      console.log('All questions answered, creating ticket');
+      await this.createTicket(ctx);
+    }
+  }
+
+  private async handleActiveTicketMessage(ctx: Context, user: any) {
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    const categories = await storage.getCategories();
+    for (const category of categories) {
+      const tickets = await storage.getTicketsByCategory(category.id);
+      const activeTicket = tickets.find(t => 
+        t.userId === user.id && 
+        t.status !== "closed"
+      );
+
+      if (activeTicket) {
+        console.log(`Found active ticket ${activeTicket.id} for message`);
+
+        try {
+          // Store message
           await storage.createMessage({
             ticketId: activeTicket.id,
-            content: messageText,
+            content: ctx.message.text,
             authorId: user.id,
             platform: "telegram",
             timestamp: new Date()
           });
 
-          // Get user's profile photo if available
+          // Get user photo
           let photoUrl: string | undefined;
           try {
             const photos = await ctx.telegram.getUserProfilePhotos(parseInt(user.telegramId));
-            if (photos && photos.total_count > 0) {
+            if (photos?.total_count > 0) {
               const fileId = photos.photos[0][0].file_id;
               const file = await ctx.telegram.getFile(fileId);
               if (file.file_path) {
@@ -143,49 +192,28 @@ export class TelegramBot {
 
           // Forward to Discord
           await this.bridge.forwardToDiscord(
-            messageText,
+            ctx.message.text,
             activeTicket.id,
             ctx.from?.username || "Unknown",
             photoUrl
           );
 
-          console.log(`Message forwarded to Discord for ticket ${activeTicket.id}`);
           return;
+        } catch (error) {
+          console.error("Error forwarding message:", error);
+          await ctx.reply("Sorry, there was an error sending your message. Please try again.");
         }
-      } catch (error) {
-        console.error("Error handling message:", error);
       }
-
-      // If no active ticket, handle as questionnaire response
-      await this.handleQuestionnaireResponse(ctx, userId, messageText);
-    });
-  }
-
-  // Handle questionnaire responses
-  private async handleQuestionnaireResponse(ctx: Context, userId: number, messageText: string) {
-    const state = this.userStates.get(userId);
-    if (!state?.categoryId) return;
-
-    const category = await storage.getCategory(state.categoryId);
-    if (!category) return;
-
-    console.log(`Processing questionnaire response for user ${userId}, question ${state.currentQuestion + 1} of ${category.questions.length}`);
-
-    // Store answer
-    state.answers.push(messageText);
-
-    // Move to next question or create ticket
-    if (state.currentQuestion < category.questions.length - 1) {
-      state.currentQuestion++;
-      console.log(`Moving to next question: ${state.currentQuestion + 1}`);
-      await ctx.reply(category.questions[state.currentQuestion]);
-    } else {
-      console.log(`All questions answered, creating ticket`);
-      await this.createTicket(ctx, userId, state);
     }
   }
 
-  private async createTicket(ctx: Context, userId: number, state: UserState) {
+  private async createTicket(ctx: Context) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const state = this.userStates.get(userId);
+    if (!state) return;
+
     try {
       // Create or get user
       let user = await storage.getUserByTelegramId(userId.toString());
