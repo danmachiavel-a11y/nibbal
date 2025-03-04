@@ -67,7 +67,7 @@ export class TelegramBot {
         // Send photo with caption (combined message)
         await ctx.replyWithPhoto(
           { url: photoUrl },
-          { 
+          {
             caption: summary,
             parse_mode: 'HTML'
           }
@@ -123,8 +123,8 @@ export class TelegramBot {
 
     for (const category of categories) {
       const categoryTickets = await storage.getTicketsByCategory(category.id);
-      const activeTicket = categoryTickets.find(t => 
-        t.userId === userId && 
+      const activeTicket = categoryTickets.find(t =>
+        t.userId === userId &&
         t.status !== "closed" &&
         t.discordChannelId // Only include if Discord channel exists
       );
@@ -216,16 +216,21 @@ export class TelegramBot {
         answers: state.answers
       });
 
-      // Create Discord channel
-      await this.bridge.createTicketChannel(ticket);
-
       // Clear user state
       this.userStates.delete(userId);
 
-      await ctx.reply("✅ Ticket created! We'll get back to you shortly.");
+      try {
+        // Try to create Discord channel
+        await this.bridge.createTicketChannel(ticket);
+        await ctx.reply("✅ Ticket created! Our support team will assist you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
+      } catch (error) {
+        // If Discord channel creation fails, still create ticket but inform user
+        await ctx.reply("✅ Ticket created! However, there might be a slight delay before our team can respond. Please be patient.");
+        console.error("Discord channel creation error:", error);
+      }
     } catch (error) {
       console.error("Error creating ticket:", error);
-      await ctx.reply("Sorry, there was an error creating your ticket. Please try again.");
+      await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
     }
   }
 

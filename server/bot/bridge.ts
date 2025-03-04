@@ -56,25 +56,33 @@ export class BridgeManager {
     const channelName = `${category.name.toLowerCase()}-${ticketCount + 1}`;
 
     log(`Creating ticket channel: ${channelName}`);
-    const channelId = await this.discordBot.createTicketChannel(
-      category.discordCategoryId,
-      channelName
-    );
 
-    // Update ticket with channel ID
-    await storage.updateTicketStatus(ticket.id, "open", null);
+    try {
+      const channelId = await this.discordBot.createTicketChannel(
+        category.discordCategoryId,
+        channelName
+      );
 
-    // Send initial message with answers
-    const questions = category.questions;
-    const answers = ticket.answers || [];
-    let message = `New ticket from ${user.username}\n\n`;
+      // Update ticket with channel ID and send initial message
+      await storage.updateTicketStatus(ticket.id, "open", channelId);
 
-    for (let i = 0; i < questions.length; i++) {
-      message += `**${questions[i]}**\n${answers[i] || 'No answer provided'}\n\n`;
+      // Send initial message with answers
+      const questions = category.questions;
+      const answers = ticket.answers || [];
+      let message = `New ticket from ${user.username}\n\n`;
+
+      for (let i = 0; i < questions.length; i++) {
+        message += `**${questions[i]}**\n${answers[i] || 'No answer provided'}\n\n`;
+      }
+
+      await this.discordBot.sendMessage(channelId, message, "Ticket Bot");
+      log(`Ticket channel created: ${channelName}`);
+    } catch (error) {
+      log(`Error creating Discord channel: ${error}`, "error");
+      // Don't rethrow - the ticket is still valid even without Discord channel
+      // Just update the status to indicate it's a Telegram-only ticket
+      await storage.updateTicketStatus(ticket.id, "open", null);
     }
-
-    await this.discordBot.sendMessage(channelId, message, "Ticket Bot");
-    log(`Ticket channel created: ${channelName}`);
   }
 
   async forwardToTelegram(content: string, ticketId: number, username: string) {
