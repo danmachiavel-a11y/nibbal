@@ -51,29 +51,30 @@ export class TelegramBot {
       const category = await storage.getCategory(categoryId);
       if (!category) return;
 
-      // Service summary with detailed description
-      const summary = `*${category.name} Service*\n\n` +
+      // Service summary with detailed description and photo
+      const photoUrl = `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
+      const summary = `<b>${category.name} Service</b>\n\n` +
         `Welcome to our ${category.name.toLowerCase()} support service! 📋\n\n` +
         `Our team specializes in handling all your ${category.name.toLowerCase()}-related needs. ` +
         `We'll guide you through a few questions to better understand your request.\n\n` +
-        `*How it works:*\n` +
+        `<b>How it works:</b>\n` +
         `1. Answer our questions\n` +
         `2. A ticket will be created\n` +
         `3. Our team will assist you promptly\n\n` +
         `Let's begin with some questions:`;
 
-      // Send service summary
-      await ctx.reply(summary, {
-        parse_mode: 'Markdown'
-      });
-
-      // Try to send service photo
       try {
-        // You can replace this with actual category-specific images
-        const photoUrl = `https://picsum.photos/seed/${category.name.toLowerCase()}/500/300`;
-        await ctx.replyWithPhoto({ url: photoUrl });
+        // Send photo with caption (combined message)
+        await ctx.replyWithPhoto(
+          { url: photoUrl },
+          { 
+            caption: summary,
+            parse_mode: 'HTML'
+          }
+        );
       } catch (error) {
-        console.log(`Could not send photo for ${category.name}:`, error);
+        // Fallback to text-only if photo fails
+        await ctx.reply(summary, { parse_mode: 'HTML' });
       }
 
       // Initialize user state
@@ -104,9 +105,9 @@ export class TelegramBot {
       // First check if this is a message for an active ticket
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
-        const tickets = await this.findActiveTicket(user.id);
-        if (tickets.length > 0) {
-          await this.handleActiveTicketMessage(ctx, user, tickets[0], messageText);
+        const activeTickets = await this.findActiveTicket(user.id);
+        if (activeTickets.length > 0) {
+          await this.handleActiveTicketMessage(ctx, user, activeTickets[0], messageText);
           return;
         }
       }
@@ -117,20 +118,20 @@ export class TelegramBot {
   }
 
   private async findActiveTicket(userId: number) {
+    const tickets = [];
     const categories = await storage.getCategories();
-    const activeTickets = [];
 
     for (const category of categories) {
-      const tickets = await storage.getTicketsByCategory(category.id);
-      const active = tickets.find(t =>
-        t.userId === userId &&
+      const categoryTickets = await storage.getTicketsByCategory(category.id);
+      const activeTicket = categoryTickets.find(t => 
+        t.userId === userId && 
         t.status !== "closed" &&
-        t.discordChannelId
+        t.discordChannelId // Only include if Discord channel exists
       );
-      if (active) activeTickets.push(active);
+      if (activeTicket) tickets.push(activeTicket);
     }
 
-    return activeTickets;
+    return tickets;
   }
 
   private async handleActiveTicketMessage(ctx: Context, user: any, ticket: any, messageText: string) {
@@ -147,11 +148,13 @@ export class TelegramBot {
       // Get user's photo if available
       let photoUrl: string | undefined;
       try {
-        const photos = await ctx.telegram.getUserProfilePhotos(user.telegramId);
-        if (photos.total_count > 0) {
+        const photos = await ctx.telegram.getUserProfilePhotos(parseInt(user.telegramId));
+        if (photos && photos.total_count > 0) {
           const fileId = photos.photos[0][0].file_id;
           const file = await ctx.telegram.getFile(fileId);
-          photoUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+          if (file.file_path) {
+            photoUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+          }
         }
       } catch (error) {
         console.log("Could not get user photo:", error);
