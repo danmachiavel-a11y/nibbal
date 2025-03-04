@@ -89,15 +89,17 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       const [removed] = newCategories.splice(oldIndex, 1);
       newCategories.splice(newIndex, 0, removed);
 
+      // Call onReorder to update the order in the database
       onReorder(newCategories);
     }
   }
 
   const handleNewRowToggle = async (id: number, newRow: boolean) => {
     try {
-      await apiRequest("PATCH", `/api/categories/${id}`, { newRow });
-      // No need to manually refresh as the parent component will handle this
-      // through the react-query cache invalidation
+      const res = await apiRequest("PATCH", `/api/categories/${id}`, { newRow });
+      if (!res.ok) {
+        throw new Error("Failed to update category");
+      }
     } catch (error) {
       console.error("Failed to update category:", error);
     }
@@ -109,7 +111,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
 
   for (const category of categories) {
     if (category.newRow && currentRow.length > 0) {
-      rows.push(currentRow);
+      rows.push([...currentRow]);
       currentRow = [category];
     } else {
       currentRow.push(category);
@@ -121,7 +123,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
   }
 
   if (currentRow.length > 0) {
-    rows.push(currentRow);
+    rows.push([...currentRow]);
   }
 
   return (
