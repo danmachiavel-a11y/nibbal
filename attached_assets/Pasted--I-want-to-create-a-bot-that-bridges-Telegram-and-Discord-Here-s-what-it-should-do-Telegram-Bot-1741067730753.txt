@@ -1,0 +1,115 @@
+"I want to create a bot that bridges Telegram and Discord. Here’s what it should do:
+
+Telegram Bot Features:
+
+The bot will have fully customizable buttons, allowing me to design the layout however I want. This includes nested or hierarchical button layouts (e.g., submenus) and support for both inline buttons and reply keyboards.
+
+Buttons will be grouped logically to make it easier for users to browse.
+
+Each button represents a category. When a user presses a button:
+
+The bot will remember which button was pressed for that user.
+
+It will display a picture, a description, and then ask a series of questions related to the category.
+
+The bot will ask one question at a time and wait for the user’s response before asking the next.
+
+The questions will be dynamic and change based on the selected category.
+
+Users can send any response to the questions—no validation or checks will be performed on their inputs.
+
+Discord Bot Features:
+
+Each Discord category is connected to a specific role. Only members with that role can see the tickets opened in that category.
+
+Each service/category will have its own transcripts category (e.g., grubhub and grubhub transcripts). The role connected to the service can see both categories.
+
+When a new ticket is created:
+
+The connected role will be pinged to notify them.
+
+Ticket management commands:
+
+/claim: A member of the role can claim a ticket, making it visible only to them. If a ticket is already claimed, it will disappear for other users until it is unclaimed.
+
+/unclaim: The member can unclaim the ticket, making it visible to the role again and pinging the role for someone else to claim.
+
+/paid [amount]: Marks the ticket as paid with the specified amount. The bot will log how much each user made.
+
+/close: Marks the ticket as resolved and moves it to the transcripts category.
+
+/reopen: Reopens a closed ticket and moves it back to the active category.
+
+/closeall [category]: Closes all tickets in the specified category and moves them to the transcripts category.
+
+/deleteall [category]: Deletes all closed tickets in the specified category.
+
+/stats: Displays statistics, including:
+
+The number of paid tickets.
+
+A list of users who used /paid and their total amounts.
+
+The total number of tickets and average payment amounts.
+
+/info: Returns information about who created the ticket, including their Telegram username and other details. This command is only accessible to the ticket owner.
+
+/ban: Bans a user from using the Telegram bot.
+
+Ticket Creation:
+
+Once the user answers all the questions in Telegram:
+
+The bot will create a new Discord channel in the specified category.
+
+The channel name will be generated using the service name and the number of tickets opened in that service (e.g., grubhub-14 for the 14th ticket in the Grubhub category). The ticket count will be continuous and never reset.
+
+It will post the user’s answers in the new channel and pin that message.
+
+Message Forwarding:
+
+After the channel is created:
+
+The bot will start forwarding messages between the Telegram chat and the Discord channel in real time.
+
+It will forward all messages except images sent from Discord that start with a . (e.g., .image).
+
+It will handle message edits but not deletions.
+
+When forwarding messages from Telegram to Discord:
+
+The bot will use Discord webhooks to avoid rate limits.
+
+The webhook’s profile picture will be set to the Telegram user’s profile picture.
+
+The webhook’s username will be set to the Telegram user’s display name (not their username).
+
+When forwarding messages from Discord to Telegram:
+
+The bot will send the message as plain text, including the Discord user’s display name.
+
+Logs and Database:
+
+The bot will maintain a database to store all ticket information, including:
+
+The user who created the ticket.
+
+The questions and answers provided.
+
+The status of the ticket (open, claimed, closed, paid, etc.).
+
+The user who claimed or closed the ticket.
+
+Payment amounts and timestamps.
+
+This database will allow users to retrieve information about a ticket even if it has been completely removed from Discord.
+
+Logs will be accessible via commands (e.g., /logs [ticket_id]) to view historical ticket data.
+
+Additional Features:
+
+The bot will maintain a state for each user to track which category they selected, which questions they’ve answered, and their progress in the question flow.
+
+The bot will handle multiple users interacting with it simultaneously without conflicts.
+
+The bot will ensure seamless communication between Telegram and Discord, allowing users to interact across platforms without interruption."
