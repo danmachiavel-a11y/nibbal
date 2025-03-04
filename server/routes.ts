@@ -106,6 +106,8 @@ export async function registerRoutes(app: Express) {
       questions: z.array(z.string()).optional(),
       serviceSummary: z.string().optional(),
       serviceImageUrl: z.string().nullable().optional(),
+      displayOrder: z.number().optional(),
+      newRow: z.boolean().optional(),
     });
 
     const result = schema.safeParse(req.body);
