@@ -75,24 +75,33 @@ export async function registerRoutes(app: Express) {
   });
 
   app.post("/api/categories", async (req, res) => {
+    console.log("Creating category/submenu with data:", req.body);
+
     const schema = z.object({
       name: z.string(),
-      discordRoleId: z.string(),
-      discordCategoryId: z.string(),
-      questions: z.array(z.string()),
+      isSubmenu: z.boolean(),
+      discordRoleId: z.string().optional(),
+      discordCategoryId: z.string().optional(),
+      questions: z.array(z.string()).optional(),
       serviceSummary: z.string().optional(),
       serviceImageUrl: z.string().nullable().optional(),
       parentId: z.number().nullable().optional(),
-      isSubmenu: z.boolean().optional(),
     });
 
     const result = schema.safeParse(req.body);
     if (!result.success) {
-      return res.status(400).json({ message: "Invalid request body" });
+      console.log("Validation failed:", result.error);
+      return res.status(400).json({ message: "Invalid request body", errors: result.error.errors });
     }
 
-    const category = await storage.createCategory(result.data);
-    res.json(category);
+    try {
+      const category = await storage.createCategory(result.data);
+      console.log("Category created:", category);
+      res.json(category);
+    } catch (error) {
+      console.error("Error creating category:", error);
+      res.status(500).json({ message: "Failed to create category" });
+    }
   });
 
   app.patch("/api/categories/:id", async (req, res) => {
@@ -110,8 +119,8 @@ export async function registerRoutes(app: Express) {
       serviceImageUrl: z.string().nullable().optional(),
       displayOrder: z.number().optional(),
       newRow: z.boolean().optional(),
-      parentId: z.number().nullable().optional(), // Added parentId for editing
-      isSubmenu: z.boolean().optional(), // Added isSubmenu for editing
+      parentId: z.number().nullable().optional(), 
+      isSubmenu: z.boolean().optional(), 
     });
 
     const result = schema.safeParse(req.body);

@@ -22,13 +22,13 @@ const botConfigSchema = z.object({
 
 const categorySchema = z.object({
   name: z.string().min(1, "Name is required"),
-  discordRoleId: z.string().min(1, "Discord Role ID is required"),
-  discordCategoryId: z.string().min(1, "Discord Category ID is required"),
+  isSubmenu: z.boolean().optional(),
+  discordRoleId: z.string().optional(),
+  discordCategoryId: z.string().optional(),
   questions: z.string().transform(str => str.split("\n").filter(q => q.trim())),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
   parentId: z.number().nullable().optional(),
-  isSubmenu: z.boolean().optional(),
 });
 
 export default function Settings() {
@@ -91,19 +91,23 @@ export default function Settings() {
 
   async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
     try {
+      console.log("Submitting category data:", data);
+
       const submitData = {
         name: data.name,
-        isSubmenu: data.isSubmenu,
+        isSubmenu: data.isSubmenu || false,
         // Only include these fields if it's not a submenu
         ...(data.isSubmenu ? {} : {
-          discordRoleId: data.discordRoleId,
-          discordCategoryId: data.discordCategoryId,
-          questions: data.questions,
-          serviceSummary: data.serviceSummary,
-          serviceImageUrl: data.serviceImageUrl,
-          parentId: data.parentId
+          discordRoleId: data.discordRoleId || "",
+          discordCategoryId: data.discordCategoryId || "",
+          questions: data.questions || [],
+          serviceSummary: data.serviceSummary || "Our team is ready to assist you!",
+          serviceImageUrl: data.serviceImageUrl || null,
+          parentId: data.parentId || null
         })
       };
+
+      console.log("Processed submit data:", submitData);
 
       const res = await apiRequest("POST", "/api/categories", submitData);
       if (!res.ok) throw new Error("Failed to create category");
@@ -116,6 +120,7 @@ export default function Settings() {
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
       categoryForm.reset();
     } catch (error) {
+      console.error("Error creating category:", error);
       toast({
         title: "Error",
         description: "Failed to create category",

@@ -121,20 +121,25 @@ export class MemStorage implements IStorage {
 
   async createCategory(insertCategory: InsertCategory): Promise<Category> {
     const id = this.currentIds.categories++;
-    const category = { 
-      ...insertCategory, 
+
+    // Base category data
+    const category = {
       id,
-      serviceSummary: insertCategory.serviceSummary || "Our team is ready to assist you!",
-      serviceImageUrl: insertCategory.serviceImageUrl || null,
-      displayOrder: insertCategory.displayOrder || 0,
-      newRow: insertCategory.newRow || false,
+      name: insertCategory.name,
       isSubmenu: insertCategory.isSubmenu || false,
       parentId: insertCategory.parentId || null,
-      questions: insertCategory.questions || [], 
-      discordRoleId: insertCategory.discordRoleId || "",
-      discordCategoryId: insertCategory.discordCategoryId || "",
-      name: insertCategory.name || ""
+      displayOrder: insertCategory.displayOrder || 0,
+      newRow: insertCategory.newRow || false,
+
+      // If it's a submenu, use empty/null values for these fields
+      discordRoleId: insertCategory.isSubmenu ? "" : (insertCategory.discordRoleId || ""),
+      discordCategoryId: insertCategory.isSubmenu ? "" : (insertCategory.discordCategoryId || ""),
+      questions: insertCategory.isSubmenu ? [] : (insertCategory.questions || []),
+      serviceSummary: insertCategory.isSubmenu ? "" : (insertCategory.serviceSummary || "Our team is ready to assist you!"),
+      serviceImageUrl: insertCategory.isSubmenu ? null : (insertCategory.serviceImageUrl || null),
     };
+
+    console.log("Creating category in storage:", category);
     this.categories.set(id, category);
     return category;
   }
