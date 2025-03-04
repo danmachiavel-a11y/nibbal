@@ -12,6 +12,7 @@ import { ArrowLeft } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Category, BotConfig } from "@shared/schema";
+import { CategoryGrid } from "@/components/CategoryGrid";
 
 const botConfigSchema = z.object({
   welcomeMessage: z.string(),
@@ -103,6 +104,30 @@ export default function Settings() {
       });
     }
   }
+
+  const handleReorder = async (reorderedCategories: Category[]) => {
+    for (let i = 0; i < reorderedCategories.length; i++) {
+      const category = reorderedCategories[i];
+      try {
+        await apiRequest("PATCH", `/api/categories/${category.id}`, {
+          displayOrder: i
+        });
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Failed to update category order",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
+    queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    toast({
+      title: "Success",
+      description: "Category order updated"
+    });
+  };
 
   return (
     <div className="container mx-auto p-6">
@@ -295,6 +320,19 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+        {categories && categories.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Category Layout</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CategoryGrid
+                categories={categories}
+                onReorder={handleReorder}
+              />
+            </CardContent>
+          </Card>
+        )}
         {categories && categories.length > 0 && (
           <Card>
             <CardHeader>
