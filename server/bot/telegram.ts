@@ -161,63 +161,7 @@ export class TelegramBot {
     });
   }
 
-  private async findActiveTicket(userId: number) {
-    const tickets = [];
-    const categories = await storage.getCategories();
-
-    for (const category of categories) {
-      const categoryTickets = await storage.getTicketsByCategory(category.id);
-      const activeTicket = categoryTickets.find(t =>
-        t.userId === userId &&
-        t.status !== "closed"
-      );
-      if (activeTicket) tickets.push(activeTicket);
-    }
-
-    return tickets;
-  }
-
-  private async handleActiveTicketMessage(ctx: Context, user: any, ticket: any, messageText: string) {
-    try {
-      // Store message in database
-      await storage.createMessage({
-        ticketId: ticket.id,
-        content: messageText,
-        authorId: user.id,
-        platform: "telegram",
-        timestamp: new Date()
-      });
-
-      // Get user's photo if available
-      let photoUrl: string | undefined;
-      try {
-        const photos = await ctx.telegram.getUserProfilePhotos(parseInt(user.telegramId));
-        if (photos && photos.total_count > 0) {
-          const fileId = photos.photos[0][0].file_id;
-          const file = await ctx.telegram.getFile(fileId);
-          if (file.file_path) {
-            photoUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-          }
-        }
-      } catch (error) {
-        console.log("Could not get user photo:", error);
-      }
-
-      // Forward to Discord
-      await this.bridge.forwardToDiscord(
-        messageText,
-        ticket.id,
-        ctx.from?.username || "Unknown",
-        photoUrl
-      );
-
-      console.log(`Message forwarded to Discord for ticket ${ticket.id}`);
-    } catch (error) {
-      console.error("Error handling ticket message:", error);
-      await ctx.reply("Sorry, there was an error sending your message. Please try again.");
-    }
-  }
-
+  // Handle questionnaire responses
   private async handleQuestionnaireResponse(ctx: Context, userId: number, messageText: string) {
     const state = this.userStates.get(userId);
     if (!state?.categoryId) return;
@@ -225,14 +169,18 @@ export class TelegramBot {
     const category = await storage.getCategory(state.categoryId);
     if (!category) return;
 
+    console.log(`Processing questionnaire response for user ${userId}, question ${state.currentQuestion + 1} of ${category.questions.length}`);
+
     // Store answer
     state.answers.push(messageText);
 
     // Move to next question or create ticket
     if (state.currentQuestion < category.questions.length - 1) {
       state.currentQuestion++;
+      console.log(`Moving to next question: ${state.currentQuestion + 1}`);
       await ctx.reply(category.questions[state.currentQuestion]);
     } else {
+      console.log(`All questions answered, creating ticket`);
       await this.createTicket(ctx, userId, state);
     }
   }
