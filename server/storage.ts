@@ -125,7 +125,15 @@ export class MemStorage implements IStorage {
       ...insertCategory, 
       id,
       serviceSummary: insertCategory.serviceSummary || "Our team is ready to assist you!",
-      serviceImageUrl: insertCategory.serviceImageUrl || null
+      serviceImageUrl: insertCategory.serviceImageUrl || null,
+      displayOrder: insertCategory.displayOrder || 0,
+      newRow: insertCategory.newRow || false,
+      isSubmenu: insertCategory.isSubmenu || false,
+      parentId: insertCategory.parentId || null,
+      questions: insertCategory.questions || [], 
+      discordRoleId: insertCategory.discordRoleId || "",
+      discordCategoryId: insertCategory.discordCategoryId || "",
+      name: insertCategory.name || ""
     };
     this.categories.set(id, category);
     return category;
@@ -138,8 +146,12 @@ export class MemStorage implements IStorage {
     const updatedCategory = {
       ...category,
       ...updateData,
-      id // Ensure ID remains unchanged
+      id, 
+      questions: Array.isArray(updateData.questions) ? updateData.questions : category.questions,
+      parentId: updateData.parentId === undefined ? category.parentId : updateData.parentId,
+      isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu
     };
+
     this.categories.set(id, updatedCategory);
     return updatedCategory;
   }
