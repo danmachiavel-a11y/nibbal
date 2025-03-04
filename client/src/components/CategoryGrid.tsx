@@ -17,6 +17,7 @@ import { restrictToParentElement } from "@dnd-kit/modifiers";
 import type { Category } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 
 interface SortableItemProps {
   id: number;
@@ -75,6 +76,7 @@ interface CategoryGridProps {
 
 export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const sensors = useSensors(
     useSensor(MouseSensor),
     useSensor(TouchSensor)
@@ -91,21 +93,54 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       const [removed] = newCategories.splice(oldIndex, 1);
       newCategories.splice(newIndex, 0, removed);
 
-      // Update display order for all affected categories
-      await onReorder(newCategories);
+      // Update the display order in the database
+      try {
+        for (let i = 0; i < newCategories.length; i++) {
+          const category = newCategories[i];
+          await apiRequest("PATCH", `/api/categories/${category.id}`, {
+            displayOrder: i
+          });
+        }
+
+        // Update local state through parent component
+        onReorder(newCategories);
+
+        // Force refresh categories
+        queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Failed to update category order",
+          variant: "destructive"
+        });
+      }
     }
   }
 
   const handleNewRowToggle = async (id: number, newRow: boolean) => {
     try {
-      const res = await apiRequest("PATCH", `/api/categories/${id}`, { newRow });
+      const res = await apiRequest("PATCH", `/api/categories/${id}`, { 
+        newRow 
+      });
+
       if (!res.ok) {
         throw new Error("Failed to update category");
       }
-      // Invalidate categories cache to trigger a refresh
+
+      // Force refresh the categories
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+
+      toast({
+        title: "Success",
+        description: `Category will ${newRow ? 'start' : 'not start'} a new row`,
+      });
+
     } catch (error) {
-      console.error("Failed to update category:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update row setting",
+        variant: "destructive"
+      });
     }
   };
 
