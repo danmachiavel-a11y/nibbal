@@ -103,41 +103,60 @@ export class DiscordBot {
   }
 
   async createTicketChannel(categoryId: string, name: string): Promise<string> {
-    const category = await this.client.channels.fetch(categoryId);
-    if (!category || category.type !== ChannelType.GuildCategory) {
-      throw new Error("Invalid category");
+    try {
+      console.log(`Creating ticket channel ${name} in category ${categoryId}`);
+
+      const category = await this.client.channels.fetch(categoryId);
+      if (!category || category.type !== ChannelType.GuildCategory) {
+        throw new Error(`Invalid category ${categoryId}`);
+      }
+
+      const channel = await (category as CategoryChannel).guild.channels.create({
+        name,
+        parent: category,
+        type: ChannelType.GuildText
+      });
+
+      console.log(`Successfully created channel ${channel.id}`);
+      return channel.id;
+    } catch (error) {
+      console.error(`Error creating ticket channel: ${error}`);
+      throw error;
     }
-
-    const channel = await (category as CategoryChannel).guild.channels.create({
-      name,
-      parent: category,
-      type: ChannelType.GuildText
-    });
-
-    return channel.id;
   }
 
   async sendMessage(channelId: string, content: string, username: string, avatarUrl?: string) {
-    let webhook = this.webhooks.get(channelId);
+    try {
+      console.log(`Attempting to send message to Discord channel ${channelId}`);
 
-    if (!webhook) {
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
-        throw new Error("Invalid channel type");
+        throw new Error(`Invalid channel type for channel ${channelId}`);
       }
 
-      webhook = await channel.createWebhook({
-        name: username,
-        avatar: avatarUrl
-      });
-      this.webhooks.set(channelId, webhook);
-    }
+      // Create webhook if it doesn't exist
+      let webhook = this.webhooks.get(channelId);
+      if (!webhook) {
+        console.log(`Creating new webhook for channel ${channelId}`);
+        webhook = await channel.createWebhook({
+          name: username,
+          avatar: avatarUrl
+        });
+        this.webhooks.set(channelId, webhook);
+      }
 
-    await webhook.send({
-      content,
-      username,
-      avatarURL: avatarUrl
-    });
+      // Send message via webhook
+      await webhook.send({
+        content,
+        username,
+        avatarURL: avatarUrl
+      });
+
+      console.log(`Successfully sent message to Discord channel ${channelId}`);
+    } catch (error) {
+      console.error(`Error sending message to Discord: ${error}`);
+      throw error; // Re-throw to allow bridge to handle the error
+    }
   }
 
   async start() {

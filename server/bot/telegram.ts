@@ -103,16 +103,60 @@ export class TelegramBot {
       if (!messageText) return;
 
       // First check if this is a message for an active ticket
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        const activeTickets = await this.findActiveTicket(user.id);
-        if (activeTickets.length > 0) {
-          await this.handleActiveTicketMessage(ctx, user, activeTickets[0], messageText);
+      try {
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) return;
+
+        // Find any active tickets for this user
+        const activeTickets = await storage.getTicketsByCategory(user.id);
+        const activeTicket = activeTickets.find(t =>
+          t.userId === user.id &&
+          t.status !== "closed"
+        );
+
+        if (activeTicket) {
+          console.log(`Found active ticket ${activeTicket.id} for user ${user.username}`);
+
+          // Store message in database
+          await storage.createMessage({
+            ticketId: activeTicket.id,
+            content: messageText,
+            authorId: user.id,
+            platform: "telegram",
+            timestamp: new Date()
+          });
+
+          // Get user's profile photo if available
+          let photoUrl: string | undefined;
+          try {
+            const photos = await ctx.telegram.getUserProfilePhotos(parseInt(user.telegramId));
+            if (photos && photos.total_count > 0) {
+              const fileId = photos.photos[0][0].file_id;
+              const file = await ctx.telegram.getFile(fileId);
+              if (file.file_path) {
+                photoUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+              }
+            }
+          } catch (error) {
+            console.log("Could not get user photo:", error);
+          }
+
+          // Forward to Discord
+          await this.bridge.forwardToDiscord(
+            messageText,
+            activeTicket.id,
+            ctx.from?.username || "Unknown",
+            photoUrl
+          );
+
+          console.log(`Message forwarded to Discord for ticket ${activeTicket.id}`);
           return;
         }
+      } catch (error) {
+        console.error("Error handling message:", error);
       }
 
-      // If not a ticket message, handle as questionnaire response
+      // If no active ticket, handle as questionnaire response
       await this.handleQuestionnaireResponse(ctx, userId, messageText);
     });
   }
