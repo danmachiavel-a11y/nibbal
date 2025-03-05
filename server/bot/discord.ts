@@ -399,12 +399,29 @@ export class DiscordBot {
 
         // Forward to Telegram with detailed error tracking
         try {
-          await this.bridge.forwardToTelegram(
-            message.content,
-            ticket.id,
-            message.member?.displayName || message.author.username || "Unknown Discord User"
-          );
-          log(`Successfully forwarded message to Telegram for ticket ${ticket.id}`);
+          // Handle text message
+          if (message.content) {
+            await this.bridge.forwardToTelegram(
+              message.content,
+              ticket.id,
+              message.member?.displayName || message.author.username || "Unknown Discord User"
+            );
+            log(`Successfully forwarded text to Telegram for ticket ${ticket.id}`);
+          }
+
+          // Handle attachments (images)
+          if (message.attachments.size > 0) {
+            for (const [_, attachment] of message.attachments) {
+              if (attachment.contentType?.startsWith('image/')) {
+                await this.bridge.forwardImageToTelegram(
+                  attachment.url,
+                  ticket.id,
+                  message.member?.displayName || message.author.username || "Unknown Discord User"
+                );
+                log(`Successfully forwarded image to Telegram for ticket ${ticket.id}`);
+              }
+            }
+          }
         } catch (error) {
           log(`Failed to forward message to Telegram for ticket ${ticket.id}: ${error}`, "error");
           // Don't throw here - we already stored the message in DB

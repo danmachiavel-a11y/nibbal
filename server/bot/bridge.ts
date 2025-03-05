@@ -293,6 +293,38 @@ export class BridgeManager {
     }
   }
 
+  async forwardImageToTelegram(imageUrl: string, ticketId: number, username: string) {
+    try {
+      const ticket = await storage.getTicket(ticketId);
+      log(`Forwarding image to Telegram - Ticket: ${JSON.stringify(ticket)}`);
+
+      if (!ticket || !ticket.userId) {
+        log(`Invalid ticket or missing user ID: ${ticketId}`, "error");
+        return;
+      }
+
+      const user = await storage.getUser(ticket.userId);
+      log(`Found user: ${JSON.stringify(user)}`);
+
+      if (!user || !user.telegramId) {
+        log(`Invalid user or missing Telegram ID for ticket: ${ticketId}`, "error");
+        return;
+      }
+
+      // Add safety check for valid Telegram ID
+      if (!user.telegramId.match(/^\d+$/)) {
+        log(`Invalid Telegram ID format for user: ${user.id}`, "error");
+        return;
+      }
+
+      // Send image to Telegram
+      await this.telegramBot.sendImage(parseInt(user.telegramId), imageUrl, `${username} sent an image`);
+      log(`Successfully sent image to Telegram user: ${user.username}`);
+    } catch (error) {
+      log(`Error forwarding image to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
+
   getTelegramBot(): TelegramBot {
     return this.telegramBot;
   }

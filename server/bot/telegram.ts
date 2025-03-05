@@ -512,4 +512,31 @@ export class TelegramBot {
       throw error;
     }
   }
+  async sendImage(chatId: number, imageUrl: string, caption?: string) {
+    try {
+      // Validate chat ID
+      if (!Number.isInteger(chatId) || chatId <= 0) {
+        throw new Error(`Invalid Telegram chat ID: ${chatId}`);
+      }
+
+      // Validate image URL
+      if (!imageUrl || typeof imageUrl !== 'string') {
+        throw new Error('Invalid image URL');
+      }
+
+      try {
+        await this.bot.telegram.sendPhoto(chatId, imageUrl, {
+          caption: caption ? caption.slice(0, 1024) : undefined // Telegram caption limit
+        });
+        log(`Successfully sent image to Telegram chat: ${chatId}`);
+      } catch (error) {
+        log(`Error sending image, trying to send as URL: ${error}`, "error");
+        // If sending photo fails, send as URL
+        await this.sendMessage(chatId, `${caption}\n${imageUrl}`);
+      }
+    } catch (error) {
+      log(`Error sending Telegram image: ${error}`, "error");
+      throw error;
+    }
+  }
 }
