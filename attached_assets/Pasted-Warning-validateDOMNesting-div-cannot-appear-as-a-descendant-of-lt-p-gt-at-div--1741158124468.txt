@@ -1,0 +1,33 @@
+Warning: validateDOMNesting(...): <div> cannot appear as a descendant of &lt;p&gt;.
+    at div
+    at CustomFormDescription
+    at p
+    at https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/components/ui/form.tsx:164:6
+    at div
+    at https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/components/ui/form.tsx:71:6
+    at Controller (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-YABUFNLM.js?v=8a000011:313:35)
+    at FormField (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/components/ui/form.tsx:32:6)
+    at form
+    at FormProvider (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-YABUFNLM.js?v=8a000011:102:11)
+    at div
+    at _c9 (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/components/ui/card.tsx:114:12)
+    at div
+    at _c (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/components/ui/card.tsx:20:11)
+    at div
+    at div
+    at Settings (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/pages/settings.tsx:72:21)
+    at Route (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/wouter.js?v=8a000011:323:16)
+    at Switch (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/wouter.js?v=8a000011:379:17)
+    at Router
+    at QueryClientProvider (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/@tanstack_react-query.js?v=8a000011:2805:3)
+    at App
+Error updating category: 
+Error {}
+message: "400: {"message":"Invalid request body"}"
+stack: "Error: 400: {"message":"Invalid request body"}↵ at throwIfResNotOk (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/lib/queryClient.ts:5:11)↵ at async apiRequest (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/lib/queryClient.ts:15:3)↵ at async onSubmit (https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/src/pages/settings.tsx:950:19)↵ at async https://b42aeb3e-5e0c-41da-919b-5607a98ecd2d-00-uh8oz7zfb2tr.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-YABUFNLM.js?v=8a000011:1675:9"
+get stack: ƒ ()
+length: 0
+name: ""
+[[Prototype]]: ƒ ()
+set stack: ƒ ()
+[[Prototype]]: Object
