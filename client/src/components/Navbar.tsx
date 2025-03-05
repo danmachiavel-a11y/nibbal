@@ -18,18 +18,18 @@ export function Navbar() {
       <div className="max-w-screen-xl mx-auto px-4">
         <div className="flex h-14 items-center space-x-4">
           {navItems.map(({ href, label, icon: Icon }) => (
-            <Link 
-              key={href} 
-              href={href}
-              className={cn(
-                "flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors",
-                location === href
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
+            <Link key={href} href={href}>
+              <a
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors",
+                  location === href
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {label}
+              </a>
             </Link>
           ))}
         </div>

@@ -295,7 +295,6 @@ export class DiscordBot {
         }
       }
 
-      // Update the closeall command implementation
       if (interaction.commandName === 'closeall') {
         const categoryChannel = interaction.options.getChannel('category', true);
 
@@ -321,78 +320,49 @@ export class DiscordBot {
             return;
           }
 
+          let moveCount = 0;
+          let errorCount = 0;
+
           // Start the process
           await interaction.reply({
-            content: `Processing ${channels.size} channels in ${categoryChannel.name}...`,
+            content: `Moving ${channels.size} tickets to their respective transcript categories...`,
             ephemeral: true
           });
-
-          let moveCount = 0;
-          let skipCount = 0;
-          let errorCount = 0;
 
           // Process all channels
           for (const [_, channel] of channels) {
             if (channel instanceof TextChannel) {
               try {
                 const ticket = await storage.getTicketByDiscordChannel(channel.id);
-
-                // If no ticket found, skip this channel but don't count as error
-                if (!ticket) {
-                  log(`No ticket found for channel ${channel.id} (${channel.name}), skipping...`);
-                  skipCount++;
-                  continue;
+                if (ticket) {
+                  const category = await storage.getCategory(ticket.categoryId);
+                  if (category?.transcriptCategoryId) {
+                    const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
+                    if (transcriptCategory instanceof CategoryChannel) {
+                      await channel.setParent(transcriptCategory.id);
+                      await storage.updateTicketStatus(ticket.id, "closed");
+                      moveCount++;
+                    }
+                  }
                 }
-
-                const category = await storage.getCategory(ticket.categoryId!);
-                if (!category?.transcriptCategoryId) {
-                  log(`No transcript category set for ticket ${ticket.id} (${channel.name}), skipping...`);
-                  skipCount++;
-                  continue;
-                }
-
-                log(`Moving channel ${channel.name} (${channel.id}) to transcript category ${category.transcriptCategoryId}`);
-
-                const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
-                if (!(transcriptCategory instanceof CategoryChannel)) {
-                  throw new Error(`Invalid transcript category type for ${category.transcriptCategoryId}`);
-                }
-
-                // Move the channel
-                await channel.setParent(transcriptCategory.id, {
-                  lockPermissions: false
-                });
-
-                // Update ticket status
-                await storage.updateTicketStatus(ticket.id, "closed");
-
-                moveCount++;
-                log(`Successfully moved channel ${channel.name} to transcripts`);
-
               } catch (error) {
-                log(`Error processing channel ${channel.name}: ${error}`, "error");
+                log(`Error moving channel ${channel.name}: ${error}`, "error");
                 errorCount++;
               }
             }
           }
 
-          // Send detailed final status
-          const statusMessage = [
-            `✅ Processed ${channels.size} channels in ${categoryChannel.name}:`,
-            `• ${moveCount} channels moved to transcripts`,
-            `• ${skipCount} channels skipped (no ticket or transcript category)`,
-            `• ${errorCount} errors encountered`
-          ].join('\n');
-
+          // Send final status
           await interaction.followUp({
-            content: statusMessage,
+            content: `✅ Processed ${channels.size} tickets:\n` +
+                    `• ${moveCount} tickets moved to transcripts\n` +
+                    `• ${errorCount} errors encountered`,
             ephemeral: true
           });
-
         } catch (error) {
           log(`Error in closeall command: ${error}`, "error");
           await interaction.followUp({
-            content: "An error occurred while processing channels. Some channels may not have been moved.",
+            content: "An error occurred while closing tickets. Some tickets may not have been processed.",
             ephemeral: true
           });
         }
@@ -400,43 +370,43 @@ export class DiscordBot {
     });
 
     this.client.on("messageCreate", async (message) => {
-        // Ignore bot messages to prevent loops
-        if (message.author.bot) return;
-        if (message.content.startsWith('.')) return;
+      // Ignore bot messages to prevent loops
+      if (message.author.bot) return;
+      if (message.content.startsWith('.')) return;
 
-        const ticket = await storage.getTicketByDiscordChannel(message.channelId);
-        if (!ticket) {
-          log(`No ticket found for channel ${message.channelId}`);
-          return;
+      const ticket = await storage.getTicketByDiscordChannel(message.channelId);
+      if (!ticket) {
+        log(`No ticket found for channel ${message.channelId}`);
+        return;
+      }
+
+      log(`Processing Discord message for ticket ${ticket.id} in channel ${message.channelId}`);
+
+      try {
+        // Store message in database
+        const discordUser = await storage.getUserByDiscordId(message.author.id);
+        if (discordUser) {
+          await storage.createMessage({
+            ticketId: ticket.id,
+            content: message.content,
+            authorId: discordUser.id,
+            platform: "discord",
+            timestamp: new Date()
+          });
+          log(`Stored Discord message in database for ticket ${ticket.id}`);
         }
 
-        log(`Processing Discord message for ticket ${ticket.id} in channel ${message.channelId}`);
+        // Forward to Telegram with the user's display name
+        await this.bridge.forwardToTelegram(
+          message.content,
+          ticket.id,
+          message.member?.displayName || message.author.username || "Unknown Discord User"
+        );
 
-        try {
-          // Store message in database
-          const discordUser = await storage.getUserByDiscordId(message.author.id);
-          if (discordUser) {
-            await storage.createMessage({
-              ticketId: ticket.id,
-              content: message.content,
-              authorId: discordUser.id,
-              platform: "discord",
-              timestamp: new Date()
-            });
-            log(`Stored Discord message in database for ticket ${ticket.id}`);
-          }
-
-          // Forward to Telegram with the user's display name
-          await this.bridge.forwardToTelegram(
-            message.content,
-            ticket.id,
-            message.member?.displayName || message.author.username || "Unknown Discord User"
-          );
-
-        } catch (error) {
-          log(`Error handling Discord message: ${error}`, "error");
-        }
-      });
+      } catch (error) {
+        log(`Error handling Discord message: ${error}`, "error");
+      }
+    });
 
     // Handle message edits
     this.client.on("messageUpdate", async (oldMessage, newMessage) => {
@@ -543,9 +513,7 @@ export class DiscordBot {
         throw new Error(`Invalid category ${categoryId}`);
       }
 
-      await channel.setParent(category.id, {
-        lockPermissions: false // Keep existing permissions
-      });
+      await channel.setParent(category.id);
       log(`Successfully moved channel ${channelId} to category ${categoryId}`);
     } catch (error) {
       log(`Error moving channel to category: ${error}`, "error");

@@ -1,47 +1,102 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { log } from "./vite";
+import { setupVite, serveStatic, log } from "./vite";
+import { storage } from "./storage";
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Basic request logging
 app.use((req, res, next) => {
-  if (req.path.startsWith("/api")) {
-    log(`${req.method} ${req.path}`);
-  }
+  const start = Date.now();
+  const path = req.path;
+  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+
+  const originalResJson = res.json;
+  res.json = function (bodyJson, ...args) {
+    capturedJsonResponse = bodyJson;
+    return originalResJson.apply(res, [bodyJson, ...args]);
+  };
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (path.startsWith("/api")) {
+      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      if (capturedJsonResponse) {
+        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      }
+
+      if (logLine.length > 80) {
+        logLine = logLine.slice(0, 79) + "…";
+      }
+
+      log(logLine);
+    }
+  });
+
   next();
 });
 
 (async () => {
-  try {
-    log("Starting server initialization...");
-    const server = await registerRoutes(app);
+  // First, create HTTP server and register routes
+  log("Setting up HTTP server...");
+  const server = await registerRoutes(app);
 
-    // Basic error handler
-    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-      log(`Error handler caught: ${err.message}`, "error");
-      res.status(500).json({ message: err.message || "Internal Server Error" });
-    });
+  // Add error handler
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+    log(`Error handler caught: ${err.message}`, "error");
+    res.status(status).json({ message });
+  });
 
-    // Add error event listener
-    server.on('error', (error: any) => {
-      log(`Server error encountered: ${error.message}`, "error");
-      if (error.code === 'EADDRINUSE') {
-        log('Port is already in use, trying alternate port 3000');
-        server.listen(3000, "0.0.0.0");
-      }
-    });
-
-    log("Attempting to start server...");
-    server.listen(5000, "0.0.0.0", () => {
-      const addr = server.address();
-      log(`Server successfully started and listening on ${typeof addr === 'object' ? addr?.port : 5000}`);
-    });
-
-  } catch (error) {
-    log(`Fatal error during startup: ${error}`, "error");
-    process.exit(1);
+  // Setup Vite or serve static files
+  if (app.get("env") === "development") {
+    await setupVite(app, server);
+  } else {
+    serveStatic(app);
   }
-})();
+
+  // Start the server first
+  await new Promise<void>((resolve) => {
+    server.listen({
+      port: 5000,
+      host: "0.0.0.0",
+      reusePort: true,
+    }, () => {
+      log(`Server listening on port 5000`);
+      resolve();
+    });
+  });
+
+  // Create default test category after server is up
+  try {
+    log("Creating default test category...");
+    const existingCategories = await storage.getCategories();
+    if (existingCategories.length === 0) {
+      const testCategory = {
+        name: 'Test Service',
+        discordRoleId: '1346324056244490363',
+        discordCategoryId: '1345983179353362447',
+        transcriptCategoryId: '1346383603365580820',
+        questions: [
+          'What is your issue?',
+          'When did this start?',
+          'Have you tried any solutions?'
+        ],
+        serviceSummary: 'Welcome to our Test Service! Our team specializes in handling test-related issues.',
+        serviceImageUrl: null
+      };
+      await storage.createCategory(testCategory);
+      log("Default test category created with data:", JSON.stringify(testCategory, null, 2));
+    }
+  } catch (error) {
+    log(`Error setting up default category: ${error}`, "error");
+    // Don't throw error here, let the server continue running
+  }
+
+  log("Server initialization completed successfully");
+})().catch(error => {
+  log(`Fatal error during startup: ${error}`, "error");
+  process.exit(1);
+});
