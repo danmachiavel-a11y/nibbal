@@ -22,7 +22,6 @@ export class TelegramBot {
     this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN as string);
     this.bridge = bridge;
     this.setupHandlers();
-    log("Telegram bot instance created successfully");
   }
 
   private setupHandlers() {
@@ -74,7 +73,7 @@ export class TelegramBot {
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
 
         try {
-          // Upload to ImgBB first
+          // Upload to ImgBB for permanent storage
           const imgbbUrl = await this.uploadToImgBB(fileLink.href);
 
           // Forward permanent URL to Discord
@@ -127,12 +126,12 @@ export class TelegramBot {
   }
 
   async start() {
-    try {
-      if (this._isConnected) {
-        log("Telegram bot is already running");
-        return;
-      }
+    if (this._isConnected) {
+      log("Telegram bot is already running");
+      return;
+    }
 
+    try {
       log("Starting Telegram bot...");
       await this.bot.launch();
       this._isConnected = true;
@@ -145,12 +144,12 @@ export class TelegramBot {
   }
 
   async stop() {
-    try {
-      if (!this._isConnected) {
-        log("Telegram bot is not running");
-        return;
-      }
+    if (!this._isConnected) {
+      log("Telegram bot is not running");
+      return;
+    }
 
+    try {
       log("Stopping Telegram bot...");
       await this.bot.stop();
       this._isConnected = false;
@@ -164,6 +163,7 @@ export class TelegramBot {
   getIsConnected(): boolean {
     return this._isConnected;
   }
+
   async sendMessage(chatId: number, message: string) {
     try {
       log(`Attempting to send message to Telegram chat ${chatId}`);
@@ -204,11 +204,8 @@ export class TelegramBot {
       }
 
       try {
-        // Upload to ImgBB first
-        const imgbbUrl = await this.uploadToImgBB(imageUrl);
-
-        // Send to Telegram using ImgBB URL
-        await this.bot.telegram.sendPhoto(chatId, imgbbUrl, {
+        // Use ImgBB URL directly if it's already uploaded
+        await this.bot.telegram.sendPhoto(chatId, imageUrl, {
           caption: caption ? caption.slice(0, 1024) : undefined // Telegram caption limit
         });
         log(`Successfully sent image to Telegram chat: ${chatId}`);
@@ -221,9 +218,5 @@ export class TelegramBot {
       log(`Error sending Telegram image: ${error}`, "error");
       throw error;
     }
-  }
-
-  getIsConnected(): boolean {
-    return this._isConnected;
   }
 }

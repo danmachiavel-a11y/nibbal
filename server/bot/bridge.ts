@@ -17,12 +17,6 @@ export class BridgeManager {
   async start() {
     log("Starting bots...");
     try {
-      // Stop any existing instances first to prevent duplicates
-      if (this.telegramBot.getIsConnected() || this.discordBot.isReady()) {
-        log("Stopping existing bot instances before restart");
-        await this.stop();
-      }
-
       // Start bots sequentially to avoid overwhelming APIs
       await this.telegramBot.start();
       await this.discordBot.start();
@@ -73,6 +67,14 @@ export class BridgeManager {
       telegram: this.telegramBot.getIsConnected(),
       discord: this.discordBot.isReady()
     };
+  }
+
+  getTelegramBot(): TelegramBot {
+    return this.telegramBot;
+  }
+
+  getDiscordBot(): DiscordBot {
+    return this.discordBot;
   }
 
   async moveToTranscripts(ticketId: number): Promise<void> {
@@ -267,13 +269,5 @@ export class BridgeManager {
     } catch (error) {
       log(`Error forwarding image to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
-  }
-
-  getTelegramBot(): TelegramBot {
-    return this.telegramBot;
-  }
-
-  getDiscordBot(): DiscordBot {
-    return this.discordBot;
   }
 }
