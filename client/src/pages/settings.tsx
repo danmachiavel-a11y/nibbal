@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Category, BotConfig } from "@shared/schema";
 import { CategoryGrid } from "@/components/CategoryGrid";
+import { useEffect } from "react";
 
 const botConfigSchema = z.object({
   welcomeMessage: z.string(),
@@ -62,6 +63,24 @@ export function CategoryEditor({ category }: { category: Category }) {
       discordCategories: [] // Initialize with an empty array
     }
   });
+
+  useEffect(() => {
+    const loadDiscordCategories = async () => {
+      try {
+        const res = await apiRequest("GET", "/api/discord/categories");
+        if (!res.ok) throw new Error("Failed to fetch Discord categories");
+        const categories = await res.json();
+        form.setValue("discordCategories", categories);
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Failed to load Discord categories",
+          variant: "destructive"
+        });
+      }
+    };
+    loadDiscordCategories();
+  }, []);
 
   async function onSubmit(data: z.infer<typeof categorySchema>) {
     try {
@@ -243,11 +262,14 @@ export function CategoryEditor({ category }: { category: Category }) {
                         className="w-full rounded-md border border-input bg-background px-3 py-2"
                         value={field.value || ''}
                         onChange={(e) => field.onChange(e.target.value)}
-                        // disabled={!form.watch("discordCategories")}  Removed disabled attribute
                       >
                         <option value="">Select a category</option>
                         {form.watch("discordCategories")?.map((category: any) => (
-                          <option key={category.id} value={category.id}>
+                          <option 
+                            key={category.id} 
+                            value={category.id}
+                            selected={category.id === field.value}
+                          >
                             {category.name}
                           </option>
                         ))}
@@ -271,7 +293,7 @@ export function CategoryEditor({ category }: { category: Category }) {
                         }
                       }}
                     >
-                      Load Categories
+                      Refresh Categories
                     </Button>
                   </div>
                 </FormItem>
@@ -373,6 +395,25 @@ export default function Settings() {
       discordCategories: [] // Initialize with an empty array
     }
   });
+
+  useEffect(() => {
+    // Load Discord categories when component mounts for new category form
+    const loadDiscordCategories = async () => {
+      try {
+        const res = await apiRequest("GET", "/api/discord/categories");
+        if (!res.ok) throw new Error("Failed to fetch Discord categories");
+        const categories = await res.json();
+        categoryForm.setValue("discordCategories", categories);
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Failed to load Discord categories",
+          variant: "destructive"
+        });
+      }
+    };
+    loadDiscordCategories();
+  }, []); // Only run on mount
 
   async function onBotConfigSubmit(data: z.infer<typeof botConfigSchema>) {
     try {
@@ -603,7 +644,6 @@ export default function Settings() {
                                 className="w-full rounded-md border border-input bg-background px-3 py-2"
                                 value={field.value || ''}
                                 onChange={(e) => field.onChange(e.target.value)}
-                                //disabled={!categoryForm.watch("discordCategories")}  Removed disabled attribute
                               >
                                 <option value="">Select a category</option>
                                 {categoryForm.watch("discordCategories")?.map((category: any) => (
@@ -631,7 +671,7 @@ export default function Settings() {
                                 }
                               }}
                             >
-                              Load Categories
+                              Refresh Categories
                             </Button>
                           </div>
                         </FormItem>
@@ -718,7 +758,6 @@ export default function Settings() {
                     categories={rootCategories}
                     onReorder={async (newCategories) => {
                       try {
-                        // Update all categories with new display orders
                         for (let i = 0; i < newCategories.length; i++) {
                           const res = await apiRequest("PATCH", `/api/categories/${newCategories[i].id}`, {
                             displayOrder: i
@@ -751,7 +790,6 @@ export default function Settings() {
                       categories={categories.filter(cat => cat.parentId === submenu.id)}
                       onReorder={async (newCategories) => {
                         try {
-                          // Update all categories with new display orders
                           for (let i = 0; i < newCategories.length; i++) {
                             const res = await apiRequest("PATCH", `/api/categories/${newCategories[i].id}`, {
                               displayOrder: i
