@@ -25,7 +25,7 @@ const categorySchema = z.object({
   isSubmenu: z.boolean().optional(),
   discordRoleId: z.string().optional(),
   discordCategoryId: z.string().optional(),
-  questions: z.array(z.object({text: z.string(), buttons: z.array(z.string()).optional()})),
+  questions: z.string(),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
   parentId: z.number().nullable().optional(),
@@ -40,7 +40,6 @@ const CustomFormDescription = () => (
     </pre>
   </div>
 );
-
 
 export default function Settings() {
   const { toast } = useToast();
@@ -72,7 +71,7 @@ export default function Settings() {
       name: "",
       discordRoleId: "",
       discordCategoryId: "",
-      questions: [],
+      questions: "",
       serviceSummary: "Our team is ready to assist you!",
       serviceImageUrl: "",
       isSubmenu: false,
@@ -102,7 +101,24 @@ export default function Settings() {
 
   async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
     try {
-      const submitData = data;
+      // Parse questions text into Question objects
+      const questions: Question[] = data.questions.split('\n')
+        .filter(q => q.trim())
+        .map(q => {
+          const parts = q.split('>>');
+          return {
+            text: parts[0].trim(),
+            buttons: parts.length > 1 ? parts.slice(1).map(b => b.trim()) : undefined
+          };
+        });
+
+      const submitData = {
+        ...data,
+        questions,
+        discordRoleId: data.discordRoleId || "",
+        discordCategoryId: data.discordCategoryId || "",
+        serviceSummary: data.serviceSummary || "Our team is ready to assist you!"
+      };
 
       const res = await apiRequest("POST", "/api/categories", submitData);
       if (!res.ok) throw new Error("Failed to create category");
@@ -450,18 +466,21 @@ export function CategoryEditor({ category }: { category: Category }) {
     cat.isSubmenu && cat.id !== category.id
   ) || [];
 
+  // Convert questions array to string format
+  const questionsText = category.questions.map(q => {
+    if (q.buttons?.length) {
+      return `${q.text}\n${q.buttons.map(b => `>>${b}`).join('')}`;
+    }
+    return q.text;
+  }).join('\n');
+
   const form = useForm({
     resolver: zodResolver(categorySchema),
     defaultValues: {
       name: category.name,
       discordRoleId: category.discordRoleId,
       discordCategoryId: category.discordCategoryId,
-      questions: category.questions.map(q => {
-        if (q.buttons?.length) {
-          return `${q.text}${q.buttons.map(b => `>>${b}`).join('')}`;
-        }
-        return q.text;
-      }).join('\n'),
+      questions: questionsText,
       serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
       serviceImageUrl: category.serviceImageUrl || "",
       isSubmenu: category.isSubmenu || false,
@@ -471,7 +490,7 @@ export function CategoryEditor({ category }: { category: Category }) {
 
   async function onSubmit(data: z.infer<typeof categorySchema>) {
     try {
-      // Parse questions and button options
+      // Parse questions text into Question objects
       const questions: Question[] = data.questions.split('\n')
         .filter(q => q.trim())
         .map(q => {
