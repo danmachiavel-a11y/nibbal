@@ -186,6 +186,8 @@ export class MemStorage implements IStorage {
   async createCategory(insertCategory: InsertCategory): Promise<Category> {
     const id = this.currentIds.categories++;
 
+    console.log("Creating category in storage:", insertCategory);
+
     // Base category data
     const category = {
       id,
@@ -198,7 +200,7 @@ export class MemStorage implements IStorage {
       // If it's a submenu, use empty/null values for these fields
       discordRoleId: insertCategory.isSubmenu ? "" : (insertCategory.discordRoleId || ""),
       discordCategoryId: insertCategory.isSubmenu ? "" : (insertCategory.discordCategoryId || ""),
-      transcriptCategoryId: insertCategory.transcriptCategoryId || null,
+      transcriptCategoryId: insertCategory.transcriptCategoryId?.trim() || null,
       questions: insertCategory.isSubmenu ? [] : (insertCategory.questions || []),
       serviceSummary: insertCategory.isSubmenu ? "" : (insertCategory.serviceSummary || "Our team is ready to assist you!"),
       serviceImageUrl: insertCategory.isSubmenu ? null : (insertCategory.serviceImageUrl || null),
@@ -219,7 +221,7 @@ export class MemStorage implements IStorage {
     // Handle transcriptCategoryId specifically
     let transcriptCategoryId = category.transcriptCategoryId;
     if (updateData.transcriptCategoryId !== undefined) {
-      transcriptCategoryId = updateData.transcriptCategoryId.trim() === '' ? null : updateData.transcriptCategoryId;
+      transcriptCategoryId = updateData.transcriptCategoryId.trim() === '' ? null : updateData.transcriptCategoryId.trim();
     }
 
     const updatedCategory = {
