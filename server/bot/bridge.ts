@@ -34,17 +34,22 @@ export class BridgeManager {
   async moveToTranscripts(ticketId: number): Promise<void> {
     try {
       const ticket = await storage.getTicket(ticketId);
+      log(`Moving ticket to transcripts. Ticket data:`, JSON.stringify(ticket, null, 2));
+
       if (!ticket || !ticket.discordChannelId) {
         throw new Error(`Invalid ticket or missing Discord channel: ${ticketId}`);
       }
 
       // Get category for transcript category ID
       const category = await storage.getCategory(ticket.categoryId!);
-      log(`Moving ticket ${ticketId} to transcripts. Category:`, category);
+      log(`Category data for ticket:`, JSON.stringify(category, null, 2));
 
       if (!category?.transcriptCategoryId) {
+        log(`No transcript category found. Category:`, JSON.stringify(category, null, 2));
         throw new Error("No transcript category set for this service");
       }
+
+      log(`Moving channel ${ticket.discordChannelId} to transcript category ${category.transcriptCategoryId}`);
 
       // Move channel to transcripts category
       await this.discordBot.moveChannelToCategory(
@@ -55,7 +60,7 @@ export class BridgeManager {
       // Update ticket status
       await storage.updateTicketStatus(ticket.id, "closed");
 
-      log(`Moved ticket ${ticketId} to transcripts category`);
+      log(`Successfully moved ticket ${ticketId} to transcripts category ${category.transcriptCategoryId}`);
     } catch (error) {
       log(`Error moving ticket to transcripts: ${error}`, "error");
       throw error;

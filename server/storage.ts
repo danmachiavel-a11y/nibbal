@@ -178,7 +178,9 @@ export class MemStorage implements IStorage {
   }
 
   async getCategory(id: number): Promise<Category | undefined> {
-    return this.categories.get(id);
+    const category = this.categories.get(id);
+    console.log(`Retrieved category ${id}:`, JSON.stringify(category, null, 2));
+    return category;
   }
 
   async createCategory(insertCategory: InsertCategory): Promise<Category> {
@@ -221,7 +223,10 @@ export class MemStorage implements IStorage {
       transcriptCategoryId: updateData.transcriptCategoryId || category.transcriptCategoryId
     };
 
-    console.log("Updating category in storage:", updatedCategory);
+    console.log("Updating category in storage. Current data:", JSON.stringify(category, null, 2));
+    console.log("Update payload:", JSON.stringify(updateData, null, 2));
+    console.log("Updated category:", JSON.stringify(updatedCategory, null, 2));
+
     this.categories.set(id, updatedCategory);
     return updatedCategory;
   }

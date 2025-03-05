@@ -76,11 +76,16 @@ export function CategoryEditor({ category }: { category: Category }) {
         parentId: data.parentId
       };
 
+      console.log("Submitting category update with data:", submitData);
+
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.message || "Failed to update category");
       }
+
+      const updatedCategory = await res.json();
+      console.log("Category updated successfully:", updatedCategory);
 
       toast({
         title: "Success",
