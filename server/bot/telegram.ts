@@ -1,6 +1,7 @@
 import { Telegraf, Context } from "telegraf";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
+import { log } from "../vite";
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
@@ -27,6 +28,26 @@ export class TelegramBot {
   private setupHandlers() {
     // Start command
     this.bot.command("start", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      // Check if user has any active tickets
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const category = await storage.getCategory(activeTicket.categoryId);
+          await ctx.reply(
+            "❌ You already have an active ticket in " + 
+            `*${category?.name || "Unknown"}* category.\n\n` +
+            "Please use /close to close your current ticket before starting a new one, " +
+            "or continue chatting here to update your existing ticket.",
+            { parse_mode: "Markdown" }
+          );
+          return;
+        }
+      }
+
       const botConfig = await storage.getBotConfig();
       const categories = await storage.getCategories();
 
@@ -83,6 +104,93 @@ export class TelegramBot {
       }
     });
 
+    // Status command
+    this.bot.command("status", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets.");
+        return;
+      }
+
+      const category = await storage.getCategory(activeTicket.categoryId);
+      await ctx.reply(
+        `Your active ticket:\n\n` +
+        `Category: *${category?.name || "Unknown"}*\n` +
+        `Status: *${activeTicket.status}*\n` +
+        `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
+        { parse_mode: "Markdown" }
+      );
+    });
+
+    // Close command
+    this.bot.command("close", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets to close.");
+        return;
+      }
+
+      try {
+        // Get category for transcript category ID
+        const category = await storage.getCategory(activeTicket.categoryId);
+        if (!category?.transcriptCategoryId) {
+          await ctx.reply(
+            "❌ Cannot close ticket: No transcript category set for this service. " +
+            "Please contact an administrator."
+          );
+          return;
+        }
+
+        // Mark ticket as closed
+        await storage.updateTicketStatus(activeTicket.id, "closed");
+
+        // Try to move Discord channel if it exists
+        if (activeTicket.discordChannelId) {
+          try {
+            await this.bridge.moveToTranscripts(activeTicket.id);
+            await ctx.reply(
+              "✅ Your ticket has been closed and moved to transcripts.\n" +
+              "Use /start to create a new ticket if needed."
+            );
+          } catch (error) {
+            console.error("Error moving to transcripts:", error);
+            await ctx.reply(
+              "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
+              "An administrator will handle this. You can use /start to create a new ticket if needed."
+            );
+          }
+        } else {
+          await ctx.reply(
+            "✅ Your ticket has been closed.\n" +
+            "Use /start to create a new ticket if needed."
+          );
+        }
+      } catch (error) {
+        console.error("Error closing ticket:", error);
+        await ctx.reply(
+          "❌ There was an error closing your ticket. Please try again or contact an administrator."
+        );
+      }
+    });
+
     // Category selection
     this.bot.on("callback_query", async (ctx) => {
       const data = ctx.callbackQuery?.data;
@@ -118,6 +226,22 @@ export class TelegramBot {
       const userId = ctx.from?.id;
       if (!userId) return;
 
+      // Check for active tickets again before starting questionnaire
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const activeCategory = await storage.getCategory(activeTicket.categoryId);
+          await ctx.reply(
+            "❌ You already have an active ticket in " + 
+            `*${activeCategory?.name || "Unknown"}* category.\n\n` +
+            "Please use /close to close your current ticket before starting a new one.",
+            { parse_mode: "Markdown" }
+          );
+          return;
+        }
+      }
+
       console.log(`Initializing questionnaire for user ${userId}, category ${categoryId}`);
 
       // Reset user state
@@ -144,18 +268,10 @@ export class TelegramBot {
       // Check if user has an active ticket first
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
-        const categories = await storage.getCategories();
-        for (const category of categories) {
-          const tickets = await storage.getTicketsByCategory(category.id);
-          const activeTicket = tickets.find(t =>
-            t.userId === user.id &&
-            t.status !== "closed"
-          );
-
-          if (activeTicket) {
-            await this.handleTicketMessage(ctx, user, activeTicket);
-            return;
-          }
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          await this.handleTicketMessage(ctx, user, activeTicket);
+          return;
         }
       }
 
@@ -209,27 +325,11 @@ export class TelegramBot {
         timestamp: new Date()
       });
 
-      // Get user's profile photo if available
-      let photoUrl: string | undefined;
-      try {
-        const photos = await ctx.telegram.getUserProfilePhotos(parseInt(user.telegramId));
-        if (photos?.total_count > 0) {
-          const fileId = photos.photos[0][0].file_id;
-          const file = await ctx.telegram.getFile(fileId);
-          if (file.file_path) {
-            photoUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-          }
-        }
-      } catch (error) {
-        console.log("Could not get user photo:", error);
-      }
-
       // Forward message to Discord
       await this.bridge.forwardToDiscord(
         ctx.message.text,
         ticket.id,
-        ctx.from.first_name || ctx.from.username || "Telegram User",
-        photoUrl
+        ctx.from?.first_name || ctx.from?.username || "Telegram User"
       );
       console.log(`Message forwarded to Discord for ticket ${ticket.id}`);
     } catch (error) {

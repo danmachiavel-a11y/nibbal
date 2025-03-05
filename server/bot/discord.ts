@@ -499,6 +499,28 @@ export class DiscordBot {
     }
   }
 
+  async moveChannelToCategory(channelId: string, categoryId: string): Promise<void> {
+    try {
+      log(`Moving channel ${channelId} to category ${categoryId}`);
+
+      const channel = await this.client.channels.fetch(channelId);
+      if (!(channel instanceof TextChannel)) {
+        throw new Error(`Invalid channel type for channel ${channelId}`);
+      }
+
+      const category = await this.client.channels.fetch(categoryId);
+      if (!(category instanceof CategoryChannel)) {
+        throw new Error(`Invalid category ${categoryId}`);
+      }
+
+      await channel.setParent(category.id);
+      log(`Successfully moved channel ${channelId} to category ${categoryId}`);
+    } catch (error) {
+      log(`Error moving channel to category: ${error}`, "error");
+      throw error;
+    }
+  }
+
   async start() {
     await this.client.login(process.env.DISCORD_BOT_TOKEN);
   }

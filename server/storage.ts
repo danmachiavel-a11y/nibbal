@@ -95,6 +95,8 @@ export interface IStorage {
     periodStart: Date;
     periodEnd: Date;
   }>>;
+  // Add new method for getting active tickets
+  getActiveTicketByUserId(userId: number): Promise<Ticket | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -577,6 +579,13 @@ export class MemStorage implements IStorage {
       periodStart: startDate,
       periodEnd: endDate
     })).sort((a, b) => b.totalEarnings - a.totalEarnings);
+  }
+  async getActiveTicketByUserId(userId: number): Promise<Ticket | undefined> {
+    return Array.from(this.tickets.values()).find(t => 
+      t.userId === userId && 
+      t.status !== "closed" && 
+      t.status !== "deleted"
+    );
   }
 }
 

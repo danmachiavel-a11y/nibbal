@@ -31,6 +31,35 @@ export class BridgeManager {
     }
   }
 
+  async moveToTranscripts(ticketId: number): Promise<void> {
+    try {
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket || !ticket.discordChannelId) {
+        throw new Error(`Invalid ticket or missing Discord channel: ${ticketId}`);
+      }
+
+      // Get category for transcript category ID
+      const category = await storage.getCategory(ticket.categoryId);
+      if (!category?.transcriptCategoryId) {
+        throw new Error("No transcript category set for this service");
+      }
+
+      // Move channel to transcripts category
+      const channel = await this.discordBot.moveChannelToCategory(
+        ticket.discordChannelId,
+        category.transcriptCategoryId
+      );
+
+      // Update ticket status
+      await storage.updateTicketStatus(ticket.id, "closed");
+
+      log(`Moved ticket ${ticketId} to transcripts category`);
+    } catch (error) {
+      log(`Error moving ticket to transcripts: ${error}`, "error");
+      throw error;
+    }
+  }
+
   async createTicketChannel(ticket: Ticket) {
     if (!ticket.categoryId) {
       throw new Error("Ticket must have a category");
@@ -71,13 +100,11 @@ export class BridgeManager {
       log(`Updated ticket status: ${JSON.stringify(updatedTicket)}`);
 
       // Format Q&A for embed
-      const questions = category.questions;
-      const answers = ticket.answers || [];
       let message = '';
-
-      for (let i = 0; i < questions.length; i++) {
-        message += `**Q: ${questions[i]}**\n`;
-        message += `A: ${answers[i] || 'No answer provided'}\n\n`;
+      for (const question of category.questions) {
+        const answer = ticket.answers?.[category.questions.indexOf(question)] || 'No answer provided';
+        message += `**Q: ${question}**\n`;
+        message += `A: ${answer}\n\n`;
       }
 
       // Send and pin the formatted Q&A
