@@ -213,6 +213,9 @@ export class MemStorage implements IStorage {
     const category = await this.getCategory(id);
     if (!category) return undefined;
 
+    console.log("Updating category in storage. Current data:", JSON.stringify(category, null, 2));
+    console.log("Update payload:", JSON.stringify(updateData, null, 2));
+
     const updatedCategory = {
       ...category,
       ...updateData,
@@ -222,15 +225,13 @@ export class MemStorage implements IStorage {
       isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu,
       discordRoleId: updateData.discordRoleId || category.discordRoleId,
       discordCategoryId: updateData.discordCategoryId || category.discordCategoryId,
-      transcriptCategoryId: updateData.transcriptCategoryId === "" ? null : (updateData.transcriptCategoryId || category.transcriptCategoryId),
+      transcriptCategoryId: updateData.transcriptCategoryId || category.transcriptCategoryId,
       serviceSummary: updateData.serviceSummary || category.serviceSummary,
       serviceImageUrl: updateData.serviceImageUrl || category.serviceImageUrl,
       displayOrder: updateData.displayOrder ?? category.displayOrder,
       newRow: updateData.newRow ?? category.newRow
     };
 
-    console.log("Updating category in storage. Current data:", JSON.stringify(category, null, 2));
-    console.log("Update payload:", JSON.stringify(updateData, null, 2));
     console.log("Updated category:", JSON.stringify(updatedCategory, null, 2));
 
     this.categories.set(id, updatedCategory);
