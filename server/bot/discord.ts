@@ -383,7 +383,7 @@ export class DiscordBot {
       log(`Processing Discord message for ticket ${ticket.id} in channel ${message.channelId}`);
 
       try {
-        // Store message in database
+        // Store message in database first to ensure it's recorded
         const discordUser = await storage.getUserByDiscordId(message.author.id);
         if (discordUser) {
           await storage.createMessage({
@@ -396,12 +396,18 @@ export class DiscordBot {
           log(`Stored Discord message in database for ticket ${ticket.id}`);
         }
 
-        // Forward to Telegram with the user's display name
-        await this.bridge.forwardToTelegram(
-          message.content,
-          ticket.id,
-          message.member?.displayName || message.author.username || "Unknown Discord User"
-        );
+        // Forward to Telegram with detailed error tracking
+        try {
+          await this.bridge.forwardToTelegram(
+            message.content,
+            ticket.id,
+            message.member?.displayName || message.author.username || "Unknown Discord User"
+          );
+          log(`Successfully forwarded message to Telegram for ticket ${ticket.id}`);
+        } catch (error) {
+          log(`Failed to forward message to Telegram for ticket ${ticket.id}: ${error}`, "error");
+          // Don't throw here - we already stored the message in DB
+        }
 
       } catch (error) {
         log(`Error handling Discord message: ${error}`, "error");

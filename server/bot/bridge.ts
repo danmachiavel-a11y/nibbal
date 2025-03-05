@@ -265,17 +265,44 @@ export class BridgeManager {
         return;
       }
 
-      await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
-      log(`Message forwarded to Telegram user: ${user.username}`);
+      // Try to reconnect Telegram bot if disconnected
+      if (!this.telegramBot.getIsConnected()) {
+        log("Telegram bot disconnected, attempting to reconnect...");
+        try {
+          await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
+        } catch (error) {
+          log(`Failed to reconnect Telegram bot: ${error}`, "error");
+          throw error;
+        }
+      }
 
-      // Store the message
-      await storage.createMessage({
-        ticketId,
-        content,
-        authorId: user.id,
-        platform: "discord",
-        timestamp: new Date()
-      });
+      // Attempt to send message with retries
+      let retryCount = 0;
+      const maxRetries = 3;
+      while (retryCount < maxRetries) {
+        try {
+          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
+          log(`Message forwarded to Telegram user: ${user.username}`);
+
+          // Store the message
+          await storage.createMessage({
+            ticketId,
+            content,
+            authorId: user.id,
+            platform: "discord",
+            timestamp: new Date()
+          });
+          return; // Success - exit the retry loop
+        } catch (error) {
+          retryCount++;
+          log(`Attempt ${retryCount} failed to forward message to Telegram: ${error}`, "error");
+          if (retryCount < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+            continue;
+          }
+          throw error; // Max retries reached - throw the error
+        }
+      }
     } catch (error) {
       log(`Error forwarding to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
