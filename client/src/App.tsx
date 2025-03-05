@@ -6,15 +6,21 @@ import Dashboard from "@/pages/dashboard";
 import Settings from "@/pages/settings";
 import Stats from "@/pages/stats";
 import NotFound from "@/pages/not-found";
+import { Navbar } from "@/components/Navbar";
 
 function Router() {
   return (
-    <Switch>
-      <Route path="/" component={Dashboard} />
-      <Route path="/settings" component={Settings} />
-      <Route path="/stats" component={Stats} />
-      <Route component={NotFound} />
-    </Switch>
+    <div className="min-h-screen bg-background">
+      <Navbar />
+      <main className="max-w-screen-xl mx-auto p-4">
+        <Switch>
+          <Route path="/" component={Dashboard} />
+          <Route path="/settings" component={Settings} />
+          <Route path="/stats" component={Stats} />
+          <Route component={NotFound} />
+        </Switch>
+      </main>
+    </div>
   );
 }
 
