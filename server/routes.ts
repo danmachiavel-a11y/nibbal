@@ -183,6 +183,48 @@ export async function registerRoutes(app: Express) {
     res.json(messages);
   });
 
+  // Users/Customers route
+  app.get("/api/users", async (req, res) => {
+    try {
+      const users = Array.from(storage.users.values());
+      res.json(users);
+    } catch (error) {
+      log(`Error fetching users: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Closed tickets with messages route
+  app.get("/api/tickets/closed", async (req, res) => {
+    try {
+      // Get all categories to filter tickets
+      const categories = await storage.getCategories();
+
+      // Collect all closed tickets from all categories
+      const allClosedTickets = [];
+      for (const category of categories) {
+        const categoryTickets = await storage.getTicketsByCategory(category.id);
+        const closedTickets = categoryTickets.filter(t =>
+          t.status === "closed" || t.status === "deleted"
+        );
+
+        // Get messages for each ticket
+        for (const ticket of closedTickets) {
+          const messages = await storage.getTicketMessages(ticket.id);
+          allClosedTickets.push({
+            ...ticket,
+            messages
+          });
+        }
+      }
+
+      res.json(allClosedTickets);
+    } catch (error) {
+      log(`Error fetching closed tickets: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch closed tickets" });
+    }
+  });
+
   // Update the stats routes to handle custom date ranges
   app.get("/api/users/:discordId/stats", async (req, res) => {
     const discordId = req.params.discordId;

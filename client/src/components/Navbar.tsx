@@ -1,14 +1,16 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Settings, BarChart } from "lucide-react";
+import { LayoutDashboard, Settings, BarChart, Users, Archive } from "lucide-react";
 
 export function Navbar() {
   const [location] = useLocation();
 
   const navItems = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
-    { href: "/settings", label: "Settings", icon: Settings },
+    { href: "/customers", label: "Customers", icon: Users },
+    { href: "/transcripts", label: "Transcripts", icon: Archive },
     { href: "/stats", label: "Stats", icon: BarChart },
+    { href: "/settings", label: "Settings", icon: Settings },
   ];
 
   return (

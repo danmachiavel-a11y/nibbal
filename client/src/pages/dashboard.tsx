@@ -1,23 +1,46 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Settings } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Category, Ticket } from "@shared/schema";
+import { Badge } from "@/components/ui/badge";
+import { MessagesSquare, User, Clock, AlertCircle } from "lucide-react";
+import { Link } from "wouter";
+import { Settings } from "lucide-react";
+
 
 export default function Dashboard() {
   const { data: categories } = useQuery<Category[]>({
     queryKey: ["/api/categories"]
   });
 
-  if (!categories) {
-    return <div>Loading...</div>;
+  const { data: tickets } = useQuery<Ticket[]>({
+    queryKey: ["/api/tickets"],
+  });
+
+  if (!categories || !tickets) {
+    return (
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {[...Array(4)].map((_, i) => (
+          <Card key={i} className="animate-pulse">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Loading...</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-4 w-[100px] bg-muted rounded"></div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
   }
 
+  const activeTickets = tickets.filter(t => t.status !== "closed" && t.status !== "deleted");
+  const unclaimedTickets = tickets.filter(t => t.status === "open");
+  const averageResponseTime = "< 5 min"; // TODO: Calculate from actual data
+
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto p-6 space-y-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Ticket Dashboard</h1>
         <Link href="/settings">
@@ -27,66 +50,120 @@ export default function Dashboard() {
           </Button>
         </Link>
       </div>
+      {/* Overview Statistics */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Active Tickets</CardTitle>
+            <MessagesSquare className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{activeTickets.length}</div>
+            <p className="text-xs text-muted-foreground">
+              Across {categories.length} categories
+            </p>
+          </CardContent>
+        </Card>
 
-      <Tabs defaultValue={categories[0]?.id.toString()}>
-        <TabsList>
-          {categories.map(category => (
-            <TabsTrigger key={category.id} value={category.id.toString()}>
-              {category.name}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Unclaimed Tickets</CardTitle>
+            <User className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{unclaimedTickets.length}</div>
+            <p className="text-xs text-muted-foreground">
+              Waiting for agent response
+            </p>
+          </CardContent>
+        </Card>
 
-        {categories.map(category => (
-          <TabsContent key={category.id} value={category.id.toString()}>
-            <TicketList categoryId={category.id} />
-          </TabsContent>
-        ))}
-      </Tabs>
-    </div>
-  );
-}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Avg. Response Time</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{averageResponseTime}</div>
+            <p className="text-xs text-muted-foreground">
+              For first agent response
+            </p>
+          </CardContent>
+        </Card>
 
-function TicketList({ categoryId }: { categoryId: number }) {
-  const { data: tickets } = useQuery<Ticket[]>({
-    queryKey: ["/api/tickets", categoryId],
-    queryFn: async () => {
-      const res = await fetch(`/api/tickets?categoryId=${categoryId}`);
-      return res.json();
-    }
-  });
-
-  if (!tickets) {
-    return <div>Loading tickets...</div>;
-  }
-
-  return (
-    <ScrollArea className="h-[600px]">
-      <div className="space-y-4">
-        {tickets.map(ticket => (
-          <Card key={ticket.id}>
-            <CardHeader>
-              <CardTitle className="text-lg">
-                Ticket #{ticket.id}
-                <span className={`ml-2 text-sm ${
-                  ticket.status === "open" ? "text-green-500" :
-                  ticket.status === "claimed" ? "text-blue-500" :
-                  "text-gray-500"
-                }`}>
-                  {ticket.status}
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <div>Status: {ticket.status}</div>
-                {ticket.amount && <div>Amount: ${ticket.amount}</div>}
-                {ticket.claimedBy && <div>Claimed by: {ticket.claimedBy}</div>}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Priority Tickets</CardTitle>
+            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">0</div>
+            <p className="text-xs text-muted-foreground">
+              Require immediate attention
+            </p>
+          </CardContent>
+        </Card>
       </div>
-    </ScrollArea>
+
+      {/* Active Tickets */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Active Tickets</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ScrollArea className="h-[600px]">
+            <div className="space-y-4">
+              {activeTickets.map(ticket => {
+                const category = categories.find(c => c.id === ticket.categoryId);
+                return (
+                  <div
+                    key={ticket.id}
+                    className="flex items-center justify-between p-4 border rounded-lg"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Ticket #{ticket.id}</span>
+                        <Badge variant={
+                          ticket.status === "open" ? "default" :
+                          ticket.status === "claimed" ? "secondary" :
+                          "outline"
+                        }>
+                          {ticket.status}
+                        </Badge>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {category?.name || "Unknown Category"}
+                      </div>
+                      {ticket.claimedBy && (
+                        <div className="text-sm text-muted-foreground">
+                          Claimed by: {ticket.claimedBy}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {ticket.amount && (
+                        <Badge variant="outline" className="font-mono">
+                          ${ticket.amount}
+                        </Badge>
+                      )}
+                      <Button variant="outline" size="sm">
+                        View Details
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {activeTickets.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  No active tickets
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
