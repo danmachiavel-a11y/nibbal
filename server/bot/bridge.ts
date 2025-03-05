@@ -44,8 +44,9 @@ export class BridgeManager {
       const category = await storage.getCategory(ticket.categoryId!);
       log(`Category data for ticket:`, JSON.stringify(category, null, 2));
 
-      if (!category?.transcriptCategoryId) {
-        log(`No transcript category found. Category:`, JSON.stringify(category, null, 2));
+      // More strict checking for transcriptCategoryId
+      if (!category || !category.transcriptCategoryId || category.transcriptCategoryId.trim() === '') {
+        log(`No transcript category found or invalid. Category:`, JSON.stringify(category, null, 2));
         throw new Error("No transcript category set for this service");
       }
 
