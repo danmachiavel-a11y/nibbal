@@ -282,7 +282,7 @@ export class BridgeManager {
       while (retryCount < maxRetries) {
         try {
           await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
-          log(`Message forwarded to Telegram user: ${user.username}`);
+          log(`Successfully sent message to Telegram user: ${user.username}`);
 
           // Store the message
           await storage.createMessage({

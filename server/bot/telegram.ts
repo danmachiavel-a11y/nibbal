@@ -451,10 +451,6 @@ export class TelegramBot {
           this._isConnected = true;
           log("Telegram bot started and connected successfully");
         }
-      }).catch(error => {
-        log(`Error in Telegram bot launch: ${error}`, "error");
-        this._isConnected = false;
-        throw error;
       });
 
       // Verify connection by getting bot info
@@ -495,9 +491,6 @@ export class TelegramBot {
   }
 
   async sendMessage(chatId: number, message: string) {
-    if (!this.getIsConnected()) {
-      throw new Error("Telegram bot is not connected");
-    }
     try {
       // Validate chat ID
       if (!Number.isInteger(chatId) || chatId <= 0) {
