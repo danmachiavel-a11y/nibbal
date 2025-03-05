@@ -17,7 +17,13 @@ export class BridgeManager {
   async start() {
     log("Starting bots...");
     try {
-      // Start bots without trying to stop them first
+      // Stop any existing instances first to prevent duplicates
+      if (this.telegramBot.getIsConnected() || this.discordBot.isReady()) {
+        log("Stopping existing bot instances before restart");
+        await this.stop();
+      }
+
+      // Start bots sequentially to avoid overwhelming APIs
       await this.telegramBot.start();
       await this.discordBot.start();
       log("Bots initialization completed");
@@ -27,22 +33,31 @@ export class BridgeManager {
     }
   }
 
-  async restart() {
-    log("Restarting bots with new configuration...");
+  async stop() {
     try {
-      // Stop both bots with graceful shutdown
+      log("Stopping bots...");
       await Promise.allSettled([
         this.telegramBot.stop(),
         this.discordBot.stop()
       ]);
+      log("Bots stopped successfully");
+    } catch (error) {
+      log(`Error stopping bots: ${error}`, "error");
+    }
+  }
 
-      // Create new instances with updated tokens
+  async restart() {
+    log("Restarting bots with new configuration...");
+    try {
+      // Stop existing bots
+      await this.stop();
+
+      // Create new instances
       this.telegramBot = new TelegramBot(this);
       this.discordBot = new DiscordBot(this);
 
-      // Start both bots
+      // Start new instances
       await this.start();
-
       log("Bots restarted successfully");
     } catch (error) {
       log(`Error restarting bots: ${error}`, "error");

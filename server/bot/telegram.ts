@@ -19,20 +19,14 @@ export class TelegramBot {
   private _isConnected: boolean = false;
 
   constructor(bridge: BridgeManager) {
-    try {
-      // Cast the token as string since we check for its existence above
-      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN as string);
-      this.bridge = bridge;
-      this.setupHandlers();
-      log("Telegram bot instance created successfully");
-    } catch (error) {
-      log(`Error creating Telegram bot: ${error}`, "error");
-      throw error;
-    }
+    this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN as string);
+    this.bridge = bridge;
+    this.setupHandlers();
+    log("Telegram bot instance created successfully");
   }
 
   private setupHandlers() {
-    // Handle direct messages
+    // Handle text messages
     this.bot.on("text", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -80,7 +74,7 @@ export class TelegramBot {
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
 
         try {
-          // Upload to ImgBB for permanent storage
+          // Upload to ImgBB first
           const imgbbUrl = await this.uploadToImgBB(fileLink.href);
 
           // Forward permanent URL to Discord
@@ -113,16 +107,15 @@ export class TelegramBot {
       // Download image
       const response = await fetch(imageUrl);
       if (!response.ok) {
-        throw new Error(`Failed to fetch image: ${response.statusText} (${response.status})`);
+        throw new Error(`Failed to fetch image: ${response.statusText}`);
       }
 
       const buffer = await response.arrayBuffer();
       log(`Downloaded image, size: ${buffer.byteLength} bytes`);
 
-      // Upload to ImgBB - Without expiration for permanent storage
+      // Upload to ImgBB without expiration for permanent storage
       const result = await imgbbUploader(process.env.IMGBB_API_KEY!, {
         base64string: Buffer.from(buffer).toString('base64')
-        // No expiration parameter = permanent storage
       });
 
       log(`Successfully uploaded image to ImgBB: ${result.url}`);
@@ -135,10 +128,13 @@ export class TelegramBot {
 
   async start() {
     try {
+      if (this._isConnected) {
+        log("Telegram bot is already running");
+        return;
+      }
+
       log("Starting Telegram bot...");
-      await this.bot.launch({
-        dropPendingUpdates: true
-      });
+      await this.bot.launch();
       this._isConnected = true;
       log("Telegram bot started successfully");
     } catch (error) {
@@ -150,6 +146,11 @@ export class TelegramBot {
 
   async stop() {
     try {
+      if (!this._isConnected) {
+        log("Telegram bot is not running");
+        return;
+      }
+
       log("Stopping Telegram bot...");
       await this.bot.stop();
       this._isConnected = false;
@@ -160,6 +161,9 @@ export class TelegramBot {
     }
   }
 
+  getIsConnected(): boolean {
+    return this._isConnected;
+  }
   async sendMessage(chatId: number, message: string) {
     try {
       log(`Attempting to send message to Telegram chat ${chatId}`);
