@@ -7,7 +7,9 @@ import {
   ChannelType,
   EmbedBuilder,
   ApplicationCommandType,
-  ApplicationCommandOptionType
+  ApplicationCommandOptionType,
+  ChannelSelectMenuBuilder,
+  ActionRowBuilder,
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -60,6 +62,42 @@ export class DiscordBot {
           name: 'close',
           description: 'Close the ticket and move it to transcripts',
           type: ApplicationCommandType.ChatInput
+        });
+
+        await this.client.application?.commands.create({
+          name: 'delete',
+          description: 'Delete this ticket channel',
+          type: ApplicationCommandType.ChatInput
+        });
+
+        await this.client.application?.commands.create({
+          name: 'deleteall',
+          description: 'Delete all tickets in a category',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'category',
+              description: 'The category to delete tickets from',
+              type: ApplicationCommandOptionType.Channel,
+              channelTypes: [ChannelType.GuildCategory],
+              required: true
+            }
+          ]
+        });
+
+        await this.client.application?.commands.create({
+          name: 'closeall',
+          description: 'Close all tickets in a category',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'category',
+              description: 'The category to close tickets from',
+              type: ApplicationCommandOptionType.Channel,
+              channelTypes: [ChannelType.GuildCategory],
+              required: true
+            }
+          ]
         });
 
         log("Registered slash commands");
@@ -161,6 +199,170 @@ export class DiscordBot {
           log(`Error closing ticket: ${error}`, "error");
           await interaction.reply({
             content: "Failed to close ticket. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+
+      if (interaction.commandName === 'delete') {
+        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+
+        if (!ticket) {
+          await interaction.reply({
+            content: "This command can only be used in ticket channels!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Mark ticket as deleted in database
+          await storage.updateTicketStatus(ticket.id, "deleted");
+
+          // Send confirmation before deleting
+          await interaction.reply({
+            content: "🗑️ Deleting this ticket channel...",
+            ephemeral: true
+          });
+
+          // Delete the channel
+          const channel = await this.client.channels.fetch(interaction.channelId);
+          if (channel instanceof TextChannel) {
+            await channel.delete();
+          }
+        } catch (error) {
+          log(`Error deleting ticket: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to delete ticket. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+
+      if (interaction.commandName === 'deleteall') {
+        const categoryChannel = interaction.options.getChannel('category', true);
+
+        if (!(categoryChannel instanceof CategoryChannel)) {
+          await interaction.reply({
+            content: "Please select a valid category!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Get all text channels in the category
+          const channels = categoryChannel.children.cache.filter(
+            channel => channel.type === ChannelType.GuildText
+          );
+
+          if (channels.size === 0) {
+            await interaction.reply({
+              content: "No ticket channels found in this category.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          // Confirm with user
+          await interaction.reply({
+            content: `Are you sure you want to delete all ${channels.size} tickets in ${categoryChannel.name}? This action cannot be undone.`,
+            ephemeral: true
+          });
+
+          // Delete all channels and update tickets
+          for (const [_, channel] of channels) {
+            if (channel instanceof TextChannel) {
+              const ticket = await storage.getTicketByDiscordChannel(channel.id);
+              if (ticket) {
+                await storage.updateTicketStatus(ticket.id, "deleted");
+              }
+              await channel.delete();
+            }
+          }
+
+          // Send final confirmation
+          await interaction.followUp({
+            content: `✅ Deleted ${channels.size} tickets from ${categoryChannel.name}`,
+            ephemeral: true
+          });
+        } catch (error) {
+          log(`Error in deleteall command: ${error}`, "error");
+          await interaction.followUp({
+            content: "An error occurred while deleting tickets. Some tickets may not have been deleted.",
+            ephemeral: true
+          });
+        }
+      }
+
+      if (interaction.commandName === 'closeall') {
+        const categoryChannel = interaction.options.getChannel('category', true);
+
+        if (!(categoryChannel instanceof CategoryChannel)) {
+          await interaction.reply({
+            content: "Please select a valid category!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Get all text channels in the category
+          const channels = categoryChannel.children.cache.filter(
+            channel => channel.type === ChannelType.GuildText
+          );
+
+          if (channels.size === 0) {
+            await interaction.reply({
+              content: "No ticket channels found in this category.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          let moveCount = 0;
+          let errorCount = 0;
+
+          // Start the process
+          await interaction.reply({
+            content: `Moving ${channels.size} tickets to their respective transcript categories...`,
+            ephemeral: true
+          });
+
+          // Process all channels
+          for (const [_, channel] of channels) {
+            if (channel instanceof TextChannel) {
+              try {
+                const ticket = await storage.getTicketByDiscordChannel(channel.id);
+                if (ticket) {
+                  const category = await storage.getCategory(ticket.categoryId);
+                  if (category?.transcriptCategoryId) {
+                    const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
+                    if (transcriptCategory instanceof CategoryChannel) {
+                      await channel.setParent(transcriptCategory.id);
+                      await storage.updateTicketStatus(ticket.id, "closed");
+                      moveCount++;
+                    }
+                  }
+                }
+              } catch (error) {
+                log(`Error moving channel ${channel.name}: ${error}`, "error");
+                errorCount++;
+              }
+            }
+          }
+
+          // Send final status
+          await interaction.followUp({
+            content: `✅ Processed ${channels.size} tickets:\n` +
+                    `• ${moveCount} tickets moved to transcripts\n` +
+                    `• ${errorCount} errors encountered`,
+            ephemeral: true
+          });
+        } catch (error) {
+          log(`Error in closeall command: ${error}`, "error");
+          await interaction.followUp({
+            content: "An error occurred while closing tickets. Some tickets may not have been processed.",
             ephemeral: true
           });
         }
