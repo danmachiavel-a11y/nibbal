@@ -1,6 +1,14 @@
-import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// Define the question structure with optional buttons
+export const questionSchema = z.object({
+  text: z.string(),
+  buttons: z.array(z.string()).optional(), // Array of button labels if this is a button question
+});
+
+export type Question = z.infer<typeof questionSchema>;
 
 export const botConfig = pgTable("bot_config", {
   id: serial("id").primaryKey(),
@@ -21,12 +29,11 @@ export const categories = pgTable("categories", {
   name: text("name").notNull(),
   discordRoleId: text("discord_role_id").notNull(),
   discordCategoryId: text("discord_category_id").notNull(),
-  questions: text("questions").array().notNull(),
+  questions: jsonb("questions").$type<Question[]>().notNull(), // Updated to use the new Question type
   serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
   serviceImageUrl: text("service_image_url"),
   displayOrder: integer("display_order").default(0),
   newRow: boolean("new_row").default(false),
-  // New fields for submenu support
   parentId: integer("parent_id").references(() => categories.id),
   isSubmenu: boolean("is_submenu").default(false),
 });
@@ -35,12 +42,12 @@ export const tickets = pgTable("tickets", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id),
   categoryId: integer("category_id").references(() => categories.id),
-  status: text("status").notNull(), // "open", "claimed", "completed", "paid"
+  status: text("status").notNull(),
   discordChannelId: text("discord_channel_id"),
-  claimedBy: text("claimed_by"), // Discord user ID of who claimed/completed the ticket
-  amount: integer("amount"), // Amount paid for this ticket
+  claimedBy: text("claimed_by"),
+  amount: integer("amount"),
   answers: text("answers").array(),
-  completedAt: timestamp("completed_at"), // When the ticket was marked as paid
+  completedAt: timestamp("completed_at"),
 });
 
 export const messages = pgTable("messages", {

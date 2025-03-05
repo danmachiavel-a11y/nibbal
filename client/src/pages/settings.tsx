@@ -25,7 +25,10 @@ const categorySchema = z.object({
   isSubmenu: z.boolean().optional(),
   discordRoleId: z.string().optional(),
   discordCategoryId: z.string().optional(),
-  questions: z.string().transform(str => str.split("\n").filter(q => q.trim())),
+  questions: z.array(z.object({
+    text: z.string(),
+    buttons: z.array(z.string()).optional()
+  })),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
   parentId: z.number().nullable().optional(),
@@ -61,7 +64,7 @@ export default function Settings() {
       name: "",
       discordRoleId: "",
       discordCategoryId: "",
-      questions: "",
+      questions: [],
       serviceSummary: "Our team is ready to assist you!",
       serviceImageUrl: "",
       isSubmenu: false,
@@ -449,7 +452,7 @@ function CategoryEditor({ category }: { category: Category }) {
       name: category.name,
       discordRoleId: category.discordRoleId,
       discordCategoryId: category.discordCategoryId,
-      questions: category.questions.join("\n"),
+      questions: category.questions.map(q => q.text),
       serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
       serviceImageUrl: category.serviceImageUrl || "",
       isSubmenu: category.isSubmenu || false,
@@ -468,10 +471,20 @@ function CategoryEditor({ category }: { category: Category }) {
 
   async function onSubmit(data: z.infer<typeof categorySchema>) {
     try {
-      // Only include parentId if it's not a submenu
+      // Parse questions and button options
+      const questions = data.questions.split('\n')
+        .filter(q => q.trim())
+        .map(q => {
+          const [text, ...buttonParts] = q.split('>>')
+          return {
+            text: text.trim(),
+            buttons: buttonParts.length > 0 ? buttonParts : undefined
+          }
+        });
+
       const submitData = {
         ...data,
-        parentId: data.isSubmenu ? null : data.parentId
+        questions
       };
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
@@ -617,7 +630,13 @@ function CategoryEditor({ category }: { category: Category }) {
               name="questions"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Questions (one per line)</FormLabel>
+                  <FormLabel>Questions</FormLabel>
+                  <FormDescription>
+                    Enter each question on a new line. For button questions, add button options after the question prefixed with '>>':
+                    Example:
+                    What is your preferred service level?
+                    >>Basic>>Standard>>Premium
+                  </FormDescription>
                   <FormControl>
                     <Textarea {...field} rows={5} />
                   </FormControl>
