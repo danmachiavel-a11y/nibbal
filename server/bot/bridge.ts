@@ -7,68 +7,19 @@ import { log } from "../vite";
 export class BridgeManager {
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
-  private retryAttempts: number = 0;
-  private maxRetries: number = 3;
-  private retryTimeout: number = 5000; // 5 seconds
-  private healthCheckInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     log("Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
-    this.startHealthCheck();
-  }
-
-  private startHealthCheck() {
-    // Run health check every 30 seconds
-    this.healthCheckInterval = setInterval(async () => {
-      try {
-        const health = await this.healthCheck();
-        if (!health.telegram || !health.discord) {
-          log("Bot disconnected, attempting to reconnect...");
-          await this.reconnectDisconnectedBots(health);
-        }
-      } catch (error) {
-        log(`Health check failed: ${error}`, "error");
-      }
-    }, 30000);
-  }
-
-  private async reconnectDisconnectedBots(health: { telegram: boolean; discord: boolean }) {
-    try {
-      if (!health.telegram) {
-        log("Attempting to reconnect Telegram bot...");
-        await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
-      }
-      if (!health.discord) {
-        log("Attempting to reconnect Discord bot...");
-        await this.startBotWithRetry(() => this.discordBot.start(), "Discord");
-      }
-    } catch (error) {
-      log(`Error reconnecting bots: ${error}`, "error");
-    }
   }
 
   async start() {
     log("Starting bots...");
     try {
-      // Stop any existing bots first
-      await Promise.allSettled([
-        this.telegramBot.stop(),
-        this.discordBot.stop()
-      ]);
-
-      // Start bots with retry mechanism
-      await Promise.allSettled([
-        this.startBotWithRetry(
-          () => this.telegramBot.start(),
-          "Telegram"
-        ),
-        this.startBotWithRetry(
-          () => this.discordBot.start(),
-          "Discord"
-        )
-      ]);
+      // Start bots without trying to stop them first
+      await this.telegramBot.start();
+      await this.discordBot.start();
       log("Bots initialization completed");
     } catch (error) {
       log(`Error starting bots: ${error}`, "error");
@@ -76,36 +27,9 @@ export class BridgeManager {
     }
   }
 
-  private async startBotWithRetry(
-    startFn: () => Promise<void>,
-    botName: string
-  ): Promise<void> {
-    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
-      try {
-        await startFn();
-        this.retryAttempts = 0; // Reset on success
-        log(`${botName} bot started successfully`);
-        return;
-      } catch (error) {
-        log(`${botName} bot start attempt ${attempt} failed: ${error}`, "error");
-        if (attempt === this.maxRetries) {
-          log(`${botName} bot failed to start after ${this.maxRetries} attempts`, "error");
-          throw error;
-        }
-        await new Promise(resolve => setTimeout(resolve, this.retryTimeout));
-      }
-    }
-  }
-
   async restart() {
     log("Restarting bots with new configuration...");
     try {
-      // Clear health check interval
-      if (this.healthCheckInterval) {
-        clearInterval(this.healthCheckInterval);
-        this.healthCheckInterval = null;
-      }
-
       // Stop both bots with graceful shutdown
       await Promise.allSettled([
         this.telegramBot.stop(),
@@ -116,11 +40,8 @@ export class BridgeManager {
       this.telegramBot = new TelegramBot(this);
       this.discordBot = new DiscordBot(this);
 
-      // Start both bots with retry mechanism
+      // Start both bots
       await this.start();
-
-      // Restart health check
-      this.startHealthCheck();
 
       log("Bots restarted successfully");
     } catch (error) {
