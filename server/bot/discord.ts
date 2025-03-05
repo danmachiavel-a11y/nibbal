@@ -128,7 +128,7 @@ export class DiscordBot {
           const embed = new EmbedBuilder()
             .setColor(0x00FF00)
             .setTitle('💰 Payment Recorded')
-            .setDescription(`Ticket marked as paid by ${interaction.user.username}`)
+            .setDescription(`Ticket marked as paid by ${interaction.member?.displayName || interaction.user.username} on Discord`)
             .addFields(
               { name: 'Amount', value: `$${amount}`, inline: true },
               { name: 'Status', value: 'Completed & Paid', inline: true }

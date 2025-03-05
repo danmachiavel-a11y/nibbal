@@ -14,6 +14,8 @@ export const users = pgTable("users", {
   discordId: text("discord_id").unique(),
   username: text("username").notNull(),
   isBanned: boolean("is_banned").default(false),
+  telegramUsername: text("telegram_username"),
+  telegramName: text("telegram_name"),
 });
 
 // Forward declare the categories type to resolve circular reference

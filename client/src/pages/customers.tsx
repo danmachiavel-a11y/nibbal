@@ -41,7 +41,7 @@ export default function Customers() {
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">User #{user.id}</span>
+                      <span className="font-medium">{user.username}</span>
                       {user.isBanned && (
                         <Badge variant="destructive">
                           Banned
@@ -65,16 +65,6 @@ export default function Customers() {
                           <SiTelegram className="h-4 w-4" />
                           ID: {user.telegramId}
                         </div>
-                        {user.telegramUsername && (
-                          <div className="text-sm text-muted-foreground pl-6">
-                            Username: @{user.telegramUsername}
-                          </div>
-                        )}
-                        {user.telegramName && (
-                          <div className="text-sm text-muted-foreground pl-6">
-                            Name: {user.telegramName}
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
