@@ -12,7 +12,7 @@ import { Link } from "wouter";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { Category, BotConfig, Question } from "@shared/schema";
+import type { Category, BotConfig } from "@shared/schema";
 import { CategoryGrid } from "@/components/CategoryGrid";
 
 const botConfigSchema = z.object({
@@ -31,41 +31,6 @@ const categorySchema = z.object({
   parentId: z.number().nullable().optional(),
 });
 
-const CustomFormDescription = () => (
-  <div className="text-sm text-muted-foreground space-y-2">
-    <div>Enter each question on a new line. For button questions, add button options after the question using {'>>'}</div>
-    <div className="bg-muted rounded-md p-2">
-      <code>
-        What is your preferred service level?
-        {'>>'}Basic{'>>'}Standard{'>>'}Premium
-      </code>
-    </div>
-  </div>
-);
-
-// Function to convert string to Question[] format
-const parseQuestions = (questionsText: string): Question[] => {
-  return questionsText.split('\n')
-    .filter(q => q.trim())
-    .map(q => {
-      const parts = q.split('>>');
-      return {
-        text: parts[0].trim(),
-        buttons: parts.length > 1 ? parts.slice(1).map(b => b.trim()) : undefined
-      };
-    });
-};
-
-// Function to convert Question[] to string format
-const questionsToString = (questions: Question[]): string => {
-  return questions.map(q => {
-    if (q.buttons?.length) {
-      return `${q.text}\n${q.buttons.map(b => `>>${b}`).join('')}`;
-    }
-    return q.text;
-  }).join('\n');
-};
-
 export function CategoryEditor({ category }: { category: Category }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -83,7 +48,7 @@ export function CategoryEditor({ category }: { category: Category }) {
       name: category.name,
       discordRoleId: category.discordRoleId,
       discordCategoryId: category.discordCategoryId,
-      questions: questionsToString(category.questions),
+      questions: category.questions.join('\n'),
       serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
       serviceImageUrl: category.serviceImageUrl || "",
       isSubmenu: category.isSubmenu || false,
@@ -93,7 +58,7 @@ export function CategoryEditor({ category }: { category: Category }) {
 
   async function onSubmit(data: z.infer<typeof categorySchema>) {
     try {
-      const questions = parseQuestions(data.questions);
+      const questions = data.questions.split('\n').filter(q => q.trim());
 
       const submitData = {
         name: data.name,
@@ -107,8 +72,6 @@ export function CategoryEditor({ category }: { category: Category }) {
         newRow: category.newRow,
         parentId: data.parentId
       };
-
-      console.log("Submitting category update:", submitData);
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
       if (!res.ok) {
@@ -259,7 +222,7 @@ export function CategoryEditor({ category }: { category: Category }) {
                 <FormItem>
                   <FormLabel>Questions</FormLabel>
                   <FormDescriptionUI>
-                    <CustomFormDescription />
+                    Enter each question on a new line
                   </FormDescriptionUI>
                   <FormControl>
                     <Textarea {...field} rows={5} />
@@ -368,7 +331,7 @@ export default function Settings() {
 
   async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
     try {
-      const questions = parseQuestions(data.questions);
+      const questions = data.questions.split('\n').filter(q => q.trim());
 
       const submitData = {
         name: data.name,
@@ -566,7 +529,7 @@ export default function Settings() {
                         <FormItem>
                           <FormLabel>Questions</FormLabel>
                           <FormDescriptionUI>
-                            <CustomFormDescription />
+                            Enter each question on a new line
                           </FormDescriptionUI>
                           <FormControl>
                             <Textarea {...field} rows={5} />

@@ -48,7 +48,7 @@ export class TelegramBot {
           currentRow = [button];
         } else {
           currentRow.push(button);
-          if (currentRow.length >= 2) { // Changed condition to handle buttons per row
+          if (currentRow.length >= 2) {
             keyboard.push([...currentRow]);
             currentRow = [];
           }
@@ -83,110 +83,54 @@ export class TelegramBot {
       }
     });
 
-    // Category selection and button answer handling
+    // Category selection
     this.bot.on("callback_query", async (ctx) => {
       const data = ctx.callbackQuery?.data;
-      if (!data) return;
+      if (!data?.startsWith("category_")) return;
 
-      if (data.startsWith("category_")) {
-        const categoryId = parseInt(data.split("_")[1]);
-        const category = await storage.getCategory(categoryId);
-        if (!category) return;
+      const categoryId = parseInt(data.split("_")[1]);
+      const category = await storage.getCategory(categoryId);
+      if (!category) return;
 
-        // Service summary with detailed description and photo
-        const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-        const summary = `*${category.name} Service*\n\n` +
-          `${category.serviceSummary}\n\n` +
-          `*How it works:*\n` +
-          `1. Answer our questions\n` +
-          `2. A ticket will be created\n` +
-          `3. Our team will assist you promptly\n\n` +
-          `Let's begin with some questions:`;
+      // Service summary with detailed description and photo
+      const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
+      const summary = `*${category.name} Service*\n\n` +
+        `${category.serviceSummary}\n\n` +
+        `*How it works:*\n` +
+        `1. Answer our questions\n` +
+        `2. A ticket will be created\n` +
+        `3. Our team will assist you promptly\n\n` +
+        `Let's begin with some questions:`;
 
-        try {
-          await ctx.replyWithPhoto(
-            { url: photoUrl },
-            {
-              caption: summary,
-              parse_mode: 'Markdown'
-            }
-          );
-        } catch (error) {
-          await ctx.reply(summary, { parse_mode: 'Markdown' });
-        }
-
-        // Initialize user state
-        const userId = ctx.from?.id;
-        if (!userId) return;
-
-        console.log(`Initializing questionnaire for user ${userId}, category ${categoryId}`);
-
-        // Reset user state
-        this.userStates.set(userId, {
-          categoryId,
-          currentQuestion: 0,
-          answers: []
-        });
-
-        // Start with first question
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for better UX
-        const firstQuestion = category.questions[0];
-        if (firstQuestion.buttons && firstQuestion.buttons.length > 0) {
-          const keyboard = firstQuestion.buttons.map(button => ({
-            text: button,
-            callback_data: `answer_${0}_${button}`
-          }));
-          await ctx.reply(firstQuestion.text, { reply_markup: { inline_keyboard: [keyboard] } });
-        } else {
-          await ctx.reply(firstQuestion.text);
-        }
-        await ctx.answerCbQuery();
-      } else if (data.startsWith('answer_')) {
-        const [_, questionIndex, ...answerParts] = data.split('_');
-        const answer = answerParts.join('_');
-        const userId = ctx.from?.id;
-        if (!userId) return;
-
-        const state = this.userStates.get(userId);
-        if (!state) return;
-
-        // Store the button selection as the answer
-        state.answers[parseInt(questionIndex)] = answer;
-
-        // Move to next question
-        state.currentQuestion++;
-        this.userStates.set(userId, state);
-
-        // Answer the callback query to remove the "loading" state
-        await ctx.answerCbQuery();
-
-        // Get the category and proceed with the next question
-        const category = await storage.getCategory(state.categoryId);
-        if (!category) return;
-
-        if (state.currentQuestion < category.questions.length) {
-          const nextQuestion = category.questions[state.currentQuestion];
-          if (nextQuestion.buttons && nextQuestion.buttons.length > 0) {
-            // Next question also has buttons
-            const keyboard = nextQuestion.buttons.map(button => ({
-              text: button,
-              callback_data: `answer_${state.currentQuestion}_${button}`
-            }));
-
-            await ctx.reply(nextQuestion.text, {
-              reply_markup: {
-                inline_keyboard: [keyboard]
-              }
-            });
-          } else {
-            // Next question is a text question
-            await ctx.reply(nextQuestion.text);
+      try {
+        await ctx.replyWithPhoto(
+          { url: photoUrl },
+          {
+            caption: summary,
+            parse_mode: 'Markdown'
           }
-        } else {
-          // All questions answered, create ticket
-          await this.createTicket(ctx);
-        }
+        );
+      } catch (error) {
+        await ctx.reply(summary, { parse_mode: 'Markdown' });
       }
+
+      // Initialize user state
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      console.log(`Initializing questionnaire for user ${userId}, category ${categoryId}`);
+
+      // Reset user state
+      this.userStates.set(userId, {
+        categoryId,
+        currentQuestion: 0,
+        answers: []
+      });
+
+      // Start with first question
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for better UX
+      await ctx.reply(category.questions[0].text);
+      await ctx.answerCbQuery();
     });
 
     // Handle all text messages
@@ -243,26 +187,8 @@ export class TelegramBot {
       state.currentQuestion++;
       this.userStates.set(userId, state); // Update state
 
-      const nextQuestion = category.questions[state.currentQuestion];
       console.log(`Moving to question ${state.currentQuestion + 1}`);
-
-      // Check if the next question has button options
-      if (nextQuestion.buttons && nextQuestion.buttons.length > 0) {
-        // Create inline keyboard with buttons
-        const keyboard = nextQuestion.buttons.map(button => ({
-          text: button,
-          callback_data: `answer_${state.currentQuestion}_${button}`
-        }));
-
-        await ctx.reply(nextQuestion.text, {
-          reply_markup: {
-            inline_keyboard: [keyboard]
-          }
-        });
-      } else {
-        // Regular text question
-        await ctx.reply(nextQuestion.text);
-      }
+      await ctx.reply(category.questions[state.currentQuestion].text);
     } else {
       // All questions answered, create ticket
       console.log('All questions answered, creating ticket');

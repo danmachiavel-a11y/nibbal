@@ -1,14 +1,6 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-
-// Define the question structure with optional buttons
-export const questionSchema = z.object({
-  text: z.string(),
-  buttons: z.array(z.string()).optional(), // Array of button labels if this is a button question
-});
-
-export type Question = z.infer<typeof questionSchema>;
 
 export const botConfig = pgTable("bot_config", {
   id: serial("id").primaryKey(),
@@ -30,7 +22,7 @@ const categoriesConfig = {
   name: text("name").notNull(),
   discordRoleId: text("discord_role_id").notNull(),
   discordCategoryId: text("discord_category_id").notNull(),
-  questions: jsonb("questions").$type<Question[]>().notNull(),
+  questions: text("questions").array().notNull(),
   serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
   serviceImageUrl: text("service_image_url"),
   displayOrder: integer("display_order").default(0),
