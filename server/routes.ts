@@ -186,8 +186,14 @@ export async function registerRoutes(app: Express) {
   // Users/Customers route
   app.get("/api/users", async (req, res) => {
     try {
-      const users = Array.from(storage.users.values());
-      res.json(users);
+      // Get all users through the storage interface
+      const users = await Promise.all(
+        Array.from({ length: 100 }).map((_, i) => storage.getUser(i + 1))
+      );
+
+      // Filter out undefined users and return only existing ones
+      const existingUsers = users.filter(user => user !== undefined);
+      res.json(existingUsers);
     } catch (error) {
       log(`Error fetching users: ${error}`, "error");
       res.status(500).json({ message: "Failed to fetch users" });
