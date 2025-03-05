@@ -455,6 +455,15 @@ export default function Settings() {
 export function CategoryEditor({ category }: { category: Category }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"]
+  });
+
+  // Get available submenus for the dropdown, excluding current category
+  const submenus = categories?.filter(cat => 
+    cat.isSubmenu && cat.id !== category.id
+  ) || [];
+
   const form = useForm({
     resolver: zodResolver(categorySchema),
     defaultValues: {
@@ -490,8 +499,8 @@ export function CategoryEditor({ category }: { category: Category }) {
       const submitData = {
         ...data,
         questions,
-        displayOrder: category.displayOrder, 
-        newRow: category.newRow 
+        displayOrder: category.displayOrder,
+        newRow: category.newRow
       };
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
@@ -567,7 +576,7 @@ export function CategoryEditor({ category }: { category: Category }) {
                       className="w-full rounded-md border border-input bg-background px-3 py-2"
                       value={field.value ? "submenu" : "category"}
                       onChange={(e) => field.onChange(e.target.value === "submenu")}
-                      disabled={category.isSubmenu} 
+                      disabled={category.isSubmenu}
                     >
                       <option value="category">Category</option>
                       <option value="submenu">Submenu</option>
