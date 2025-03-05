@@ -200,7 +200,7 @@ export class MemStorage implements IStorage {
       // If it's a submenu, use empty/null values for these fields
       discordRoleId: insertCategory.isSubmenu ? "" : (insertCategory.discordRoleId || ""),
       discordCategoryId: insertCategory.isSubmenu ? "" : (insertCategory.discordCategoryId || ""),
-      transcriptCategoryId: insertCategory.isSubmenu ? "" : insertCategory.transcriptCategoryId,
+      transcriptCategoryId: insertCategory.isSubmenu ? "" : (insertCategory.transcriptCategoryId || ""),
       questions: insertCategory.isSubmenu ? [] : (insertCategory.questions || []),
       serviceSummary: insertCategory.isSubmenu ? "" : (insertCategory.serviceSummary || "Our team is ready to assist you!"),
       serviceImageUrl: insertCategory.isSubmenu ? null : (insertCategory.serviceImageUrl || null),
@@ -218,16 +218,12 @@ export class MemStorage implements IStorage {
     console.log("Updating category in storage. Current data:", JSON.stringify(category, null, 2));
     console.log("Update payload:", JSON.stringify(updateData, null, 2));
 
-    // Create updated category with careful handling of transcriptCategoryId
     const updatedCategory = {
       ...category,
       name: updateData.name || category.name,
       discordRoleId: updateData.discordRoleId || category.discordRoleId,
       discordCategoryId: updateData.discordCategoryId || category.discordCategoryId,
-      // Only update transcriptCategoryId if it's provided in updateData
-      transcriptCategoryId: updateData.transcriptCategoryId !== undefined ? 
-        updateData.transcriptCategoryId : 
-        category.transcriptCategoryId,
+      transcriptCategoryId: updateData.transcriptCategoryId || category.transcriptCategoryId,
       questions: Array.isArray(updateData.questions) ? updateData.questions : category.questions,
       serviceSummary: updateData.serviceSummary || category.serviceSummary,
       serviceImageUrl: updateData.serviceImageUrl === '' ? null : (updateData.serviceImageUrl || category.serviceImageUrl),
