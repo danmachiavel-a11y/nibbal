@@ -35,7 +35,7 @@ const CustomFormDescription = () => (
   <div className="text-sm text-muted-foreground">
     Enter each question on a new line. For button questions, add button options after the question using {'>>'}:
     <pre className="mt-2 p-2 bg-muted rounded-md">
-      What is your preferred service level?{'\n'}
+      What is your preferred service level?
       {'>>'}Basic{'>>'}Standard{'>>'}Premium
     </pre>
   </div>
@@ -452,7 +452,7 @@ export default function Settings() {
   );
 }
 
-function CategoryEditor({ category }: { category: Category }) {
+export function CategoryEditor({ category }: { category: Category }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const form = useForm({
@@ -461,22 +461,18 @@ function CategoryEditor({ category }: { category: Category }) {
       name: category.name,
       discordRoleId: category.discordRoleId,
       discordCategoryId: category.discordCategoryId,
-      questions: category.questions.map(q => q.text).join('\n'),
+      questions: category.questions.map(q => {
+        if (q.buttons?.length) {
+          return `${q.text}\n${q.buttons.map(b => `>>${b}`).join('')}`;
+        }
+        return q.text;
+      }).join('\n'),
       serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
       serviceImageUrl: category.serviceImageUrl || "",
       isSubmenu: category.isSubmenu || false,
       parentId: category.parentId || null,
     }
   });
-
-  const { data: categories } = useQuery<Category[]>({
-    queryKey: ["/api/categories"]
-  });
-
-  // Get available submenus for the dropdown
-  const submenus = categories?.filter(cat =>
-    cat.isSubmenu && cat.id !== category.id
-  ) || [];
 
   async function onSubmit(data: z.infer<typeof categorySchema>) {
     try {
@@ -487,13 +483,15 @@ function CategoryEditor({ category }: { category: Category }) {
           const parts = q.split('>>');
           return {
             text: parts[0].trim(),
-            buttons: parts.length > 1 ? parts.slice(1) : undefined
+            buttons: parts.length > 1 ? parts.slice(1).map(b => b.trim()) : undefined
           };
         });
 
       const submitData = {
         ...data,
-        questions
+        questions,
+        displayOrder: category.displayOrder, 
+        newRow: category.newRow 
       };
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
@@ -569,7 +567,7 @@ function CategoryEditor({ category }: { category: Category }) {
                       className="w-full rounded-md border border-input bg-background px-3 py-2"
                       value={field.value ? "submenu" : "category"}
                       onChange={(e) => field.onChange(e.target.value === "submenu")}
-                      disabled={category.isSubmenu} // Can't change from submenu to category if it has children
+                      disabled={category.isSubmenu} 
                     >
                       <option value="category">Category</option>
                       <option value="submenu">Submenu</option>
