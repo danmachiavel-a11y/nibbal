@@ -164,13 +164,29 @@ export async function registerRoutes(app: Express) {
 
   // Ticket Routes
   app.get("/api/tickets", async (req, res) => {
-    const categoryId = parseInt(req.query.categoryId as string);
-    if (isNaN(categoryId)) {
-      return res.status(400).json({ message: "Invalid category ID" });
-    }
+    try {
+      // Get tickets from all categories if no specific category is provided
+      const categoryId = req.query.categoryId ? parseInt(req.query.categoryId as string) : null;
 
-    const tickets = await storage.getTicketsByCategory(categoryId);
-    res.json(tickets);
+      if (categoryId) {
+        const tickets = await storage.getTicketsByCategory(categoryId);
+        res.json(tickets);
+      } else {
+        // Get all categories and their tickets
+        const categories = await storage.getCategories();
+        const allTickets = [];
+
+        for (const category of categories) {
+          const tickets = await storage.getTicketsByCategory(category.id);
+          allTickets.push(...tickets);
+        }
+
+        res.json(allTickets);
+      }
+    } catch (error) {
+      log(`Error fetching tickets: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch tickets" });
+    }
   });
 
   app.get("/api/tickets/:id/messages", async (req, res) => {
@@ -197,16 +213,18 @@ export async function registerRoutes(app: Express) {
           .filter(user => user !== undefined)
           .map(async user => {
             // Get all tickets from all categories for this user
-            const categories = await storage.getCategories();
             let paidTicketCount = 0;
 
+            // Get all categories
+            const categories = await storage.getCategories();
+
+            // Check each category for paid tickets
             for (const category of categories) {
               const tickets = await storage.getTicketsByCategory(category.id);
-              const userTickets = tickets.filter(t =>
-                t.userId === user?.id &&
+              paidTicketCount += tickets.filter(t => 
+                t.userId === user?.id && 
                 t.status === "paid"
-              );
-              paidTicketCount += userTickets.length;
+              ).length;
             }
 
             return {
