@@ -27,8 +27,6 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { useState, useEffect } from 'react';
 import { Folder, FolderOpen, Tag } from 'lucide-react';
 
-// Import removed 'Settings' to avoid naming conflict
-
 function CategoryList({ categories }: { categories: Category[] }) {
   const submenus = categories.filter(cat => cat.isSubmenu);
   const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
@@ -158,9 +156,302 @@ function CategoryList({ categories }: { categories: Category[] }) {
   );
 }
 
-// Placeholder for CategoryEditor component -  needs to be defined elsewhere
 function CategoryEditor({ category }: { category: Category }) {
-  return <div>Edit Category: {category.name}</div>
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const form = useForm({
+    defaultValues: {
+      name: category.name,
+      isSubmenu: category.isSubmenu,
+      parentId: category.parentId,
+      discordRoleId: category.discordRoleId || "",
+      discordCategoryId: category.discordCategoryId || "",
+      transcriptCategoryId: category.transcriptCategoryId || "",
+      questions: category.questions?.join('\n') || "",
+      serviceSummary: category.serviceSummary || "",
+      serviceImageUrl: category.serviceImageUrl || "",
+      discordCategories: [],
+      discordRoles: []
+    }
+  });
+
+  useEffect(() => {
+    const loadDiscordData = async () => {
+      try {
+        // Load categories
+        const categoriesRes = await apiRequest("GET", "/api/discord/categories");
+        if (!categoriesRes.ok) throw new Error("Failed to fetch Discord categories");
+        const categories = await categoriesRes.json();
+        form.setValue("discordCategories", categories);
+
+        // Load roles
+        const rolesRes = await apiRequest("GET", "/api/discord/roles");
+        if (!rolesRes.ok) throw new Error("Failed to fetch Discord roles");
+        const roles = await rolesRes.json();
+        form.setValue("discordRoles", roles);
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Failed to load Discord data",
+          variant: "destructive"
+        });
+      }
+    };
+    loadDiscordData();
+  }, []);
+
+  const onSubmit = async (data: any) => {
+    try {
+      const questions = data.questions
+        .split('\n')
+        .filter((q: string) => q.trim())
+        .map((q: string) => q.trim());
+
+      const submitData = {
+        name: data.name,
+        discordRoleId: data.discordRoleId,
+        discordCategoryId: data.discordCategoryId,
+        transcriptCategoryId: data.transcriptCategoryId,
+        questions,
+        serviceSummary: data.serviceSummary,
+        serviceImageUrl: data.serviceImageUrl,
+        parentId: data.parentId,
+        isSubmenu: data.isSubmenu
+      };
+
+      const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
+      if (!res.ok) throw new Error("Failed to update category");
+
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+
+      toast({
+        title: "Success",
+        description: `Updated ${category.isSubmenu ? "submenu" : "category"}: ${data.name}`,
+      });
+
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update category",
+        variant: "destructive"
+      });
+    }
+  };
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Name</FormLabel>
+              <FormControl>
+                <Input {...field} />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+
+        {!category.isSubmenu && (
+          <>
+            <FormField
+              control={form.control}
+              name="discordRoleId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Discord Role</FormLabel>
+                  <FormDescription>
+                    Select a Discord role
+                  </FormDescription>
+                  <div className="flex space-x-2">
+                    <FormControl>
+                      <select
+                        className="w-full rounded-md border border-input bg-background px-3 py-2"
+                        value={field.value || ''}
+                        onChange={(e) => field.onChange(e.target.value)}
+                      >
+                        <option value="">Select a role</option>
+                        {form.watch("discordRoles")?.map((role: any) => (
+                          <option
+                            key={role.id}
+                            value={role.id}
+                            style={{ color: role.color !== '#000000' ? role.color : 'inherit' }}
+                          >
+                            {role.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FormControl>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const res = await apiRequest("GET", "/api/discord/roles");
+                          if (!res.ok) throw new Error("Failed to fetch Discord roles");
+                          const roles = await res.json();
+                          form.setValue("discordRoles", roles);
+                        } catch (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to load Discord roles",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    >
+                      Refresh Roles
+                    </Button>
+                  </div>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="discordCategoryId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Discord Category</FormLabel>
+                  <FormDescription>
+                    Select a Discord category
+                  </FormDescription>
+                  <div className="flex space-x-2">
+                    <FormControl>
+                      <select
+                        className="w-full rounded-md border border-input bg-background px-3 py-2"
+                        value={field.value || ''}
+                        onChange={(e) => field.onChange(e.target.value)}
+                      >
+                        <option value="">Select a category</option>
+                        {form.watch("discordCategories")?.map((category: any) => (
+                          <option
+                            key={category.id}
+                            value={category.id}
+                          >
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FormControl>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const res = await apiRequest("GET", "/api/discord/categories");
+                          if (!res.ok) throw new Error("Failed to fetch Discord categories");
+                          const categories = await res.json();
+                          form.setValue("discordCategories", categories);
+                        } catch (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to load Discord categories",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    >
+                      Refresh Categories
+                    </Button>
+                  </div>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="transcriptCategoryId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Discord Transcript Category</FormLabel>
+                  <FormDescription>
+                    The category where closed tickets will be moved
+                  </FormDescription>
+                  <div className="flex space-x-2">
+                    <FormControl>
+                      <select
+                        className="w-full rounded-md border border-input bg-background px-3 py-2"
+                        value={field.value || ''}
+                        onChange={(e) => field.onChange(e.target.value)}
+                      >
+                        <option value="">Select a category</option>
+                        {form.watch("discordCategories")?.map((category: any) => (
+                          <option
+                            key={category.id}
+                            value={category.id}
+                          >
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FormControl>
+                  </div>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="questions"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Questions</FormLabel>
+                  <FormDescription>
+                    Enter each question on a new line
+                  </FormDescription>
+                  <FormControl>
+                    <Textarea {...field} rows={5} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="serviceSummary"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Service Summary</FormLabel>
+                  <FormDescription>
+                    Description of this service shown when users select it.
+                    Use new lines to format your message.
+                  </FormDescription>
+                  <FormControl>
+                    <Textarea {...field} rows={5} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="serviceImageUrl"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Service Image URL</FormLabel>
+                  <FormDescription>
+                    Optional: URL of an image to show with the service description
+                  </FormDescription>
+                  <FormControl>
+                    <Input {...field} value={field.value || ''} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+          </>
+        )}
+
+        <div className="flex justify-end space-x-2">
+          <Button type="submit" size="sm">
+            Save Changes
+          </Button>
+        </div>
+      </form>
+    </Form>
+  );
 }
 
 function SettingsPage() {
