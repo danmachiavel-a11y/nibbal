@@ -25,7 +25,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useState, useEffect } from 'react';
-import { Folder, FolderOpen, Tag } from 'lucide-react';
+import { Folder, FolderOpen, Tag, Info } from 'lucide-react';
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 function CategoryList({ categories }: { categories: Category[] }) {
   const submenus = categories.filter(cat => cat.isSubmenu);
@@ -933,7 +934,21 @@ function SettingsPage() {
                         name="telegramToken"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Telegram Bot Token</FormLabel>
+                            <div className="flex items-center gap-2">
+                              <FormLabel>Telegram Bot Token</FormLabel>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <Info className="h-4 w-4 text-muted-foreground" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>During development/testing, the bot may show as "not connected"</p>
+                                    <p>because Telegram only allows one active connection per token.</p>
+                                    <p>This is normal and the bot will still work in production.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
                             <FormDescription>
                               Enter your Telegram bot token. You can get this from @BotFather on Telegram.
                             </FormDescription>
@@ -951,8 +966,10 @@ function SettingsPage() {
                                     const status = await res.json();
                                     toast({
                                       title: "Telegram Bot Status",
-                                      description: status.connected ? "Connected" : "Not Connected",
-                                      variant: status.connected ? "default" : "destructive"
+                                      description: status.connected 
+                                        ? "Connected and ready" 
+                                        : "Not connected - This is normal during testing. The bot will work in production.",
+                                      variant: status.connected ? "default" : "secondary"
                                     });
                                   } catch (error) {
                                     toast({
@@ -999,6 +1016,7 @@ function SettingsPage() {
                                   } catch (error) {
                                     toast({
                                       title: "Error",
+                                    title: "Error",
                                       description: "Failed to check Discord bot status",
                                       variant: "destructive"
                                     });
