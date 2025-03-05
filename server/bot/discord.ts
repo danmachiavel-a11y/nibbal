@@ -15,6 +15,25 @@ import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 
+// Cooldown helper
+class Cooldown {
+  private static cooldowns = new Map<string, number>();
+  private static readonly DEFAULT_COOLDOWN = 5000; // 5 seconds
+
+  static async execute<T>(key: string, fn: () => Promise<T>, cooldownMs: number = this.DEFAULT_COOLDOWN): Promise<T> {
+    const lastExecution = this.cooldowns.get(key);
+    const now = Date.now();
+
+    if (lastExecution && now - lastExecution < cooldownMs) {
+      const waitTime = cooldownMs - (now - lastExecution);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+
+    this.cooldowns.set(key, Date.now());
+    return fn();
+  }
+}
+
 if (!process.env.DISCORD_BOT_TOKEN) {
   throw new Error("DISCORD_BOT_TOKEN is required");
 }
@@ -23,6 +42,7 @@ export class DiscordBot {
   private client: Client;
   private bridge: BridgeManager;
   private webhooks: Map<string, Webhook>;
+  private _isReady: boolean = false;
 
   constructor(bridge: BridgeManager) {
     this.client = new Client({
@@ -37,76 +57,129 @@ export class DiscordBot {
     this.setupHandlers();
   }
 
-  private setupHandlers() {
-    this.client.on("ready", async () => {
-      log("Discord bot ready");
-
-      // Register slash commands
-      try {
-        await this.client.application?.commands.create({
-          name: 'paid',
-          description: 'Mark a ticket as paid with the specified amount',
-          type: ApplicationCommandType.ChatInput,
-          options: [
-            {
-              name: 'amount',
-              description: 'The payment amount',
-              type: ApplicationCommandOptionType.Integer,
-              required: true,
-              min_value: 1
-            }
-          ]
-        });
-
-        await this.client.application?.commands.create({
-          name: 'close',
-          description: 'Close the ticket and move it to transcripts',
-          type: ApplicationCommandType.ChatInput
-        });
-
-        await this.client.application?.commands.create({
-          name: 'delete',
-          description: 'Delete this ticket channel',
-          type: ApplicationCommandType.ChatInput
-        });
-
-        await this.client.application?.commands.create({
-          name: 'deleteall',
-          description: 'Delete all tickets in a category',
-          type: ApplicationCommandType.ChatInput,
-          options: [
-            {
-              name: 'category',
-              description: 'The category to delete tickets from',
-              type: ApplicationCommandOptionType.Channel,
-              channelTypes: [ChannelType.GuildCategory],
-              required: true
-            }
-          ]
-        });
-
-        await this.client.application?.commands.create({
-          name: 'closeall',
-          description: 'Close all tickets in a category',
-          type: ApplicationCommandType.ChatInput,
-          options: [
-            {
-              name: 'category',
-              description: 'The category to close tickets from',
-              type: ApplicationCommandOptionType.Channel,
-              channelTypes: [ChannelType.GuildCategory],
-              required: true
-            }
-          ]
-        });
-
-        log("Registered slash commands");
-      } catch (error) {
-        log(`Error registering slash commands: ${error}`, "error");
+  async start() {
+    try {
+      // Check if already running
+      if (this._isReady) {
+        log("Discord bot is already running");
+        return;
       }
+
+      log("Starting Discord bot...");
+      await this.client.login(process.env.DISCORD_BOT_TOKEN);
+    } catch (error) {
+      this._isReady = false;
+      log(`Error starting Discord bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async stop() {
+    try {
+      if (!this._isReady) {
+        log("Discord bot is not running");
+        return;
+      }
+
+      log("Stopping Discord bot...");
+
+      // Clear cooldowns
+      Cooldown.cooldowns.clear();
+
+      // Destroy all webhooks
+      for (const [_, webhook] of this.webhooks) {
+        try {
+          await webhook.delete();
+        } catch (error) {
+          log(`Error deleting webhook: ${error}`, "error");
+        }
+      }
+      this.webhooks.clear();
+
+      // Destroy the client
+      this.client.destroy();
+      this._isReady = false;
+      log("Discord bot stopped");
+    } catch (error) {
+      log(`Error stopping Discord bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  isReady() {
+    return this._isReady;
+  }
+
+  async getCategories() {
+    return Cooldown.execute('getCategories', async () => {
+      try {
+        if (!this._isReady) {
+          throw new Error("Discord bot is not ready");
+        }
+
+        const guilds = await this.client.guilds.fetch();
+        const firstGuild = guilds.first();
+        if (!firstGuild) {
+          throw new Error("Bot is not in any servers");
+        }
+
+        const guild = await firstGuild.fetch();
+        const categories = await guild.channels.fetch();
+        const categoryChannels = categories
+          .filter(channel => channel?.type === ChannelType.GuildCategory)
+          .map(category => ({
+            id: category!.id,
+            name: category!.name
+          }));
+
+        return categoryChannels;
+      } catch (error) {
+        log(`Error getting Discord categories: ${error}`, "error");
+        throw error;
+      }
+    }, 5000); // 5 second cooldown
+  }
+
+  async getRoles() {
+    return Cooldown.execute('getRoles', async () => {
+      try {
+        if (!this._isReady) {
+          throw new Error("Discord bot is not ready");
+        }
+
+        const guilds = await this.client.guilds.fetch();
+        const firstGuild = guilds.first();
+        if (!firstGuild) {
+          throw new Error("Bot is not in any servers");
+        }
+
+        const guild = await firstGuild.fetch();
+        const roles = await guild.roles.fetch();
+        const roleList = roles.map(role => ({
+          id: role.id,
+          name: role.name,
+          color: role.hexColor
+        }));
+
+        return roleList.sort((a, b) => {
+          const roleA = roles.get(a.id);
+          const roleB = roles.get(b.id);
+          return (roleB?.position || 0) - (roleA?.position || 0);
+        });
+      } catch (error) {
+        log(`Error getting Discord roles: ${error}`, "error");
+        throw error;
+      }
+    }, 5000); // 5 second cooldown
+  }
+
+  private setupHandlers() {
+    this.client.on("ready", () => {
+      this._isReady = true;
+      log("Discord bot ready");
+      this.registerSlashCommands();
     });
 
-    // Handle slash commands
     this.client.on('interactionCreate', async (interaction) => {
       if (!interaction.isChatInputCommand()) return;
 
@@ -369,7 +442,6 @@ export class DiscordBot {
       }
     });
 
-    // Change this message handling section
     this.client.on("messageCreate", async (message) => {
       // Ignore bot messages to prevent loops
       if (message.author.bot) return;
@@ -432,7 +504,6 @@ export class DiscordBot {
       }
     });
 
-    // Handle message edits
     this.client.on("messageUpdate", async (oldMessage, newMessage) => {
       if (newMessage.author?.bot) return;
       if (!newMessage.content || newMessage.content.startsWith('.')) return;
@@ -448,6 +519,71 @@ export class DiscordBot {
         newMessage.member?.displayName || newMessage.author?.username || "Unknown Discord User"
       );
     });
+  }
+
+  private async registerSlashCommands() {
+    try {
+      await this.client.application?.commands.create({
+        name: 'paid',
+        description: 'Mark a ticket as paid with the specified amount',
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            name: 'amount',
+            description: 'The payment amount',
+            type: ApplicationCommandOptionType.Integer,
+            required: true,
+            min_value: 1
+          }
+        ]
+      });
+
+      await this.client.application?.commands.create({
+        name: 'close',
+        description: 'Close the ticket and move it to transcripts',
+        type: ApplicationCommandType.ChatInput
+      });
+
+      await this.client.application?.commands.create({
+        name: 'delete',
+        description: 'Delete this ticket channel',
+        type: ApplicationCommandType.ChatInput
+      });
+
+      await this.client.application?.commands.create({
+        name: 'deleteall',
+        description: 'Delete all tickets in a category',
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            name: 'category',
+            description: 'The category to delete tickets from',
+            type: ApplicationCommandOptionType.Channel,
+            channelTypes: [ChannelType.GuildCategory],
+            required: true
+          }
+        ]
+      });
+
+      await this.client.application?.commands.create({
+        name: 'closeall',
+        description: 'Close all tickets in a category',
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            name: 'category',
+            description: 'The category to close tickets from',
+            type: ApplicationCommandOptionType.Channel,
+            channelTypes: [ChannelType.GuildCategory],
+            required: true
+          }
+        ]
+      });
+
+      log("Registered slash commands");
+    } catch (error) {
+      log(`Error registering slash commands: ${error}`, "error");
+    }
   }
 
   async createTicketChannel(categoryId: string, name: string): Promise<string> {
@@ -543,94 +679,5 @@ export class DiscordBot {
       log(`Error moving channel to category: ${error}`, "error");
       throw error;
     }
-  }
-
-  async getCategories() {
-    try {
-      // Get the first guild (server) the bot is in
-      const guilds = await this.client.guilds.fetch();
-      const firstGuild = guilds.first();
-      if (!firstGuild) {
-        throw new Error("Bot is not in any servers");
-      }
-
-      // Fetch the complete guild object
-      const guild = await firstGuild.fetch();
-
-      // Get all categories in the guild
-      const categories = await guild.channels.fetch();
-      const categoryChannels = categories
-        .filter(channel => channel?.type === ChannelType.GuildCategory)
-        .map(category => ({
-          id: category!.id,
-          name: category!.name
-        }));
-
-      return categoryChannels;
-    } catch (error) {
-      log(`Error getting Discord categories: ${error}`, "error");
-      throw error;
-    }
-  }
-
-  async getRoles() {
-    try {
-      // Get the first guild (server) the bot is in
-      const guilds = await this.client.guilds.fetch();
-      const firstGuild = guilds.first();
-      if (!firstGuild) {
-        throw new Error("Bot is not in any servers");
-      }
-
-      // Fetch the complete guild object
-      const guild = await firstGuild.fetch();
-
-      // Get all roles in the guild
-      const roles = await guild.roles.fetch();
-      const roleList = roles.map(role => ({
-        id: role.id,
-        name: role.name,
-        color: role.hexColor
-      }));
-
-      // Sort roles by position (higher roles first)
-      return roleList.sort((a, b) => {
-        const roleA = roles.get(a.id);
-        const roleB = roles.get(b.id);
-        return (roleB?.position || 0) - (roleA?.position || 0);
-      });
-    } catch (error) {
-      log(`Error getting Discord roles: ${error}`, "error");
-      throw error;
-    }
-  }
-
-  async start() {
-    await this.client.login(process.env.DISCORD_BOT_TOKEN);
-  }
-
-  async stop() {
-    try {
-      // Destroy all webhooks
-      for (const [_, webhook] of this.webhooks) {
-        try {
-          await webhook.delete();
-        } catch (error) {
-          log(`Error deleting webhook: ${error}`, "error");
-        }
-      }
-      this.webhooks.clear();
-
-      // Destroy the client
-      this.client.destroy();
-      log("Discord bot stopped");
-    } catch (error) {
-      log(`Error stopping Discord bot: ${error}`, "error");
-      throw error;
-    }
-  }
-
-  isReady() {
-    return this.client.isReady();
   }
 }
