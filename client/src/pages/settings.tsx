@@ -46,6 +46,16 @@ export function CategoryEditor({ category }: { category: Category }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Add categories query
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"]
+  });
+
+  // Filter for submenus, excluding the current category
+  const submenus = categories?.filter(cat => 
+    cat.isSubmenu && cat.id !== category.id
+  ) || [];
+
   const form = useForm({
     resolver: zodResolver(categorySchema),
     defaultValues: {
@@ -478,7 +488,7 @@ export default function Settings() {
       isSubmenu: false,
       parentId: null,
       discordCategories: [],
-      discordRoles: [] // Add default value for discordRoles
+      discordRoles: [] 
     }
   });
 
@@ -499,7 +509,7 @@ export default function Settings() {
       }
     };
     loadDiscordCategories();
-  }, []); // Only run on mount
+  }, []); 
 
   async function onBotConfigSubmit(data: z.infer<typeof botConfigSchema>) {
     try {
