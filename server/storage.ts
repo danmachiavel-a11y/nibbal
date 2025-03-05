@@ -221,10 +221,8 @@ export class MemStorage implements IStorage {
       name: updateData.name || category.name,
       discordRoleId: updateData.discordRoleId || category.discordRoleId,
       discordCategoryId: updateData.discordCategoryId || category.discordCategoryId,
-      // Handle transcript category ID carefully - only update if provided in updateData
-      transcriptCategoryId: updateData.transcriptCategoryId === undefined ? 
-        category.transcriptCategoryId : 
-        updateData.transcriptCategoryId,
+      // Only update transcriptCategoryId if it's a non-empty string
+      transcriptCategoryId: updateData.transcriptCategoryId ? updateData.transcriptCategoryId : category.transcriptCategoryId,
       questions: Array.isArray(updateData.questions) ? updateData.questions : category.questions,
       serviceSummary: updateData.serviceSummary || category.serviceSummary,
       serviceImageUrl: updateData.serviceImageUrl === '' ? null : (updateData.serviceImageUrl || category.serviceImageUrl),

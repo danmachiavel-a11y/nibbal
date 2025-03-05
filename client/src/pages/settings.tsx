@@ -70,9 +70,9 @@ export function CategoryEditor({ category }: { category: Category }) {
       const submitData = {
         name: data.name,
         isSubmenu: category.isSubmenu,
-        discordRoleId: data.discordRoleId,
-        discordCategoryId: data.discordCategoryId,
-        transcriptCategoryId: data.transcriptCategoryId,
+        discordRoleId: data.discordRoleId || category.discordRoleId,
+        discordCategoryId: data.discordCategoryId || category.discordCategoryId,
+        transcriptCategoryId: data.transcriptCategoryId || category.transcriptCategoryId,
         questions,
         serviceSummary: data.serviceSummary || category.serviceSummary,
         serviceImageUrl: data.serviceImageUrl,
