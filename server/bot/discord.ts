@@ -320,14 +320,14 @@ export class DiscordBot {
             return;
           }
 
-          let moveCount = 0;
-          let errorCount = 0;
-
           // Start the process
           await interaction.reply({
             content: `Moving ${channels.size} tickets to their respective transcript categories...`,
             ephemeral: true
           });
+
+          let moveCount = 0;
+          let errorCount = 0;
 
           // Process all channels
           for (const [_, channel] of channels) {
@@ -337,13 +337,24 @@ export class DiscordBot {
                 if (ticket) {
                   const category = await storage.getCategory(ticket.categoryId);
                   if (category?.transcriptCategoryId) {
+                    log(`Moving channel ${channel.id} to transcript category ${category.transcriptCategoryId}`);
+
                     const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
                     if (transcriptCategory instanceof CategoryChannel) {
-                      await channel.setParent(transcriptCategory.id);
+                      await channel.setParent(transcriptCategory.id, {
+                        lockPermissions: false // Preserve existing permissions
+                      });
                       await storage.updateTicketStatus(ticket.id, "closed");
                       moveCount++;
+                      log(`Successfully moved channel ${channel.id} to transcript category`);
+                    } else {
+                      throw new Error(`Invalid transcript category type for ${category.transcriptCategoryId}`);
                     }
+                  } else {
+                    throw new Error(`No transcript category set for ticket ${ticket.id}`);
                   }
+                } else {
+                  throw new Error(`No ticket found for channel ${channel.id}`);
                 }
               } catch (error) {
                 log(`Error moving channel ${channel.name}: ${error}`, "error");
@@ -513,7 +524,9 @@ export class DiscordBot {
         throw new Error(`Invalid category ${categoryId}`);
       }
 
-      await channel.setParent(category.id);
+      await channel.setParent(category.id, {
+        lockPermissions: false // Keep existing permissions
+      });
       log(`Successfully moved channel ${channelId} to category ${categoryId}`);
     } catch (error) {
       log(`Error moving channel to category: ${error}`, "error");
