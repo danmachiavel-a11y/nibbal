@@ -549,6 +549,38 @@ export class DiscordBot {
     }
   }
 
+  async getRoles() {
+    try {
+      // Get the first guild (server) the bot is in
+      const guilds = await this.client.guilds.fetch();
+      const firstGuild = guilds.first();
+      if (!firstGuild) {
+        throw new Error("Bot is not in any servers");
+      }
+
+      // Fetch the complete guild object
+      const guild = await firstGuild.fetch();
+
+      // Get all roles in the guild
+      const roles = await guild.roles.fetch();
+      const roleList = roles.map(role => ({
+        id: role.id,
+        name: role.name,
+        color: role.hexColor
+      }));
+
+      // Sort roles by position (higher roles first)
+      return roleList.sort((a, b) => {
+        const roleA = roles.get(a.id);
+        const roleB = roles.get(b.id);
+        return (roleB?.position || 0) - (roleA?.position || 0);
+      });
+    } catch (error) {
+      log(`Error getting Discord roles: ${error}`, "error");
+      throw error;
+    }
+  }
+
   async start() {
     await this.client.login(process.env.DISCORD_BOT_TOKEN);
   }

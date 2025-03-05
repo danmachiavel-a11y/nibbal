@@ -32,6 +32,22 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  // Add new route to fetch Discord roles
+  app.get("/api/discord/roles", async (req, res) => {
+    try {
+      const discordBot = bridge.getDiscordBot();
+      if (!discordBot) {
+        throw new Error("Discord bot not initialized");
+      }
+
+      const roles = await discordBot.getRoles();
+      res.json(roles);
+    } catch (error) {
+      log(`Error fetching Discord roles: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch Discord roles" });
+    }
+  });
+
   // Bot Config Routes
   app.get("/api/bot-config", async (req, res) => {
     const config = await storage.getBotConfig();
