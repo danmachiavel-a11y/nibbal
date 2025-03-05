@@ -3,9 +3,14 @@ import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 import fetch from 'node-fetch';
+import imgbbUploader from 'imgbb-uploader';  // Changed import statement
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
+}
+
+if (!process.env.IMGBB_API_KEY) {
+  throw new Error("IMGBB_API_KEY is required for image forwarding");
 }
 
 interface UserState {
@@ -99,6 +104,33 @@ export class TelegramBot {
     });
   }
 
+  private async uploadToImgBB(imageUrl: string): Promise<string> {
+    try {
+      log(`Downloading image from URL: ${imageUrl}`);
+
+      // Download image
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.statusText} (${response.status})`);
+      }
+
+      const buffer = await response.arrayBuffer();
+      log(`Downloaded image, size: ${buffer.byteLength} bytes`);
+
+      // Upload to ImgBB - Without expiration for permanent storage
+      const result = await imgbbUploader(process.env.IMGBB_API_KEY!, {
+        base64string: Buffer.from(buffer).toString('base64')
+        // No expiration parameter = permanent storage
+      });
+
+      log(`Successfully uploaded image to ImgBB: ${result.url}`);
+      return result.url;
+    } catch (error) {
+      log(`Error uploading to ImgBB: ${error}`, "error");
+      throw error;
+    }
+  }
+
   async start() {
     try {
       log("Starting Telegram bot...");
@@ -174,30 +206,16 @@ export class TelegramBot {
       }
 
       try {
-        // Download image from Discord URL to temporary buffer
-        log(`Fetching image from URL: ${imageUrl}`);
-        const response = await fetch(imageUrl);
+        // Upload image to ImgBB first
+        const imgbbUrl = await this.uploadToImgBB(imageUrl);
 
-        if (!response.ok) {
-          throw new Error(`Failed to fetch image: ${response.statusText} (${response.status})`);
-        }
-
-        const contentType = response.headers.get('content-type');
-        log(`Image content type: ${contentType}`);
-
-        const buffer = await response.arrayBuffer();
-        log(`Successfully downloaded image, size: ${buffer.byteLength} bytes`);
-
-        // Send to Telegram directly using the buffer
-        await this.bot.telegram.sendPhoto(chatId, {
-          source: Buffer.from(buffer),
-          filename: 'image.jpg'
-        }, {
+        // Send to Telegram using ImgBB URL
+        await this.bot.telegram.sendPhoto(chatId, imgbbUrl, {
           caption: caption ? caption.slice(0, 1024) : undefined // Telegram caption limit
         });
         log(`Successfully sent image to Telegram chat: ${chatId}`);
       } catch (error) {
-        log(`Error sending image as buffer, trying to send as URL: ${error}`, "error");
+        log(`Error sending image, trying to send as URL: ${error}`, "error");
         // If sending photo fails, send as URL
         await this.sendMessage(chatId, `${caption}\n${imageUrl}`);
       }
