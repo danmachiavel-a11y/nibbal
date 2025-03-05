@@ -295,6 +295,7 @@ export class DiscordBot {
         }
       }
 
+      // Update the closeall command implementation
       if (interaction.commandName === 'closeall') {
         const categoryChannel = interaction.options.getChannel('category', true);
 
@@ -322,11 +323,12 @@ export class DiscordBot {
 
           // Start the process
           await interaction.reply({
-            content: `Moving ${channels.size} tickets to their respective transcript categories...`,
+            content: `Processing ${channels.size} channels in ${categoryChannel.name}...`,
             ephemeral: true
           });
 
           let moveCount = 0;
+          let skipCount = 0;
           let errorCount = 0;
 
           // Process all channels
@@ -334,46 +336,63 @@ export class DiscordBot {
             if (channel instanceof TextChannel) {
               try {
                 const ticket = await storage.getTicketByDiscordChannel(channel.id);
-                if (ticket) {
-                  const category = await storage.getCategory(ticket.categoryId);
-                  if (category?.transcriptCategoryId) {
-                    log(`Moving channel ${channel.id} to transcript category ${category.transcriptCategoryId}`);
 
-                    const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
-                    if (transcriptCategory instanceof CategoryChannel) {
-                      await channel.setParent(transcriptCategory.id, {
-                        lockPermissions: false // Preserve existing permissions
-                      });
-                      await storage.updateTicketStatus(ticket.id, "closed");
-                      moveCount++;
-                      log(`Successfully moved channel ${channel.id} to transcript category`);
-                    } else {
-                      throw new Error(`Invalid transcript category type for ${category.transcriptCategoryId}`);
-                    }
-                  } else {
-                    throw new Error(`No transcript category set for ticket ${ticket.id}`);
-                  }
-                } else {
-                  throw new Error(`No ticket found for channel ${channel.id}`);
+                // If no ticket found, skip this channel but don't count as error
+                if (!ticket) {
+                  log(`No ticket found for channel ${channel.id} (${channel.name}), skipping...`);
+                  skipCount++;
+                  continue;
                 }
+
+                const category = await storage.getCategory(ticket.categoryId!);
+                if (!category?.transcriptCategoryId) {
+                  log(`No transcript category set for ticket ${ticket.id} (${channel.name}), skipping...`);
+                  skipCount++;
+                  continue;
+                }
+
+                log(`Moving channel ${channel.name} (${channel.id}) to transcript category ${category.transcriptCategoryId}`);
+
+                const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
+                if (!(transcriptCategory instanceof CategoryChannel)) {
+                  throw new Error(`Invalid transcript category type for ${category.transcriptCategoryId}`);
+                }
+
+                // Move the channel
+                await channel.setParent(transcriptCategory.id, {
+                  lockPermissions: false
+                });
+
+                // Update ticket status
+                await storage.updateTicketStatus(ticket.id, "closed");
+
+                moveCount++;
+                log(`Successfully moved channel ${channel.name} to transcripts`);
+
               } catch (error) {
-                log(`Error moving channel ${channel.name}: ${error}`, "error");
+                log(`Error processing channel ${channel.name}: ${error}`, "error");
                 errorCount++;
               }
             }
           }
 
-          // Send final status
+          // Send detailed final status
+          const statusMessage = [
+            `✅ Processed ${channels.size} channels in ${categoryChannel.name}:`,
+            `• ${moveCount} channels moved to transcripts`,
+            `• ${skipCount} channels skipped (no ticket or transcript category)`,
+            `• ${errorCount} errors encountered`
+          ].join('\n');
+
           await interaction.followUp({
-            content: `✅ Processed ${channels.size} tickets:\n` +
-                    `• ${moveCount} tickets moved to transcripts\n` +
-                    `• ${errorCount} errors encountered`,
+            content: statusMessage,
             ephemeral: true
           });
+
         } catch (error) {
           log(`Error in closeall command: ${error}`, "error");
           await interaction.followUp({
-            content: "An error occurred while closing tickets. Some tickets may not have been processed.",
+            content: "An error occurred while processing channels. Some channels may not have been moved.",
             ephemeral: true
           });
         }
