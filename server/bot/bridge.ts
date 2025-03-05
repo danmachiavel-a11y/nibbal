@@ -49,7 +49,7 @@ export class BridgeManager {
         throw new Error("Category not found");
       }
 
-      // Explicitly check transcript category ID
+      // More strict checking for transcriptCategoryId
       if (!category.transcriptCategoryId) {
         log(`No transcript category ID found for category ${category.id}`);
         throw new Error("No transcript category set for this service");

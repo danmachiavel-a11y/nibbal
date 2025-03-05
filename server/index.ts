@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { storage } from "./storage";
 
 const app = express();
 app.use(express.json());
@@ -38,6 +39,27 @@ app.use((req, res, next) => {
 
 (async () => {
   const server = await registerRoutes(app);
+
+  // Create default test category
+  log("Creating default test category...");
+  const existingCategories = await storage.getCategories();
+  if (existingCategories.length === 0) {
+    const testCategory = {
+      name: 'Test Service',
+      discordRoleId: '1346324056244490363',
+      discordCategoryId: '1345983179353362447',
+      transcriptCategoryId: '1346383603365580820',
+      questions: [
+        'What is your issue?',
+        'When did this start?',
+        'Have you tried any solutions?'
+      ],
+      serviceSummary: 'Welcome to our Test Service! Our team specializes in handling test-related issues.',
+      serviceImageUrl: null
+    };
+    await storage.createCategory(testCategory);
+    log("Default test category created with data:", JSON.stringify(testCategory, null, 2));
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
