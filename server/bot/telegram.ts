@@ -51,16 +51,37 @@ export class TelegramBot {
       const botConfig = await storage.getBotConfig();
       const categories = await storage.getCategories();
 
-      // Sort categories by display order
-      const sortedCategories = [...categories].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+      // Organize categories and submenus
+      const submenus = categories.filter(cat => cat.isSubmenu);
+      const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
 
       // Create keyboard with proper row layout
       const keyboard: { text: string; callback_data: string; }[][] = [];
       let currentRow: { text: string; callback_data: string; }[] = [];
 
-      for (const category of sortedCategories) {
+      // First add submenus
+      for (const submenu of submenus) {
         const button = {
-          text: category.name,
+          text: `📁 ${submenu.name}`,
+          callback_data: `submenu_${submenu.id}`
+        };
+
+        if (submenu.newRow && currentRow.length > 0) {
+          keyboard.push([...currentRow]);
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
+        }
+      }
+
+      // Then add root categories
+      for (const category of rootCategories) {
+        const button = {
+          text: `📋 ${category.name}`,
           callback_data: `category_${category.id}`
         };
 
@@ -102,6 +123,97 @@ export class TelegramBot {
           reply_markup: { inline_keyboard: keyboard }
         });
       }
+    });
+
+    // Category/Submenu selection
+    this.bot.on("callback_query", async (ctx) => {
+      const data = ctx.callbackQuery?.data;
+      if (!data) return;
+
+      if (data.startsWith("submenu_")) {
+        // Handle submenu selection
+        const submenuId = parseInt(data.split("_")[1]);
+        const categories = await storage.getCategories();
+        const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
+
+        // Create keyboard for submenu categories
+        const keyboard = submenuCategories.map(category => [{
+          text: `📋 ${category.name}`,
+          callback_data: `category_${category.id}`
+        }]);
+
+        await ctx.reply("Please select a category:", {
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        await ctx.answerCbQuery();
+        return;
+      }
+
+      if (!data.startsWith("category_")) return;
+
+      const categoryId = parseInt(data.split("_")[1]);
+      const category = await storage.getCategory(categoryId);
+      if (!category) return;
+
+      // Display category info and start questionnaire
+      const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
+      const summary = `*${category.name} Service*\n\n` +
+        `${category.serviceSummary}\n\n` +
+        `*How it works:*\n` +
+        `1. Answer our questions\n` +
+        `2. A ticket will be created\n` +
+        `3. Our team will assist you promptly\n\n` +
+        `Let's begin with some questions:`;
+
+      try {
+        await ctx.replyWithPhoto(
+          { url: photoUrl },
+          {
+            caption: summary,
+            parse_mode: 'Markdown'
+          }
+        );
+      } catch (error) {
+        await ctx.reply(summary, { parse_mode: 'Markdown' });
+      }
+
+      // Initialize user state
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      // Check for active tickets again before starting questionnaire
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const activeCategory = await storage.getCategory(activeTicket.categoryId);
+          await ctx.reply(
+            "❌ You already have an active ticket in " + 
+            `*${activeCategory?.name || "Unknown"}* category.\n\n` +
+            "Please use /close to close your current ticket before starting a new one.",
+            { parse_mode: "Markdown" }
+          );
+          return;
+        }
+      }
+
+      // Initialize questionnaire
+      this.userStates.set(userId, {
+        categoryId,
+        currentQuestion: 0,
+        answers: []
+      });
+
+      // Start with first question
+      if (category.questions && category.questions.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for better UX
+        await ctx.reply(category.questions[0]);
+      } else {
+        // If no questions, create ticket directly
+        await this.createTicket(ctx);
+      }
+
+      await ctx.answerCbQuery();
     });
 
     // Status command
@@ -189,72 +301,6 @@ export class TelegramBot {
           "❌ There was an error closing your ticket. Please try again or contact an administrator."
         );
       }
-    });
-
-    // Category selection
-    this.bot.on("callback_query", async (ctx) => {
-      const data = ctx.callbackQuery?.data;
-      if (!data?.startsWith("category_")) return;
-
-      const categoryId = parseInt(data.split("_")[1]);
-      const category = await storage.getCategory(categoryId);
-      if (!category) return;
-
-      // Service summary with detailed description and photo
-      const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-      const summary = `*${category.name} Service*\n\n` +
-        `${category.serviceSummary}\n\n` +
-        `*How it works:*\n` +
-        `1. Answer our questions\n` +
-        `2. A ticket will be created\n` +
-        `3. Our team will assist you promptly\n\n` +
-        `Let's begin with some questions:`;
-
-      try {
-        await ctx.replyWithPhoto(
-          { url: photoUrl },
-          {
-            caption: summary,
-            parse_mode: 'Markdown'
-          }
-        );
-      } catch (error) {
-        await ctx.reply(summary, { parse_mode: 'Markdown' });
-      }
-
-      // Initialize user state
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      // Check for active tickets again before starting questionnaire
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (activeTicket) {
-          const activeCategory = await storage.getCategory(activeTicket.categoryId);
-          await ctx.reply(
-            "❌ You already have an active ticket in " + 
-            `*${activeCategory?.name || "Unknown"}* category.\n\n` +
-            "Please use /close to close your current ticket before starting a new one.",
-            { parse_mode: "Markdown" }
-          );
-          return;
-        }
-      }
-
-      console.log(`Initializing questionnaire for user ${userId}, category ${categoryId}`);
-
-      // Reset user state
-      this.userStates.set(userId, {
-        categoryId,
-        currentQuestion: 0,
-        answers: []
-      });
-
-      // Start with first question
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for better UX
-      await ctx.reply(category.questions[0]);
-      await ctx.answerCbQuery();
     });
 
     // Handle all text messages

@@ -127,7 +127,7 @@ export async function registerRoutes(app: Express) {
       name: z.string().optional(),
       discordRoleId: z.string().optional(),
       discordCategoryId: z.string().optional(),
-      questions: z.array(z.string()).optional(),
+      questions: z.array(z.string()).optional().default([]),
       serviceSummary: z.string().optional(),
       serviceImageUrl: z.string().nullable().optional(),
       displayOrder: z.number().optional(),
