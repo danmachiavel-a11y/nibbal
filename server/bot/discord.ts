@@ -521,6 +521,34 @@ export class DiscordBot {
     }
   }
 
+  async getCategories() {
+    try {
+      // Get the first guild (server) the bot is in
+      const guilds = await this.client.guilds.fetch();
+      const firstGuild = guilds.first();
+      if (!firstGuild) {
+        throw new Error("Bot is not in any servers");
+      }
+
+      // Fetch the complete guild object
+      const guild = await firstGuild.fetch();
+
+      // Get all categories in the guild
+      const categories = await guild.channels.fetch();
+      const categoryChannels = categories
+        .filter(channel => channel?.type === ChannelType.GuildCategory)
+        .map(category => ({
+          id: category!.id,
+          name: category!.name
+        }));
+
+      return categoryChannels;
+    } catch (error) {
+      log(`Error getting Discord categories: ${error}`, "error");
+      throw error;
+    }
+  }
+
   async start() {
     await this.client.login(process.env.DISCORD_BOT_TOKEN);
   }

@@ -30,6 +30,10 @@ const categorySchema = z.object({
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
   parentId: z.number().nullable().optional(),
+  discordCategories: z.array(z.object({
+    id: z.string(),
+    name: z.string()
+  })).optional(),
 });
 
 export function CategoryEditor({ category }: { category: Category }) {
@@ -55,6 +59,7 @@ export function CategoryEditor({ category }: { category: Category }) {
       serviceImageUrl: category.serviceImageUrl || "",
       isSubmenu: category.isSubmenu || false,
       parentId: category.parentId || null,
+      discordCategories: [] // Initialize with an empty array
     }
   });
 
@@ -228,13 +233,47 @@ export function CategoryEditor({ category }: { category: Category }) {
               name="transcriptCategoryId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Discord Transcript Category ID</FormLabel>
+                  <FormLabel>Discord Transcript Category</FormLabel>
                   <FormDescriptionUI>
                     The category where closed tickets will be moved
                   </FormDescriptionUI>
-                  <FormControl>
-                    <Input {...field} value={field.value || ''} />
-                  </FormControl>
+                  <div className="flex space-x-2">
+                    <FormControl>
+                      <select
+                        className="w-full rounded-md border border-input bg-background px-3 py-2"
+                        value={field.value || ''}
+                        onChange={(e) => field.onChange(e.target.value)}
+                        // disabled={!form.watch("discordCategories")}  Removed disabled attribute
+                      >
+                        <option value="">Select a category</option>
+                        {form.watch("discordCategories")?.map((category: any) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FormControl>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const res = await apiRequest("GET", "/api/discord/categories");
+                          if (!res.ok) throw new Error("Failed to fetch Discord categories");
+                          const categories = await res.json();
+                          form.setValue("discordCategories", categories);
+                        } catch (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to load Discord categories",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    >
+                      Load Categories
+                    </Button>
+                  </div>
                 </FormItem>
               )}
             />
@@ -331,6 +370,7 @@ export default function Settings() {
       serviceImageUrl: "",
       isSubmenu: false,
       parentId: null,
+      discordCategories: [] // Initialize with an empty array
     }
   });
 
@@ -553,13 +593,47 @@ export default function Settings() {
                       name="transcriptCategoryId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Discord Transcript Category ID</FormLabel>
+                          <FormLabel>Discord Transcript Category</FormLabel>
                           <FormDescriptionUI>
                             The category where closed tickets will be moved
                           </FormDescriptionUI>
-                          <FormControl>
-                            <Input {...field} value={field.value || ''} />
-                          </FormControl>
+                          <div className="flex space-x-2">
+                            <FormControl>
+                              <select
+                                className="w-full rounded-md border border-input bg-background px-3 py-2"
+                                value={field.value || ''}
+                                onChange={(e) => field.onChange(e.target.value)}
+                                //disabled={!categoryForm.watch("discordCategories")}  Removed disabled attribute
+                              >
+                                <option value="">Select a category</option>
+                                {categoryForm.watch("discordCategories")?.map((category: any) => (
+                                  <option key={category.id} value={category.id}>
+                                    {category.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </FormControl>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={async () => {
+                                try {
+                                  const res = await apiRequest("GET", "/api/discord/categories");
+                                  if (!res.ok) throw new Error("Failed to fetch Discord categories");
+                                  const categories = await res.json();
+                                  categoryForm.setValue("discordCategories", categories);
+                                } catch (error) {
+                                  toast({
+                                    title: "Error",
+                                    description: "Failed to load Discord categories",
+                                    variant: "destructive"
+                                  });
+                                }
+                              }}
+                            >
+                              Load Categories
+                            </Button>
+                          </div>
                         </FormItem>
                       )}
                     />

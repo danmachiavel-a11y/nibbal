@@ -9,30 +9,27 @@ export async function registerRoutes(app: Express) {
   log("Setting up HTTP server...");
   const httpServer = createServer(app);
 
-  // Create default test category if none exist
-  const categories = await storage.getCategories();
-  if (categories.length === 0) {
-    log("Creating default test category...");
-    await storage.createCategory({
-      name: "Test Service",
-      discordRoleId: "1346324056244490363",  // Real Discord role ID
-      discordCategoryId: "1345983179353362447", // Real Discord category ID
-      questions: [
-        "What is your issue?",
-        "When did this start?",
-        "Have you tried any solutions?"
-      ],
-      serviceSummary: "Welcome to our Test Service! Our team specializes in handling test-related issues.",
-      serviceImageUrl: null
-    });
-    log("Default test category created");
-  }
-
   // Initialize bot bridge asynchronously
   log("Initializing bot bridge...");
   const bridge = new BridgeManager();
   bridge.start().catch(error => {
     log(`Error initializing bots: ${error.message}`, "error");
+  });
+
+  // Add new route to fetch Discord categories
+  app.get("/api/discord/categories", async (req, res) => {
+    try {
+      const discordBot = bridge.getDiscordBot();
+      if (!discordBot) {
+        throw new Error("Discord bot not initialized");
+      }
+
+      const categories = await discordBot.getCategories();
+      res.json(categories);
+    } catch (error) {
+      log(`Error fetching Discord categories: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch Discord categories" });
+    }
   });
 
   // Bot Config Routes

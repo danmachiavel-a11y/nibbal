@@ -185,4 +185,8 @@ export class BridgeManager {
       log(`Error forwarding to Discord: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   }
+
+  getDiscordBot(): DiscordBot {
+    return this.discordBot;
+  }
 }
