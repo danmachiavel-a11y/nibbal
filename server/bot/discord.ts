@@ -10,27 +10,58 @@ import {
   ApplicationCommandOptionType,
   ChannelSelectMenuBuilder,
   ActionRowBuilder,
+  Collection
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 
-// Cooldown helper
+// Improved cooldown helper with caching
 class Cooldown {
   private static cooldowns = new Map<string, number>();
-  private static readonly DEFAULT_COOLDOWN = 5000; // 5 seconds
+  private static cache = new Map<string, { data: any; timestamp: number }>();
+  private static readonly DEFAULT_COOLDOWN = 30000; // 30 seconds
+  private static readonly CACHE_DURATION = 60000; // 1 minute
 
-  static async execute<T>(key: string, fn: () => Promise<T>, cooldownMs: number = this.DEFAULT_COOLDOWN): Promise<T> {
+  static async execute<T>(
+    key: string,
+    fn: () => Promise<T>,
+    cooldownMs: number = this.DEFAULT_COOLDOWN
+  ): Promise<T> {
+    // Check cache first
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
+      return cached.data;
+    }
+
     const lastExecution = this.cooldowns.get(key);
     const now = Date.now();
 
     if (lastExecution && now - lastExecution < cooldownMs) {
       const waitTime = cooldownMs - (now - lastExecution);
+      log(`Rate limit hit for ${key}, waiting ${waitTime}ms`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
 
-    this.cooldowns.set(key, Date.now());
-    return fn();
+    try {
+      const result = await fn();
+      this.cooldowns.set(key, Date.now());
+      this.cache.set(key, { data: result, timestamp: Date.now() });
+      return result;
+    } catch (error) {
+      log(`Error executing ${key}: ${error}`, "error");
+      // If we have cached data and hit an error, return cached data
+      if (cached) {
+        log(`Returning cached data for ${key} due to error`);
+        return cached.data;
+      }
+      throw error;
+    }
+  }
+
+  static clearCache() {
+    this.cache.clear();
+    this.cooldowns.clear();
   }
 }
 
@@ -83,8 +114,8 @@ export class DiscordBot {
 
       log("Stopping Discord bot...");
 
-      // Clear cooldowns
-      Cooldown.cooldowns.clear();
+      // Clear cooldowns and cache
+      Cooldown.clearCache();
 
       // Destroy all webhooks
       for (const [_, webhook] of this.webhooks) {
@@ -125,19 +156,25 @@ export class DiscordBot {
 
         const guild = await firstGuild.fetch();
         const categories = await guild.channels.fetch();
-        const categoryChannels = categories
+
+        // Filter and map in one pass to reduce operations
+        const categoryChannels = Array.from(categories.values())
           .filter(channel => channel?.type === ChannelType.GuildCategory)
           .map(category => ({
             id: category!.id,
             name: category!.name
           }));
 
+        if (categoryChannels.length === 0) {
+          log("Warning: No categories found in Discord server");
+        }
+
         return categoryChannels;
       } catch (error) {
         log(`Error getting Discord categories: ${error}`, "error");
         throw error;
       }
-    }, 5000); // 5 second cooldown
+    }, 30000); // 30 second cooldown
   }
 
   async getRoles() {
@@ -155,22 +192,27 @@ export class DiscordBot {
 
         const guild = await firstGuild.fetch();
         const roles = await guild.roles.fetch();
-        const roleList = roles.map(role => ({
-          id: role.id,
-          name: role.name,
-          color: role.hexColor
-        }));
 
-        return roleList.sort((a, b) => {
-          const roleA = roles.get(a.id);
-          const roleB = roles.get(b.id);
-          return (roleB?.position || 0) - (roleA?.position || 0);
-        });
+        // Convert to array and sort in one pass
+        const roleList = Array.from(roles.values())
+          .map(role => ({
+            id: role.id,
+            name: role.name,
+            color: role.hexColor,
+            position: role.position
+          }))
+          .sort((a, b) => b.position - a.position);
+
+        if (roleList.length === 0) {
+          log("Warning: No roles found in Discord server");
+        }
+
+        return roleList;
       } catch (error) {
         log(`Error getting Discord roles: ${error}`, "error");
         throw error;
       }
-    }, 5000); // 5 second cooldown
+    }, 30000); // 30 second cooldown
   }
 
   private setupHandlers() {
@@ -428,8 +470,8 @@ export class DiscordBot {
           // Send final status
           await interaction.followUp({
             content: `✅ Processed ${channels.size} tickets:\n` +
-                    `• ${moveCount} tickets moved to transcripts\n` +
-                    `• ${errorCount} errors encountered`,
+                      `• ${moveCount} tickets moved to transcripts\n` +
+                      `• ${errorCount} errors encountered`,
             ephemeral: true
           });
         } catch (error) {
