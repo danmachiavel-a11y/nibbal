@@ -9,12 +9,20 @@ let bridge: BridgeManager | null = null;
 
 export async function registerRoutes(app: Express) {
   log("Setting up HTTP server...");
+
+  // Create HTTP server first
   const httpServer = createServer(app);
 
-  // Create the bridge manager but don't start bots yet
-  bridge = new BridgeManager();
+  try {
+    // Initialize bridge manager - but don't start bots yet
+    log("Creating bridge manager...");
+    bridge = new BridgeManager();
+  } catch (error) {
+    log(`Error creating bridge manager: ${error}`, "error");
+    // Continue server startup even if bridge fails
+  }
 
-  // Register all routes first
+  // Register all routes first - keep existing route handlers
   app.get("/api/bot-config", async (req, res) => {
     const config = await storage.getBotConfig();
     res.json(config);
@@ -35,7 +43,6 @@ export async function registerRoutes(app: Express) {
     res.json(config);
   });
 
-  // Bot token configuration and status endpoints
   app.get("/api/bot/telegram/status", async (req, res) => {
     try {
       if (!bridge) {
@@ -66,7 +73,6 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-  // Update bot tokens
   app.patch("/api/bot/config", async (req, res) => {
     try {
       const schema = z.object({
@@ -79,7 +85,6 @@ export async function registerRoutes(app: Express) {
         return res.status(400).json({ message: "Invalid request body" });
       }
 
-      // Store tokens in environment variables
       if (result.data.telegramToken) {
         process.env.TELEGRAM_BOT_TOKEN = result.data.telegramToken;
         log("Updated Telegram bot token");
@@ -89,13 +94,11 @@ export async function registerRoutes(app: Express) {
         log("Updated Discord bot token");
       }
 
-      // Restart the bridge with new tokens
       if (bridge) {
         log("Restarting bots with new configuration...");
         await bridge.restart();
         log("Bots restarted successfully");
       } else {
-        // If bridge doesn't exist, create and start it
         log("Creating new bot bridge...");
         bridge = new BridgeManager();
         await bridge.start();
@@ -109,7 +112,6 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-  // Add new route to fetch Discord categories
   app.get("/api/discord/categories", async (req, res) => {
     try {
       if (!bridge) {
@@ -128,7 +130,6 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-  // Add new route to fetch Discord roles
   app.get("/api/discord/roles", async (req, res) => {
     try {
       if (!bridge) {
@@ -147,7 +148,6 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-  // Category Routes
   app.get("/api/categories", async (req, res) => {
     const categories = await storage.getCategories();
     res.json(categories);
@@ -240,17 +240,14 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-  // Ticket Routes
   app.get("/api/tickets", async (req, res) => {
     try {
-      // Get tickets from all categories if no specific category is provided
       const categoryId = req.query.categoryId ? parseInt(req.query.categoryId as string) : null;
 
       if (categoryId) {
         const tickets = await storage.getTicketsByCategory(categoryId);
         res.json(tickets);
       } else {
-        // Get all categories and their tickets
         const categories = await storage.getCategories();
         const allTickets = [];
 
@@ -277,26 +274,20 @@ export async function registerRoutes(app: Express) {
     res.json(messages);
   });
 
-  // Users/Customers route
   app.get("/api/users", async (req, res) => {
     try {
-      // Get all users through the storage interface
       const users = await Promise.all(
         Array.from({ length: 100 }).map((_, i) => storage.getUser(i + 1))
       );
 
-      // Get paid tickets for each user
       const usersWithStats = await Promise.all(
         users
           .filter(user => user !== undefined)
           .map(async user => {
-            // Get all tickets from all categories for this user
             let paidTicketCount = 0;
 
-            // Get all categories
             const categories = await storage.getCategories();
 
-            // Check each category for paid tickets
             for (const category of categories) {
               const tickets = await storage.getTicketsByCategory(category.id);
               paidTicketCount += tickets.filter(t =>
@@ -319,13 +310,9 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-  // Closed tickets with messages route
   app.get("/api/tickets/closed", async (req, res) => {
     try {
-      // Get all categories to filter tickets
       const categories = await storage.getCategories();
-
-      // Collect all closed tickets from all categories
       const allClosedTickets = [];
       for (const category of categories) {
         const categoryTickets = await storage.getTicketsByCategory(category.id);
@@ -333,7 +320,6 @@ export async function registerRoutes(app: Express) {
           t.status === "closed" || t.status === "deleted"
         );
 
-        // Get messages for each ticket
         for (const ticket of closedTickets) {
           const messages = await storage.getTicketMessages(ticket.id);
           allClosedTickets.push({
@@ -350,7 +336,6 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-  // Update the stats routes to handle custom date ranges
   app.get("/api/users/:discordId/stats", async (req, res) => {
     const discordId = req.params.discordId;
     const period = req.query.period as 'week' | 'month' | 'all';
@@ -390,16 +375,22 @@ export async function registerRoutes(app: Express) {
 
   log("Routes registered successfully");
 
-  // Start the bots after server is created
-  setTimeout(async () => {
-    try {
-      log("Initializing bot bridge...");
-      await bridge?.start();
-      log("Bot bridge initialized successfully");
-    } catch (error) {
-      log(`Error initializing bots: ${error instanceof Error ? error.message : String(error)}`, "error");
-    }
-  }, 1000);
-
+  // Return server immediately so it can start listening
   return httpServer;
+}
+
+// Start bots after server is running
+export async function initializeBots() {
+  try {
+    log("Starting bot initialization...");
+    if (!bridge) {
+      log("Creating new bridge manager...");
+      bridge = new BridgeManager();
+    }
+    await bridge.start();
+    log("Bot bridge initialized successfully");
+  } catch (error) {
+    log(`Error initializing bots: ${error instanceof Error ? error.message : String(error)}`, "error");
+    // Don't throw - let server continue running even if bots fail
+  }
 }
