@@ -3,7 +3,7 @@ import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 import fetch from 'node-fetch';
-import imgbbUploader from 'imgbb-uploader';  // Changed import statement
+import imgbbUploader from 'imgbb-uploader';
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
@@ -24,6 +24,9 @@ export class TelegramBot {
   private bridge: BridgeManager;
   private userStates: Map<number, UserState>;
   private _isConnected: boolean = false;
+  private _stopPolling: boolean = false;
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  private imageProcessingQueue: Map<string, Promise<void>> = new Map();
 
   constructor(bridge: BridgeManager) {
     try {
@@ -69,7 +72,7 @@ export class TelegramBot {
       }
     });
 
-    // Handle photos
+    // Handle photos with rate limiting
     this.bot.on("photo", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -90,12 +93,39 @@ export class TelegramBot {
         // Get photo URL
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
 
-        // Forward to Discord
-        await this.bridge.forwardToDiscord(
-          `[Image] ${fileLink.href}`,
-          activeTicket.id,
-          ctx.from?.first_name || ctx.from?.username || "Telegram User"
-        );
+        // Rate limited image processing
+        const queueKey = `${activeTicket.id}-${photo.file_id}`;
+        if (this.imageProcessingQueue.has(queueKey)) {
+          await this.imageProcessingQueue.get(queueKey);
+          return;
+        }
+
+        const processingPromise = (async () => {
+          try {
+            // Upload to ImgBB first
+            const imgbbUrl = await this.uploadToImgBB(fileLink.href);
+
+            // Forward permanent URL to Discord
+            await this.bridge.forwardToDiscord(
+              `[Image] ${imgbbUrl}`,
+              activeTicket.id,
+              ctx.from?.first_name || ctx.from?.username || "Telegram User"
+            );
+          } catch (error) {
+            log(`Error uploading to ImgBB: ${error}`, "error");
+            // If ImgBB upload fails, send original Telegram URL
+            await this.bridge.forwardToDiscord(
+              `[Image] ${fileLink.href}`,
+              activeTicket.id,
+              ctx.from?.first_name || ctx.from?.username || "Telegram User"
+            );
+          } finally {
+            this.imageProcessingQueue.delete(queueKey);
+          }
+        })();
+
+        this.imageProcessingQueue.set(queueKey, processingPromise);
+        await processingPromise;
 
         log(`Photo forwarded to Discord for ticket ${activeTicket.id}`);
       } catch (error) {
@@ -133,27 +163,95 @@ export class TelegramBot {
 
   async start() {
     try {
+      if (this._isConnected) {
+        log("Telegram bot is already running");
+        return;
+      }
+
       log("Starting Telegram bot...");
+
+      // Reset stop flag
+      this._stopPolling = false;
+
+      // Stop any existing webhooks
+      try {
+        await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      } catch (error) {
+        // Ignore webhook deletion errors
+        log(`Warning: Could not delete webhook: ${error}`, "warn");
+      }
+
+      // Start bot with polling
       await this.bot.launch({
         dropPendingUpdates: true
       });
+
       this._isConnected = true;
       log("Telegram bot started and connected successfully");
 
       // Verify connection by getting bot info
       const botInfo = await this.bot.telegram.getMe();
       log(`Connected as @${botInfo.username}`);
+
+      // Start health check
+      this.startHealthCheck();
     } catch (error) {
-      log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
+      log(`Error starting Telegram bot: ${error}`, "error");
       throw error;
     }
+  }
+
+  private startHealthCheck() {
+    // Clear any existing health check
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+
+    // Check connection every 30 seconds
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        if (!this._stopPolling && !this.getIsConnected()) {
+          log("Telegram bot disconnected, attempting to reconnect...");
+          await this.start();
+        }
+      } catch (error) {
+        log(`Health check failed: ${error}`, "error");
+      }
+    }, 30000);
   }
 
   async stop() {
     try {
       log("Stopping Telegram bot...");
-      await this.bot.stop();
+
+      // Clear health check
+      if (this.healthCheckInterval) {
+        clearInterval(this.healthCheckInterval);
+        this.healthCheckInterval = null;
+      }
+
+      // Set stop flag
+      this._stopPolling = true;
+
+      try {
+        // Stop bot gracefully
+        await this.bot.stop();
+      } catch (error) {
+        // Ignore "Bot is not running" errors
+        if (!(error instanceof Error) || !error.message.includes("Bot is not running")) {
+          throw error;
+        }
+      }
+
+      // Delete webhook to ensure clean shutdown
+      try {
+        await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      } catch (error) {
+        // Ignore webhook deletion errors
+        log(`Warning: Could not delete webhook during shutdown: ${error}`, "warn");
+      }
+
       this._isConnected = false;
       log("Telegram bot stopped successfully");
     } catch (error) {
@@ -206,7 +304,7 @@ export class TelegramBot {
       }
 
       try {
-        // Upload image to ImgBB first
+        // Upload to ImgBB first
         const imgbbUrl = await this.uploadToImgBB(imageUrl);
 
         // Send to Telegram using ImgBB URL
@@ -215,7 +313,7 @@ export class TelegramBot {
         });
         log(`Successfully sent image to Telegram chat: ${chatId}`);
       } catch (error) {
-        log(`Error sending image, trying to send as URL: ${error}`, "error");
+        log(`Error sending image as URL: ${error}`, "error");
         // If sending photo fails, send as URL
         await this.sendMessage(chatId, `${caption}\n${imageUrl}`);
       }

@@ -52,6 +52,13 @@ export class BridgeManager {
   async start() {
     log("Starting bots...");
     try {
+      // Stop any existing bots first
+      await Promise.allSettled([
+        this.telegramBot.stop(),
+        this.discordBot.stop()
+      ]);
+
+      // Start bots with retry mechanism
       await Promise.allSettled([
         this.startBotWithRetry(
           () => this.telegramBot.start(),
@@ -65,6 +72,7 @@ export class BridgeManager {
       log("Bots initialization completed");
     } catch (error) {
       log(`Error starting bots: ${error}`, "error");
+      throw error;
     }
   }
 
