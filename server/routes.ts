@@ -52,7 +52,7 @@ export async function registerRoutes(app: Express) {
       }
       const telegramBot = bridge.getTelegramBot();
       res.json({
-        connected: !!telegramBot?.isConnected(),
+        connected: telegramBot?.getIsConnected() || false,
       });
     } catch (error) {
       log(`Error checking Telegram bot status: ${error}`, "error");

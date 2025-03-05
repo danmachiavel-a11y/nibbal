@@ -17,7 +17,7 @@ export class TelegramBot {
   private bot: Telegraf;
   private bridge: BridgeManager;
   private userStates: Map<number, UserState>;
-  private isConnected: boolean = false;
+  private _isConnected: boolean = false;  // Renamed from isConnected
 
   constructor(bridge: BridgeManager) {
     this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
@@ -435,7 +435,7 @@ export class TelegramBot {
 
   async start() {
     await this.bot.launch();
-    this.isConnected = true;
+    this._isConnected = true;
     log("Telegram bot started");
   }
 
@@ -443,7 +443,7 @@ export class TelegramBot {
     try {
       // Gracefully stop the bot
       await this.bot.stop();
-      this.isConnected = false;
+      this._isConnected = false;
       log("Telegram bot stopped");
     } catch (error) {
       log(`Error stopping Telegram bot: ${error}`, "error");
@@ -451,8 +451,9 @@ export class TelegramBot {
     }
   }
 
-  isConnected() {
-    return this.isConnected;
+  // Renamed method to avoid conflict
+  getIsConnected(): boolean {
+    return this._isConnected;
   }
 
   async sendMessage(chatId: number, message: string) {
