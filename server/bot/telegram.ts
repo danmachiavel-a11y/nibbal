@@ -38,10 +38,10 @@ export class TelegramBot {
         if (activeTicket) {
           const category = await storage.getCategory(activeTicket.categoryId);
           await ctx.reply(
-            "❌ You already have an active ticket in " + 
-            `*${category?.name || "Unknown"}* category.\n\n` +
-            "Please use /close to close your current ticket before starting a new one, " +
-            "or continue chatting here to update your existing ticket.",
+            "❌ You already have an active ticket in " +
+              `*${category?.name || "Unknown"}* category.\n\n` +
+              "Please use /close to close your current ticket before starting a new one, " +
+              "or continue chatting here to update your existing ticket.",
             { parse_mode: "Markdown" }
           );
           return;
@@ -62,7 +62,7 @@ export class TelegramBot {
       // First add submenus
       for (const submenu of submenus) {
         const button = {
-          text: `📁 ${submenu.name}`,
+          text: submenu.name,
           callback_data: `submenu_${submenu.id}`
         };
 
@@ -81,7 +81,7 @@ export class TelegramBot {
       // Then add root categories
       for (const category of rootCategories) {
         const button = {
-          text: `📋 ${category.name}`,
+          text: category.name,
           callback_data: `category_${category.id}`
         };
 
@@ -138,7 +138,7 @@ export class TelegramBot {
 
         // Create keyboard for submenu categories
         const keyboard = submenuCategories.map(category => [{
-          text: `📋 ${category.name}`,
+          text: category.name,
           callback_data: `category_${category.id}`
         }]);
 
@@ -188,9 +188,9 @@ export class TelegramBot {
         if (activeTicket) {
           const activeCategory = await storage.getCategory(activeTicket.categoryId);
           await ctx.reply(
-            "❌ You already have an active ticket in " + 
-            `*${activeCategory?.name || "Unknown"}* category.\n\n` +
-            "Please use /close to close your current ticket before starting a new one.",
+            "❌ You already have an active ticket in " +
+              `*${activeCategory?.name || "Unknown"}* category.\n\n` +
+              "Please use /close to close your current ticket before starting a new one.",
             { parse_mode: "Markdown" }
           );
           return;
@@ -236,9 +236,9 @@ export class TelegramBot {
       const category = await storage.getCategory(activeTicket.categoryId);
       await ctx.reply(
         `Your active ticket:\n\n` +
-        `Category: *${category?.name || "Unknown"}*\n` +
-        `Status: *${activeTicket.status}*\n` +
-        `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
+          `Category: *${category?.name || "Unknown"}*\n` +
+          `Status: *${activeTicket.status}*\n` +
+          `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
         { parse_mode: "Markdown" }
       );
     });
@@ -266,7 +266,7 @@ export class TelegramBot {
         if (!category?.transcriptCategoryId) {
           await ctx.reply(
             "❌ Cannot close ticket: No transcript category set for this service. " +
-            "Please contact an administrator."
+              "Please contact an administrator."
           );
           return;
         }
@@ -280,19 +280,19 @@ export class TelegramBot {
             await this.bridge.moveToTranscripts(activeTicket.id);
             await ctx.reply(
               "✅ Your ticket has been closed and moved to transcripts.\n" +
-              "Use /start to create a new ticket if needed."
+                "Use /start to create a new ticket if needed."
             );
           } catch (error) {
             console.error("Error moving to transcripts:", error);
             await ctx.reply(
               "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
-              "An administrator will handle this. You can use /start to create a new ticket if needed."
+                "An administrator will handle this. You can use /start to create a new ticket if needed."
             );
           }
         } else {
           await ctx.reply(
             "✅ Your ticket has been closed.\n" +
-            "Use /start to create a new ticket if needed."
+              "Use /start to create a new ticket if needed."
           );
         }
       } catch (error) {
