@@ -220,7 +220,13 @@ export class MemStorage implements IStorage {
       questions: Array.isArray(updateData.questions) ? updateData.questions : category.questions,
       parentId: updateData.parentId === undefined ? category.parentId : updateData.parentId,
       isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu,
-      transcriptCategoryId: updateData.transcriptCategoryId || category.transcriptCategoryId
+      discordRoleId: updateData.discordRoleId || category.discordRoleId,
+      discordCategoryId: updateData.discordCategoryId || category.discordCategoryId,
+      transcriptCategoryId: updateData.transcriptCategoryId === "" ? null : (updateData.transcriptCategoryId || category.transcriptCategoryId),
+      serviceSummary: updateData.serviceSummary || category.serviceSummary,
+      serviceImageUrl: updateData.serviceImageUrl || category.serviceImageUrl,
+      displayOrder: updateData.displayOrder ?? category.displayOrder,
+      newRow: updateData.newRow ?? category.newRow
     };
 
     console.log("Updating category in storage. Current data:", JSON.stringify(category, null, 2));
