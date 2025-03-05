@@ -369,6 +369,7 @@ export class DiscordBot {
       }
     });
 
+    // Change this message handling section
     this.client.on("messageCreate", async (message) => {
       // Ignore bot messages to prevent loops
       if (message.author.bot) return;
