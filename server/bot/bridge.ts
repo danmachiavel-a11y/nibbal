@@ -259,50 +259,18 @@ export class BridgeManager {
         return;
       }
 
-      // Validate message content
-      if (!content || typeof content !== 'string') {
-        log(`Invalid message content for ticket: ${ticketId}`, "error");
-        return;
-      }
+      // Store the message first
+      await storage.createMessage({
+        ticketId,
+        content,
+        authorId: user.id,
+        platform: "discord",
+        timestamp: new Date()
+      });
 
-      // Try to reconnect Telegram bot if disconnected
-      if (!this.telegramBot.getIsConnected()) {
-        log("Telegram bot disconnected, attempting to reconnect...");
-        try {
-          await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
-        } catch (error) {
-          log(`Failed to reconnect Telegram bot: ${error}`, "error");
-          throw error;
-        }
-      }
-
-      // Attempt to send message with retries
-      let retryCount = 0;
-      const maxRetries = 3;
-      while (retryCount < maxRetries) {
-        try {
-          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
-          log(`Successfully sent message to Telegram user: ${user.username}`);
-
-          // Store the message
-          await storage.createMessage({
-            ticketId,
-            content,
-            authorId: user.id,
-            platform: "discord",
-            timestamp: new Date()
-          });
-          return; // Success - exit the retry loop
-        } catch (error) {
-          retryCount++;
-          log(`Attempt ${retryCount} failed to forward message to Telegram: ${error}`, "error");
-          if (retryCount < maxRetries) {
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
-            continue;
-          }
-          throw error; // Max retries reached - throw the error
-        }
-      }
+      // Send to Telegram
+      await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
+      log(`Successfully sent message to Telegram user: ${user.username}`);
     } catch (error) {
       log(`Error forwarding to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
