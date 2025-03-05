@@ -25,24 +25,289 @@ const categorySchema = z.object({
   isSubmenu: z.boolean().optional(),
   discordRoleId: z.string().optional(),
   discordCategoryId: z.string().optional(),
-  questions: z.array(z.object({
-    text: z.string(),
-    buttons: z.array(z.string()).optional()
-  })),
+  questions: z.string().min(1, "At least one question is required"),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
   parentId: z.number().nullable().optional(),
 });
 
 const CustomFormDescription = () => (
-  <div className="text-sm text-muted-foreground">
-    Enter each question on a new line. For button questions, add button options after the question using {'>>'}:
-    <pre className="mt-2 p-2 bg-muted rounded-md">
-      What is your preferred service level?
-      {'>>'}Basic{'>>'}Standard{'>>'}Premium
-    </pre>
+  <div className="text-sm text-muted-foreground space-y-2">
+    <div>Enter each question on a new line. For button questions, add button options after the question using {'>>'}</div>
+    <div className="bg-muted rounded-md p-2">
+      <code>
+        What is your preferred service level?
+        {'>>'}Basic{'>>'}Standard{'>>'}Premium
+      </code>
+    </div>
   </div>
 );
+
+// Function to convert string to Question[] format
+const parseQuestions = (questionsText: string): Question[] => {
+  return questionsText.split('\n')
+    .filter(q => q.trim())
+    .map(q => {
+      const parts = q.split('>>');
+      return {
+        text: parts[0].trim(),
+        buttons: parts.length > 1 ? parts.slice(1).map(b => b.trim()) : undefined
+      };
+    });
+};
+
+// Function to convert Question[] to string format
+const questionsToString = (questions: Question[]): string => {
+  return questions.map(q => {
+    if (q.buttons?.length) {
+      return `${q.text}\n${q.buttons.map(b => `>>${b}`).join('')}`;
+    }
+    return q.text;
+  }).join('\n');
+};
+
+export function CategoryEditor({ category }: { category: Category }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ["/api/categories"]
+  });
+
+  const submenus = categories?.filter(cat =>
+    cat.isSubmenu && cat.id !== category.id
+  ) || [];
+
+  const form = useForm({
+    resolver: zodResolver(categorySchema),
+    defaultValues: {
+      name: category.name,
+      discordRoleId: category.discordRoleId,
+      discordCategoryId: category.discordCategoryId,
+      questions: questionsToString(category.questions),
+      serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
+      serviceImageUrl: category.serviceImageUrl || "",
+      isSubmenu: category.isSubmenu || false,
+      parentId: category.parentId || null,
+    }
+  });
+
+  async function onSubmit(data: z.infer<typeof categorySchema>) {
+    try {
+      const questions = parseQuestions(data.questions);
+
+      const submitData = {
+        name: data.name,
+        isSubmenu: category.isSubmenu,
+        discordRoleId: data.discordRoleId || "",
+        discordCategoryId: data.discordCategoryId || "",
+        questions,
+        serviceSummary: data.serviceSummary || category.serviceSummary,
+        serviceImageUrl: data.serviceImageUrl,
+        displayOrder: category.displayOrder,
+        newRow: category.newRow,
+        parentId: data.parentId
+      };
+
+      console.log("Submitting category update:", submitData);
+
+      const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to update category");
+      }
+
+      toast({
+        title: "Success",
+        description: "Category updated successfully"
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    } catch (error) {
+      console.error("Error updating category:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update category",
+        variant: "destructive"
+      });
+    }
+  }
+
+  async function onDelete() {
+    if (!confirm(`Are you sure you want to delete ${category.name}?`)) return;
+
+    try {
+      const res = await apiRequest("DELETE", `/api/categories/${category.id}`, undefined);
+      if (!res.ok) throw new Error("Failed to delete category");
+
+      toast({
+        title: "Success",
+        description: "Category deleted successfully"
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete category",
+        variant: "destructive"
+      });
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>Edit {category.name}</CardTitle>
+        <Button variant="destructive" onClick={onDelete}>Delete</Button>
+      </CardHeader>
+      <CardContent>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Name</FormLabel>
+                  <FormControl>
+                    <Input {...field} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="isSubmenu"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Type</FormLabel>
+                  <FormControl>
+                    <select
+                      className="w-full rounded-md border border-input bg-background px-3 py-2"
+                      value={field.value ? "submenu" : "category"}
+                      onChange={(e) => field.onChange(e.target.value === "submenu")}
+                      disabled={category.isSubmenu}
+                    >
+                      <option value="category">Category</option>
+                      <option value="submenu">Submenu</option>
+                    </select>
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            {!form.watch("isSubmenu") && (
+              <FormField
+                control={form.control}
+                name="parentId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Parent Submenu</FormLabel>
+                    <FormDescriptionUI>
+                      Choose which submenu this category belongs to
+                    </FormDescriptionUI>
+                    <FormControl>
+                      <select
+                        className="w-full rounded-md border border-input bg-background px-3 py-2"
+                        value={field.value || ""}
+                        onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                      >
+                        <option value="">None (Root Level)</option>
+                        {submenus.map(submenu => (
+                          <option key={submenu.id} value={submenu.id}>
+                            {submenu.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            )}
+
+            <FormField
+              control={form.control}
+              name="discordRoleId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Discord Role ID</FormLabel>
+                  <FormControl>
+                    <Input {...field} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="discordCategoryId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Discord Category ID</FormLabel>
+                  <FormControl>
+                    <Input {...field} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="questions"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Questions</FormLabel>
+                  <FormDescriptionUI>
+                    <CustomFormDescription />
+                  </FormDescriptionUI>
+                  <FormControl>
+                    <Textarea {...field} rows={5} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="serviceSummary"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Service Summary</FormLabel>
+                  <FormDescriptionUI>
+                    Description of this service shown when users select it.
+                    Use new lines to format your message.
+                  </FormDescriptionUI>
+                  <FormControl>
+                    <Textarea {...field} rows={5} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="serviceImageUrl"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Service Image URL</FormLabel>
+                  <FormDescriptionUI>
+                    Optional: URL of an image to show with the service description
+                  </FormDescriptionUI>
+                  <FormControl>
+                    <Input {...field} value={field.value || ''} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <Button type="submit">Update {category.isSubmenu ? "Submenu" : "Category"}</Button>
+          </form>
+        </Form>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Settings() {
   const { toast } = useToast();
@@ -56,7 +321,6 @@ export default function Settings() {
     queryKey: ["/api/categories"]
   });
 
-  // Separate root menus (submenus) and their child categories
   const submenus = categories?.filter(cat => cat.isSubmenu) || [];
   const rootCategories = categories?.filter(cat => !cat.parentId && !cat.isSubmenu) || [];
 
@@ -74,7 +338,7 @@ export default function Settings() {
       name: "",
       discordRoleId: "",
       discordCategoryId: "",
-      questions: [],
+      questions: "",
       serviceSummary: "Our team is ready to assist you!",
       serviceImageUrl: "",
       isSubmenu: false,
@@ -104,7 +368,18 @@ export default function Settings() {
 
   async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
     try {
-      const submitData = data;
+      const questions = parseQuestions(data.questions);
+
+      const submitData = {
+        name: data.name,
+        isSubmenu: data.isSubmenu || false,
+        discordRoleId: data.discordRoleId || "",
+        discordCategoryId: data.discordCategoryId || "",
+        questions,
+        serviceSummary: data.serviceSummary || "Our team is ready to assist you!",
+        serviceImageUrl: data.serviceImageUrl || null,
+        parentId: data.parentId
+      };
 
       const res = await apiRequest("POST", "/api/categories", submitData);
       if (!res.ok) throw new Error("Failed to create category");
@@ -437,262 +712,5 @@ export default function Settings() {
         )}
       </div>
     </div>
-  );
-}
-
-export function CategoryEditor({ category }: { category: Category }) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const { data: categories } = useQuery<Category[]>({
-    queryKey: ["/api/categories"]
-  });
-
-  // Get available submenus for the dropdown, excluding current category
-  const submenus = categories?.filter(cat =>
-    cat.isSubmenu && cat.id !== category.id
-  ) || [];
-
-  // Convert questions array to string format
-  const questionsText = category.questions.map(q => {
-    if (q.buttons?.length) {
-      return `${q.text}\n${q.buttons.map(b => `>>${b}`).join('')}`;
-    }
-    return q.text;
-  }).join('\n');
-
-  const form = useForm({
-    resolver: zodResolver(categorySchema),
-    defaultValues: {
-      name: category.name,
-      discordRoleId: category.discordRoleId,
-      discordCategoryId: category.discordCategoryId,
-      questions: category.questions, // Changed default value to use existing questions array
-      serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
-      serviceImageUrl: category.serviceImageUrl || "",
-      isSubmenu: category.isSubmenu || false,
-      parentId: category.parentId || null,
-    }
-  });
-
-  async function onSubmit(data: z.infer<typeof categorySchema>) {
-    try {
-      // Parse questions text into Question objects
-      const questions: Question[] = data.questions.split('\n')
-        .filter(q => q.trim())
-        .map(q => {
-          const parts = q.split('>>');
-          return {
-            text: parts[0].trim(),
-            buttons: parts.length > 1 ? parts.slice(1).map(b => b.trim()) : undefined
-          };
-        });
-
-      // Include all category fields in the update
-      const submitData = {
-        name: data.name,
-        isSubmenu: category.isSubmenu,
-        discordRoleId: data.discordRoleId || category.discordRoleId,
-        discordCategoryId: data.discordCategoryId || category.discordCategoryId,
-        questions,
-        serviceSummary: data.serviceSummary || category.serviceSummary,
-        serviceImageUrl: data.serviceImageUrl || category.serviceImageUrl,
-        displayOrder: category.displayOrder,
-        newRow: category.newRow,
-        parentId: data.parentId
-      };
-
-      const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
-      if (!res.ok) throw new Error("Failed to update category");
-
-      toast({
-        title: "Success",
-        description: "Category updated successfully"
-      });
-
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-    } catch (error) {
-      console.error("Error updating category:", error);
-      toast({
-        title: "Error",
-        description: "Failed to update category",
-        variant: "destructive"
-      });
-    }
-  }
-
-  async function onDelete() {
-    if (!confirm(`Are you sure you want to delete ${category.name}?`)) return;
-
-    try {
-      const res = await apiRequest("DELETE", `/api/categories/${category.id}`, undefined);
-      if (!res.ok) throw new Error("Failed to delete category");
-
-      toast({
-        title: "Success",
-        description: "Category deleted successfully"
-      });
-
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to delete category",
-        variant: "destructive"
-      });
-    }
-  }
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>Edit {category.name}</CardTitle>
-        <Button variant="destructive" onClick={onDelete}>Delete</Button>
-      </CardHeader>
-      <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Name</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="isSubmenu"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Type</FormLabel>
-                  <FormControl>
-                    <select
-                      className="w-full rounded-md border border-input bg-background px-3 py-2"
-                      value={field.value ? "submenu" : "category"}
-                      onChange={(e) => field.onChange(e.target.value === "submenu")}
-                      disabled={category.isSubmenu}
-                    >
-                      <option value="category">Category</option>
-                      <option value="submenu">Submenu</option>
-                    </select>
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            {!form.watch("isSubmenu") && (
-              <FormField
-                control={form.control}
-                name="parentId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Parent Submenu</FormLabel>
-                    <FormDescriptionUI>
-                      Choose which submenu this category belongs to
-                    </FormDescriptionUI>
-                    <FormControl>
-                      <select
-                        className="w-full rounded-md border border-input bg-background px-3 py-2"
-                        value={field.value || ""}
-                        onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
-                      >
-                        <option value="">None (Root Level)</option>
-                        {submenus.map(submenu => (
-                          <option key={submenu.id} value={submenu.id}>
-                            {submenu.name}
-                          </option>
-                        ))}
-                      </select>
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-            )}
-
-            <FormField
-              control={form.control}
-              name="discordRoleId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Discord Role ID</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="discordCategoryId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Discord Category ID</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="questions"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Questions</FormLabel>
-                  <FormDescriptionUI>
-                    <CustomFormDescription />
-                  </FormDescriptionUI>
-                  <FormControl>
-                    <Textarea {...field} rows={5} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="serviceSummary"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Service Summary</FormLabel>
-                  <FormDescriptionUI>
-                    Description of this service shown when users select it.
-                    Use new lines to format your message.
-                  </FormDescriptionUI>
-                  <FormControl>
-                    <Textarea {...field} rows={5} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="serviceImageUrl"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Service Image URL</FormLabel>
-                  <FormDescriptionUI>
-                    Optional: URL of an image to show with the service description
-                  </FormDescriptionUI>
-                  <FormControl>
-                    <Input {...field} value={field.value || ''} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <Button type="submit">Update {category.isSubmenu ? "Submenu" : "Category"}</Button>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
   );
 }
