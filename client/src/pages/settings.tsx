@@ -4,7 +4,7 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormDescription } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormDescription as FormDescriptionUI } from "@/components/ui/form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -12,7 +12,7 @@ import { Link } from "wouter";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { Category, BotConfig } from "@shared/schema";
+import type { Category, BotConfig, Question } from "@shared/schema";
 import { CategoryGrid } from "@/components/CategoryGrid";
 
 const botConfigSchema = z.object({
@@ -25,14 +25,22 @@ const categorySchema = z.object({
   isSubmenu: z.boolean().optional(),
   discordRoleId: z.string().optional(),
   discordCategoryId: z.string().optional(),
-  questions: z.array(z.object({
-    text: z.string(),
-    buttons: z.array(z.string()).optional()
-  })),
+  questions: z.string(),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
   parentId: z.number().nullable().optional(),
 });
+
+const CustomFormDescription = () => (
+  <div className="text-sm text-muted-foreground">
+    Enter each question on a new line. For button questions, add button options after the question using {'>>'}:
+    <pre className="mt-2 p-2 bg-muted rounded-md">
+      What is your preferred service level?{'\n'}
+      {'>>'}Basic{'>>'}Standard{'>>'}Premium
+    </pre>
+  </div>
+);
+
 
 export default function Settings() {
   const { toast } = useToast();
@@ -64,7 +72,7 @@ export default function Settings() {
       name: "",
       discordRoleId: "",
       discordCategoryId: "",
-      questions: [],
+      questions: "",
       serviceSummary: "Our team is ready to assist you!",
       serviceImageUrl: "",
       isSubmenu: false,
@@ -94,23 +102,21 @@ export default function Settings() {
 
   async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
     try {
-      console.log("Submitting category data:", data);
+      // Parse questions and button options
+      const questions: Question[] = data.questions.split('\n')
+        .filter(q => q.trim())
+        .map(q => {
+          const parts = q.split('>>');
+          return {
+            text: parts[0].trim(),
+            buttons: parts.length > 1 ? parts.slice(1) : undefined
+          };
+        });
 
       const submitData = {
-        name: data.name,
-        isSubmenu: data.isSubmenu || false,
-        // Only include these fields if it's not a submenu
-        ...(data.isSubmenu ? {} : {
-          discordRoleId: data.discordRoleId || "",
-          discordCategoryId: data.discordCategoryId || "",
-          questions: data.questions || [],
-          serviceSummary: data.serviceSummary || "Our team is ready to assist you!",
-          serviceImageUrl: data.serviceImageUrl || null,
-          parentId: data.parentId || null
-        })
+        ...data,
+        questions
       };
-
-      console.log("Processed submit data:", submitData);
 
       const res = await apiRequest("POST", "/api/categories", submitData);
       if (!res.ok) throw new Error("Failed to create category");
@@ -157,10 +163,10 @@ export default function Settings() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Welcome Message</FormLabel>
-                      <FormDescription>
+                      <FormDescriptionUI>
                         This message will be shown when users first start the bot.
                         Use new lines to format your message.
-                      </FormDescription>
+                      </FormDescriptionUI>
                       <FormControl>
                         <Textarea {...field} rows={5} />
                       </FormControl>
@@ -174,9 +180,9 @@ export default function Settings() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Welcome Image URL</FormLabel>
-                      <FormDescription>
+                      <FormDescriptionUI>
                         Optional: URL of an image to show with the welcome message
-                      </FormDescription>
+                      </FormDescriptionUI>
                       <FormControl>
                         <Input {...field} value={field.value || ''} />
                       </FormControl>
@@ -203,9 +209,9 @@ export default function Settings() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Type</FormLabel>
-                      <FormDescription>
+                      <FormDescriptionUI>
                         Choose whether this is a submenu (like "Food") or a category (like "Grubhub")
-                      </FormDescription>
+                      </FormDescriptionUI>
                       <FormControl>
                         <Tabs
                           value={field.value ? "submenu" : "category"}
@@ -243,9 +249,9 @@ export default function Settings() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Parent Submenu</FormLabel>
-                          <FormDescription>
+                          <FormDescriptionUI>
                             Choose which submenu this category belongs to
-                          </FormDescription>
+                          </FormDescriptionUI>
                           <FormControl>
                             <select
                               className="w-full rounded-md border border-input bg-background px-3 py-2"
@@ -295,7 +301,10 @@ export default function Settings() {
                       name="questions"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Questions (one per line)</FormLabel>
+                          <FormLabel>Questions</FormLabel>
+                          <FormDescriptionUI>
+                            <CustomFormDescription />
+                          </FormDescriptionUI>
                           <FormControl>
                             <Textarea {...field} rows={5} />
                           </FormControl>
@@ -309,10 +318,10 @@ export default function Settings() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Service Summary</FormLabel>
-                          <FormDescription>
+                          <FormDescriptionUI>
                             Description of this service shown when users select it.
                             Use new lines to format your message.
-                          </FormDescription>
+                          </FormDescriptionUI>
                           <FormControl>
                             <Textarea {...field} rows={5} />
                           </FormControl>
@@ -326,9 +335,9 @@ export default function Settings() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Service Image URL</FormLabel>
-                          <FormDescription>
+                          <FormDescriptionUI>
                             Optional: URL of an image to show with the service description
-                          </FormDescription>
+                          </FormDescriptionUI>
                           <FormControl>
                             <Input {...field} value={field.value || ''} />
                           </FormControl>
@@ -452,7 +461,7 @@ function CategoryEditor({ category }: { category: Category }) {
       name: category.name,
       discordRoleId: category.discordRoleId,
       discordCategoryId: category.discordCategoryId,
-      questions: category.questions.map(q => q.text),
+      questions: category.questions.map(q => q.text).join('\n'),
       serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
       serviceImageUrl: category.serviceImageUrl || "",
       isSubmenu: category.isSubmenu || false,
@@ -472,14 +481,14 @@ function CategoryEditor({ category }: { category: Category }) {
   async function onSubmit(data: z.infer<typeof categorySchema>) {
     try {
       // Parse questions and button options
-      const questions = data.questions.split('\n')
+      const questions: Question[] = data.questions.split('\n')
         .filter(q => q.trim())
         .map(q => {
-          const [text, ...buttonParts] = q.split('>>')
+          const parts = q.split('>>');
           return {
-            text: text.trim(),
-            buttons: buttonParts.length > 0 ? buttonParts : undefined
-          }
+            text: parts[0].trim(),
+            buttons: parts.length > 1 ? parts.slice(1) : undefined
+          };
         });
 
       const submitData = {
@@ -577,9 +586,9 @@ function CategoryEditor({ category }: { category: Category }) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Parent Submenu</FormLabel>
-                    <FormDescription>
+                    <FormDescriptionUI>
                       Choose which submenu this category belongs to
-                    </FormDescription>
+                    </FormDescriptionUI>
                     <FormControl>
                       <select
                         className="w-full rounded-md border border-input bg-background px-3 py-2"
@@ -631,12 +640,9 @@ function CategoryEditor({ category }: { category: Category }) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Questions</FormLabel>
-                  <FormDescription>
-                    Enter each question on a new line. For button questions, add button options after the question prefixed with '>>':
-                    Example:
-                    What is your preferred service level?
-                    >>Basic>>Standard>>Premium
-                  </FormDescription>
+                  <FormDescriptionUI>
+                    <CustomFormDescription />
+                  </FormDescriptionUI>
                   <FormControl>
                     <Textarea {...field} rows={5} />
                   </FormControl>
@@ -650,10 +656,10 @@ function CategoryEditor({ category }: { category: Category }) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Service Summary</FormLabel>
-                  <FormDescription>
+                  <FormDescriptionUI>
                     Description of this service shown when users select it.
                     Use new lines to format your message.
-                  </FormDescription>
+                  </FormDescriptionUI>
                   <FormControl>
                     <Textarea {...field} rows={5} />
                   </FormControl>
@@ -667,9 +673,9 @@ function CategoryEditor({ category }: { category: Category }) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Service Image URL</FormLabel>
-                  <FormDescription>
+                  <FormDescriptionUI>
                     Optional: URL of an image to show with the service description
-                  </FormDescription>
+                  </FormDescriptionUI>
                   <FormControl>
                     <Input {...field} value={field.value || ''} />
                   </FormControl>

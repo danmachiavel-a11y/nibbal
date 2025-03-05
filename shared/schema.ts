@@ -24,19 +24,25 @@ export const users = pgTable("users", {
   isBanned: boolean("is_banned").default(false),
 });
 
-export const categories = pgTable("categories", {
+// Forward declare the categories type to resolve circular reference
+const categoriesConfig = {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   discordRoleId: text("discord_role_id").notNull(),
   discordCategoryId: text("discord_category_id").notNull(),
-  questions: jsonb("questions").$type<Question[]>().notNull(), // Updated to use the new Question type
+  questions: jsonb("questions").$type<Question[]>().notNull(),
   serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
   serviceImageUrl: text("service_image_url"),
   displayOrder: integer("display_order").default(0),
   newRow: boolean("new_row").default(false),
-  parentId: integer("parent_id").references(() => categories.id),
+  parentId: integer("parent_id"),
   isSubmenu: boolean("is_submenu").default(false),
-});
+};
+
+export const categories = pgTable("categories", categoriesConfig);
+
+// After table creation, set up the self-reference
+categories.parentId.references(() => categories.id);
 
 export const tickets = pgTable("tickets", {
   id: serial("id").primaryKey(),
