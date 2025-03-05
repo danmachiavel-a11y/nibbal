@@ -186,8 +186,6 @@ export class MemStorage implements IStorage {
   async createCategory(insertCategory: InsertCategory): Promise<Category> {
     const id = this.currentIds.categories++;
 
-    console.log("Creating category in storage:", insertCategory);
-
     // Base category data
     const category = {
       id,
@@ -197,7 +195,7 @@ export class MemStorage implements IStorage {
       displayOrder: insertCategory.displayOrder || 0,
       newRow: insertCategory.newRow || false,
 
-      // If it's a submenu, use empty/null values for these fields
+      // If it's a submenu, use empty values for these fields
       discordRoleId: insertCategory.isSubmenu ? "" : (insertCategory.discordRoleId || ""),
       discordCategoryId: insertCategory.isSubmenu ? "" : (insertCategory.discordCategoryId || ""),
       transcriptCategoryId: insertCategory.isSubmenu ? "" : (insertCategory.transcriptCategoryId || ""),
@@ -206,7 +204,6 @@ export class MemStorage implements IStorage {
       serviceImageUrl: insertCategory.isSubmenu ? null : (insertCategory.serviceImageUrl || null),
     };
 
-    console.log("Creating category in storage:", category);
     this.categories.set(id, category);
     return category;
   }
@@ -214,9 +211,6 @@ export class MemStorage implements IStorage {
   async updateCategory(id: number, updateData: Partial<InsertCategory>): Promise<Category | undefined> {
     const category = await this.getCategory(id);
     if (!category) return undefined;
-
-    console.log("Updating category in storage. Current data:", JSON.stringify(category, null, 2));
-    console.log("Update payload:", JSON.stringify(updateData, null, 2));
 
     const updatedCategory = {
       ...category,
@@ -232,8 +226,6 @@ export class MemStorage implements IStorage {
       parentId: updateData.parentId === undefined ? category.parentId : updateData.parentId,
       isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu
     };
-
-    console.log("Updated category:", JSON.stringify(updatedCategory, null, 2));
 
     this.categories.set(id, updatedCategory);
     return updatedCategory;
