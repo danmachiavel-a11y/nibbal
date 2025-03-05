@@ -499,7 +499,21 @@ export class TelegramBot {
       throw new Error("Telegram bot is not connected");
     }
     try {
-      await this.bot.telegram.sendMessage(chatId, message);
+      // Validate chat ID
+      if (!Number.isInteger(chatId) || chatId <= 0) {
+        throw new Error(`Invalid Telegram chat ID: ${chatId}`);
+      }
+
+      // Validate message
+      if (!message || typeof message !== 'string') {
+        throw new Error('Invalid message content');
+      }
+
+      // Trim message if it's too long (Telegram limit is 4096 characters)
+      const trimmedMessage = message.slice(0, 4000);
+
+      await this.bot.telegram.sendMessage(chatId, trimmedMessage);
+      log(`Successfully sent message to Telegram chat: ${chatId}`);
     } catch (error) {
       log(`Error sending Telegram message: ${error}`, "error");
       throw error;

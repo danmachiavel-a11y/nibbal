@@ -253,6 +253,18 @@ export class BridgeManager {
         return;
       }
 
+      // Add safety check for valid Telegram ID
+      if (!user.telegramId.match(/^\d+$/)) {
+        log(`Invalid Telegram ID format for user: ${user.id}`, "error");
+        return;
+      }
+
+      // Validate message content
+      if (!content || typeof content !== 'string') {
+        log(`Invalid message content for ticket: ${ticketId}`, "error");
+        return;
+      }
+
       await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
       log(`Message forwarded to Telegram user: ${user.username}`);
 
