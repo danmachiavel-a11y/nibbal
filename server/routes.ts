@@ -191,9 +191,32 @@ export async function registerRoutes(app: Express) {
         Array.from({ length: 100 }).map((_, i) => storage.getUser(i + 1))
       );
 
-      // Filter out undefined users and return only existing ones
-      const existingUsers = users.filter(user => user !== undefined);
-      res.json(existingUsers);
+      // Get paid tickets for each user
+      const usersWithStats = await Promise.all(
+        users
+          .filter(user => user !== undefined)
+          .map(async user => {
+            // Get all tickets from all categories for this user
+            const categories = await storage.getCategories();
+            let paidTicketCount = 0;
+
+            for (const category of categories) {
+              const tickets = await storage.getTicketsByCategory(category.id);
+              const userTickets = tickets.filter(t =>
+                t.userId === user?.id &&
+                t.status === "paid"
+              );
+              paidTicketCount += userTickets.length;
+            }
+
+            return {
+              ...user,
+              paidTicketCount
+            };
+          })
+      );
+
+      res.json(usersWithStats);
     } catch (error) {
       log(`Error fetching users: ${error}`, "error");
       res.status(500).json({ message: "Failed to fetch users" });

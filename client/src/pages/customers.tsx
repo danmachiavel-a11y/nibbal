@@ -5,8 +5,12 @@ import type { User } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
 import { SiTelegram, SiDiscord } from "react-icons/si";
 
+interface UserWithStats extends User {
+  paidTicketCount: number;
+}
+
 export default function Customers() {
-  const { data: users, isLoading } = useQuery<User[]>({
+  const { data: users, isLoading } = useQuery<UserWithStats[]>({
     queryKey: ["/api/users"],
   });
 
@@ -41,6 +45,11 @@ export default function Customers() {
                       {user.isBanned && (
                         <Badge variant="destructive">
                           Banned
+                        </Badge>
+                      )}
+                      {user.paidTicketCount > 0 && (
+                        <Badge variant="secondary">
+                          {user.paidTicketCount} Paid Tickets
                         </Badge>
                       )}
                     </div>
