@@ -25,7 +25,7 @@ const categorySchema = z.object({
   isSubmenu: z.boolean().optional(),
   discordRoleId: z.string().optional(),
   discordCategoryId: z.string().optional(),
-  questions: z.string(),
+  questions: z.array(z.object({text: z.string(), buttons: z.array(z.string()).optional()})),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
   parentId: z.number().nullable().optional(),
@@ -72,7 +72,7 @@ export default function Settings() {
       name: "",
       discordRoleId: "",
       discordCategoryId: "",
-      questions: "",
+      questions: [],
       serviceSummary: "Our team is ready to assist you!",
       serviceImageUrl: "",
       isSubmenu: false,
@@ -102,21 +102,7 @@ export default function Settings() {
 
   async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
     try {
-      // Parse questions and button options
-      const questions: Question[] = data.questions.split('\n')
-        .filter(q => q.trim())
-        .map(q => {
-          const parts = q.split('>>');
-          return {
-            text: parts[0].trim(),
-            buttons: parts.length > 1 ? parts.slice(1) : undefined
-          };
-        });
-
-      const submitData = {
-        ...data,
-        questions
-      };
+      const submitData = data;
 
       const res = await apiRequest("POST", "/api/categories", submitData);
       if (!res.ok) throw new Error("Failed to create category");
@@ -460,7 +446,7 @@ export function CategoryEditor({ category }: { category: Category }) {
   });
 
   // Get available submenus for the dropdown, excluding current category
-  const submenus = categories?.filter(cat => 
+  const submenus = categories?.filter(cat =>
     cat.isSubmenu && cat.id !== category.id
   ) || [];
 
@@ -472,7 +458,7 @@ export function CategoryEditor({ category }: { category: Category }) {
       discordCategoryId: category.discordCategoryId,
       questions: category.questions.map(q => {
         if (q.buttons?.length) {
-          return `${q.text}\n${q.buttons.map(b => `>>${b}`).join('')}`;
+          return `${q.text}${q.buttons.map(b => `>>${b}`).join('')}`;
         }
         return q.text;
       }).join('\n'),
@@ -500,7 +486,10 @@ export function CategoryEditor({ category }: { category: Category }) {
         ...data,
         questions,
         displayOrder: category.displayOrder,
-        newRow: category.newRow
+        newRow: category.newRow,
+        discordRoleId: data.discordRoleId || category.discordRoleId,
+        discordCategoryId: data.discordCategoryId || category.discordCategoryId,
+        serviceSummary: data.serviceSummary || category.serviceSummary,
       };
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
@@ -513,6 +502,7 @@ export function CategoryEditor({ category }: { category: Category }) {
 
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
     } catch (error) {
+      console.error("Error updating category:", error);
       toast({
         title: "Error",
         description: "Failed to update category",
