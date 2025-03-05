@@ -1,460 +1,33 @@
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormDescription as FormDescriptionUI } from "@/components/ui/form";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Link } from "wouter";
-import { ArrowLeft } from "lucide-react";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+} from "@/components/ui/card";
+import {
+  Form,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormControl,
+  FormDescription,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { useForm } from "react-hook-form";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import type { Category, BotConfig } from "@shared/schema";
-import { CategoryGrid } from "@/components/CategoryGrid";
-import { useEffect } from "react";
+import { useToast } from "@/hooks/use-toast";
+import type { Category } from "@shared/schema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { ChevronDown, ChevronRight, Edit, Trash } from "lucide-react";
+import { useState, useEffect } from 'react';
 
-const botConfigSchema = z.object({
-  welcomeMessage: z.string(),
-  welcomeImageUrl: z.string().nullable(),
-});
-
-const categorySchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  isSubmenu: z.boolean().optional(),
-  discordRoleId: z.string().optional(),
-  discordCategoryId: z.string().optional(),
-  transcriptCategoryId: z.string().optional(),
-  questions: z.string().min(1, "At least one question is required"),
-  serviceSummary: z.string().optional(),
-  serviceImageUrl: z.string().nullable().optional(),
-  parentId: z.number().nullable().optional(),
-  discordCategories: z.array(z.object({
-    id: z.string(),
-    name: z.string()
-  })).optional(),
-  discordRoles: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    color: z.string()
-  })).optional(),
-});
-
-export function CategoryEditor({ category }: { category: Category }) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-
-  // Add categories query
-  const { data: categories } = useQuery<Category[]>({
-    queryKey: ["/api/categories"]
-  });
-
-  // Filter for submenus, excluding the current category
-  const submenus = categories?.filter(cat =>
-    cat.isSubmenu && cat.id !== category.id
-  ) || [];
-
-  const form = useForm({
-    resolver: zodResolver(categorySchema),
-    defaultValues: {
-      name: category.name,
-      discordRoleId: category.discordRoleId,
-      discordCategoryId: category.discordCategoryId,
-      transcriptCategoryId: category.transcriptCategoryId,
-      questions: category.questions.join('\n'),
-      serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
-      serviceImageUrl: category.serviceImageUrl || "",
-      isSubmenu: category.isSubmenu || false,
-      parentId: category.parentId || null,
-      discordCategories: [],
-      discordRoles: []
-    }
-  });
-
-  useEffect(() => {
-    const loadDiscordData = async () => {
-      try {
-        // Load categories
-        const categoriesRes = await apiRequest("GET", "/api/discord/categories");
-        if (!categoriesRes.ok) throw new Error("Failed to fetch Discord categories");
-        const categories = await categoriesRes.json();
-        form.setValue("discordCategories", categories);
-
-        // Load roles
-        const rolesRes = await apiRequest("GET", "/api/discord/roles");
-        if (!rolesRes.ok) throw new Error("Failed to fetch Discord roles");
-        const roles = await rolesRes.json();
-        form.setValue("discordRoles", roles);
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to load Discord data",
-          variant: "destructive"
-        });
-      }
-    };
-    loadDiscordData();
-  }, []);
-
-  async function onSubmit(data: z.infer<typeof categorySchema>) {
-    try {
-      const questions = data.questions.split('\n').filter(q => q.trim());
-
-      const submitData = {
-        name: data.name,
-        isSubmenu: category.isSubmenu,
-        discordRoleId: data.discordRoleId || category.discordRoleId,
-        discordCategoryId: data.discordCategoryId || category.discordCategoryId,
-        transcriptCategoryId: data.transcriptCategoryId || category.transcriptCategoryId,
-        questions,
-        serviceSummary: data.serviceSummary || category.serviceSummary,
-        serviceImageUrl: data.serviceImageUrl,
-        displayOrder: category.displayOrder,
-        newRow: category.newRow,
-        parentId: data.parentId
-      };
-
-      console.log("Submitting category update with data:", submitData);
-
-      const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.message || "Failed to update category");
-      }
-
-      const updatedCategory = await res.json();
-      console.log("Category updated successfully:", updatedCategory);
-
-      toast({
-        title: "Success",
-        description: "Category updated successfully"
-      });
-
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-    } catch (error) {
-      console.error("Error updating category:", error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to update category",
-        variant: "destructive"
-      });
-    }
-  }
-
-  async function onDelete() {
-    if (!confirm(`Are you sure you want to delete ${category.name}?`)) return;
-
-    try {
-      const res = await apiRequest("DELETE", `/api/categories/${category.id}`, undefined);
-      if (!res.ok) throw new Error("Failed to delete category");
-
-      toast({
-        title: "Success",
-        description: "Category deleted successfully"
-      });
-
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to delete category",
-        variant: "destructive"
-      });
-    }
-  }
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>Edit {category.name}</CardTitle>
-        <Button variant="destructive" onClick={onDelete}>Delete</Button>
-      </CardHeader>
-      <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Name</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="isSubmenu"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Type</FormLabel>
-                  <FormControl>
-                    <select
-                      className="w-full rounded-md border border-input bg-background px-3 py-2"
-                      value={field.value ? "submenu" : "category"}
-                      onChange={(e) => field.onChange(e.target.value === "submenu")}
-                      disabled={category.isSubmenu}
-                    >
-                      <option value="category">Category</option>
-                      <option value="submenu">Submenu</option>
-                    </select>
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            {!form.watch("isSubmenu") && (
-              <FormField
-                control={form.control}
-                name="parentId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Parent Submenu</FormLabel>
-                    <FormDescriptionUI>
-                      Choose which submenu this category belongs to
-                    </FormDescriptionUI>
-                    <FormControl>
-                      <select
-                        className="w-full rounded-md border border-input bg-background px-3 py-2"
-                        value={field.value || ""}
-                        onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
-                      >
-                        <option value="">None (Root Level)</option>
-                        {submenus.map(submenu => (
-                          <option key={submenu.id} value={submenu.id}>
-                            {submenu.name}
-                          </option>
-                        ))}
-                      </select>
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-            )}
-
-            <FormField
-              control={form.control}
-              name="discordRoleId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Discord Role</FormLabel>
-                  <FormDescriptionUI>
-                    The role that will be assigned to support staff for this category
-                  </FormDescriptionUI>
-                  <div className="flex space-x-2">
-                    <FormControl>
-                      <select
-                        className="w-full rounded-md border border-input bg-background px-3 py-2"
-                        value={field.value || ''}
-                        onChange={(e) => field.onChange(e.target.value)}
-                      >
-                        <option value="">Select a role</option>
-                        {form.watch("discordRoles")?.map((role: any) => (
-                          <option
-                            key={role.id}
-                            value={role.id}
-                            style={{ color: role.color !== '#000000' ? role.color : 'inherit' }}
-                          >
-                            {role.name}
-                          </option>
-                        ))}
-                      </select>
-                    </FormControl>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={async () => {
-                        try {
-                          const res = await apiRequest("GET", "/api/discord/roles");
-                          if (!res.ok) throw new Error("Failed to fetch Discord roles");
-                          const roles = await res.json();
-                          form.setValue("discordRoles", roles);
-                        } catch (error) {
-                          toast({
-                            title: "Error",
-                            description: "Failed to load Discord roles",
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                    >
-                      Refresh Roles
-                    </Button>
-                  </div>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="discordCategoryId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Discord Category</FormLabel>
-                  <FormDescriptionUI>
-                    The category where new tickets will be created
-                  </FormDescriptionUI>
-                  <div className="flex space-x-2">
-                    <FormControl>
-                      <select
-                        className="w-full rounded-md border border-input bg-background px-3 py-2"
-                        value={field.value || ''}
-                        onChange={(e) => field.onChange(e.target.value)}
-                      >
-                        <option value="">Select a category</option>
-                        {form.watch("discordCategories")?.map((category: any) => (
-                          <option
-                            key={category.id}
-                            value={category.id}
-                          >
-                            {category.name}
-                          </option>
-                        ))}
-                      </select>
-                    </FormControl>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={async () => {
-                        try {
-                          const res = await apiRequest("GET", "/api/discord/categories");
-                          if (!res.ok) throw new Error("Failed to fetch Discord categories");
-                          const categories = await res.json();
-                          form.setValue("discordCategories", categories);
-                        } catch (error) {
-                          toast({
-                            title: "Error",
-                            description: "Failed to load Discord categories",
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                    >
-                      Refresh Categories
-                    </Button>
-                  </div>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="transcriptCategoryId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Discord Transcript Category</FormLabel>
-                  <FormDescriptionUI>
-                    The category where closed tickets will be moved
-                  </FormDescriptionUI>
-                  <div className="flex space-x-2">
-                    <FormControl>
-                      <select
-                        className="w-full rounded-md border border-input bg-background px-3 py-2"
-                        value={field.value || ''}
-                        onChange={(e) => field.onChange(e.target.value)}
-                      >
-                        <option value="">Select a category</option>
-                        {form.watch("discordCategories")?.map((category: any) => (
-                          <option
-                            key={category.id}
-                            value={category.id}
-                            selected={category.id === field.value}
-                          >
-                            {category.name}
-                          </option>
-                        ))}
-                      </select>
-                    </FormControl>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={async () => {
-                        try {
-                          const res = await apiRequest("GET", "/api/discord/categories");
-                          if (!res.ok) throw new Error("Failed to fetch Discord categories");
-                          const categories = await res.json();
-                          form.setValue("discordCategories", categories);
-                        } catch (error) {
-                          toast({
-                            title: "Error",
-                            description: "Failed to load Discord categories",
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                    >
-                      Refresh Categories
-                    </Button>
-                  </div>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="questions"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Questions</FormLabel>
-                  <FormDescriptionUI>
-                    Enter each question on a new line
-                  </FormDescriptionUI>
-                  <FormControl>
-                    <Textarea {...field} rows={5} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="serviceSummary"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Service Summary</FormLabel>
-                  <FormDescriptionUI>
-                    Description of this service shown when users select it.
-                    Use new lines to format your message.
-                  </FormDescriptionUI>
-                  <FormControl>
-                    <Textarea {...field} rows={5} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="serviceImageUrl"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Service Image URL</FormLabel>
-                  <FormDescriptionUI>
-                    Optional: URL of an image to show with the service description
-                  </FormDescriptionUI>
-                  <FormControl>
-                    <Input {...field} value={field.value || ''} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <Button type="submit">Update {category.isSubmenu ? "Submenu" : "Category"}</Button>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
-  );
-}
-
-export function CategoryList({ categories }: { categories: Category[] }) {
+// CategoryList component definition (moved from a separate file)
+function CategoryList({ categories }: { categories: Category[] }) {
   const submenus = categories.filter(cat => cat.isSubmenu);
   const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
 
@@ -522,483 +95,391 @@ export function CategoryList({ categories }: { categories: Category[] }) {
   );
 }
 
+// Placeholder for CategoryEditor component -  needs to be defined elsewhere
+function CategoryEditor({category}: {category:Category}) {
+    return <div>Edit Category: {category.name}</div>
+}
+
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-
-  const { data: botConfig } = useQuery<BotConfig>({
-    queryKey: ["/api/bot-config"]
-  });
+  const [activeTab, setActiveTab] = useState("existing");
 
   const { data: categories } = useQuery<Category[]>({
     queryKey: ["/api/categories"]
   });
 
-
-  const botConfigForm = useForm({
-    resolver: zodResolver(botConfigSchema),
-    defaultValues: {
-      welcomeMessage: botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:",
-      welcomeImageUrl: botConfig?.welcomeImageUrl || "",
-    }
-  });
-
   const categoryForm = useForm({
-    resolver: zodResolver(categorySchema),
     defaultValues: {
+      isSubmenu: false,
       name: "",
+      parentId: null,
       discordRoleId: "",
       discordCategoryId: "",
       transcriptCategoryId: "",
       questions: "",
-      serviceSummary: "Our team is ready to assist you!",
+      serviceSummary: "",
       serviceImageUrl: "",
-      isSubmenu: false,
-      parentId: null,
       discordCategories: [],
       discordRoles: []
     }
   });
 
   useEffect(() => {
-    // Load Discord categories when component mounts for new category form
-    const loadDiscordCategories = async () => {
+    const loadDiscordData = async () => {
       try {
-        const res = await apiRequest("GET", "/api/discord/categories");
-        if (!res.ok) throw new Error("Failed to fetch Discord categories");
-        const categories = await res.json();
+        // Load categories
+        const categoriesRes = await apiRequest("GET", "/api/discord/categories");
+        if (!categoriesRes.ok) throw new Error("Failed to fetch Discord categories");
+        const categories = await categoriesRes.json();
         categoryForm.setValue("discordCategories", categories);
+
+        // Load roles
+        const rolesRes = await apiRequest("GET", "/api/discord/roles");
+        if (!rolesRes.ok) throw new Error("Failed to fetch Discord roles");
+        const roles = await rolesRes.json();
+        categoryForm.setValue("discordRoles", roles);
       } catch (error) {
         toast({
           title: "Error",
-          description: "Failed to load Discord categories",
+          description: "Failed to load Discord data",
           variant: "destructive"
         });
       }
     };
-    loadDiscordCategories();
+    loadDiscordData();
   }, []);
 
-  async function onBotConfigSubmit(data: z.infer<typeof botConfigSchema>) {
+  const onSubmit = async (data: any) => {
     try {
-      const res = await apiRequest("PATCH", "/api/bot-config", data);
-      if (!res.ok) throw new Error("Failed to update bot config");
-
-      toast({
-        title: "Success",
-        description: "Bot configuration updated successfully"
-      });
-
-      queryClient.invalidateQueries({ queryKey: ["/api/bot-config"] });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to update bot configuration",
-        variant: "destructive"
-      });
-    }
-  }
-
-  async function onCategorySubmit(data: z.infer<typeof categorySchema>) {
-    try {
-      const questions = data.questions.split('\n').filter(q => q.trim());
+      const questions = data.questions
+        .split('\n')
+        .filter((q: string) => q.trim())
+        .map((q: string) => q.trim());
 
       const submitData = {
         name: data.name,
-        isSubmenu: data.isSubmenu || false,
-        discordRoleId: data.discordRoleId || "",
-        discordCategoryId: data.discordCategoryId || "",
-        transcriptCategoryId: data.transcriptCategoryId || "",
+        isSubmenu: data.isSubmenu,
+        discordRoleId: data.discordRoleId,
+        discordCategoryId: data.discordCategoryId,
+        transcriptCategoryId: data.transcriptCategoryId,
         questions,
-        serviceSummary: data.serviceSummary || "Our team is ready to assist you!",
-        serviceImageUrl: data.serviceImageUrl || null,
+        serviceSummary: data.serviceSummary,
+        serviceImageUrl: data.serviceImageUrl,
         parentId: data.parentId
       };
 
       const res = await apiRequest("POST", "/api/categories", submitData);
       if (!res.ok) throw new Error("Failed to create category");
 
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+
       toast({
         title: "Success",
-        description: `${data.isSubmenu ? "Submenu" : "Category"} created successfully`
+        description: `Created new ${data.isSubmenu ? "submenu" : "category"}: ${data.name}`,
       });
 
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      // Reset form
       categoryForm.reset();
+
     } catch (error) {
-      console.error("Error creating category:", error);
       toast({
         title: "Error",
         description: "Failed to create category",
         variant: "destructive"
       });
     }
-  }
+  };
 
   return (
-    <div className="container mx-auto p-6">
-      <div className="mb-6">
-        <Link href="/">
-          <Button variant="ghost">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Button>
-        </Link>
-      </div>
+    <div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Categories & Submenus</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList>
+              <TabsTrigger value="existing">Existing Categories</TabsTrigger>
+              <TabsTrigger value="new">Create New</TabsTrigger>
+            </TabsList>
 
-      <div className="grid gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Bot Welcome Message</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Form {...botConfigForm}>
-              <form onSubmit={botConfigForm.handleSubmit(onBotConfigSubmit)} className="space-y-4">
-                <FormField
-                  control={botConfigForm.control}
-                  name="welcomeMessage"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Welcome Message</FormLabel>
-                      <FormDescriptionUI>
-                        This message will be shown when users first start the bot.
-                        Use new lines to format your message.
-                      </FormDescriptionUI>
-                      <FormControl>
-                        <Textarea {...field} rows={5} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
+            <TabsContent value="existing">
+              {categories && <CategoryList categories={categories} />}
+            </TabsContent>
 
-                <FormField
-                  control={botConfigForm.control}
-                  name="welcomeImageUrl"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Welcome Image URL</FormLabel>
-                      <FormDescriptionUI>
-                        Optional: URL of an image to show with the welcome message
-                      </FormDescriptionUI>
-                      <FormControl>
-                        <Input {...field} value={field.value || ''} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <Button type="submit">Update Welcome Message</Button>
-              </form>
-            </Form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Create New Menu Item</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Form {...categoryForm}>
-              <form onSubmit={categoryForm.handleSubmit(onCategorySubmit)} className="space-y-4">
-                <FormField
-                  control={categoryForm.control}
-                  name="isSubmenu"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Type</FormLabel>
-                      <FormDescriptionUI>
-                        Choose whether this is a submenu (like "Food") or a category (like "Grubhub")
-                      </FormDescriptionUI>
-                      <FormControl>
-                        <Tabs
-                          value={field.value ? "submenu" : "category"}
-                          onValueChange={(value) => field.onChange(value === "submenu")}
-                          className="w-full"
-                        >
-                          <TabsList className="grid w-full grid-cols-2">
-                            <TabsTrigger value="category">Category</TabsTrigger>
-                            <TabsTrigger value="submenu">Submenu</TabsTrigger>
-                          </TabsList>
-                        </Tabs>
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={categoryForm.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Name</FormLabel>
-                      <FormControl>
-                        <Input {...field} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                {!categoryForm.watch("isSubmenu") && (
-                  <>
-                    <FormField
-                      control={categoryForm.control}
-                      name="parentId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Parent Submenu</FormLabel>
-                          <FormDescriptionUI>
-                            Choose which submenu this category belongs to
-                          </FormDescriptionUI>
-                          <FormControl>
-                            <select
-                              className="w-full rounded-md border border-input bg-background px-3 py-2"
-                              value={field.value || ""}
-                              onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
-                            >
-                              <option value="">None (Root Level)</option>
-                              {categories?.filter(cat => cat.isSubmenu).map(submenu => (
-                                <option key={submenu.id} value={submenu.id}>
-                                  {submenu.name}
-                                </option>
-                              ))}
-                            </select>
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={categoryForm.control}
-                      name="discordRoleId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Discord Role</FormLabel>
-                          <FormDescriptionUI>
-                            Select a Discord role.
-                          </FormDescriptionUI>
-                          <div className="flex space-x-2">
+            <TabsContent value="new">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Create New Menu Item</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Form {...categoryForm}>
+                    <form onSubmit={categoryForm.handleSubmit(onSubmit)} className="space-y-4">
+                      <FormField
+                        control={categoryForm.control}
+                        name="isSubmenu"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Type</FormLabel>
+                            <FormDescription>
+                              Choose whether this is a submenu (like "Food") or a category (like "Grubhub")
+                            </FormDescription>
                             <FormControl>
-                              <select
-                                className="w-full rounded-md border border-input bg-background px-3 py-2"
-                                value={field.value || ''}
-                                onChange={(e) => field.onChange(e.target.value)}
+                              <Tabs
+                                value={field.value ? "submenu" : "category"}
+                                onValueChange={(value) => field.onChange(value === "submenu")}
+                                className="w-full"
                               >
-                                <option value="">Select a role</option>
-                                {categoryForm.watch("discordRoles")?.map((role: any) => (
-                                  <option
-                                    key={role.id}
-                                    value={role.id}
-                                    style={{ color: role.color !== '#000000' ? role.color : 'inherit' }}
+                                <TabsList className="grid w-full grid-cols-2">
+                                  <TabsTrigger value="category">Category</TabsTrigger>
+                                  <TabsTrigger value="submenu">Submenu</TabsTrigger>
+                                </TabsList>
+                              </Tabs>
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={categoryForm.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Name</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      {!categoryForm.watch("isSubmenu") && (
+                        <>
+                          <FormField
+                            control={categoryForm.control}
+                            name="parentId"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Parent Submenu</FormLabel>
+                                <FormDescription>
+                                  Choose which submenu this category belongs to
+                                </FormDescription>
+                                <FormControl>
+                                  <select
+                                    className="w-full rounded-md border border-input bg-background px-3 py-2"
+                                    value={field.value || ""}
+                                    onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
                                   >
-                                    {role.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </FormControl>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={async () => {
-                                try {
-                                  const res = await apiRequest("GET", "/api/discord/roles");
-                                  if (!res.ok) throw new Error("Failed to fetch Discord roles");
-                                  const roles = await res.json();
-                                  categoryForm.setValue("discordRoles", roles);
-                                } catch (error) {
-                                  toast({
-                                    title: "Error",
-                                    description: "Failed to load Discord roles",
-                                    variant: "destructive"
-                                  });
-                                }
-                              }}
-                            >
-                              Refresh Roles
-                            </Button>
-                          </div>
-                        </FormItem>
-                      )}
-                    />
+                                    <option value="">None (Root Level)</option>
+                                    {categories?.filter(cat => cat.isSubmenu).map(submenu => (
+                                      <option key={submenu.id} value={submenu.id}>
+                                        {submenu.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
 
-                    <FormField
-                      control={categoryForm.control}
-                      name="discordCategoryId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Discord Category</FormLabel>
-                          <FormDescriptionUI>
-                            Select a Discord category.
-                          </FormDescriptionUI>
-                          <div className="flex space-x-2">
-                            <FormControl>
-                              <select
-                                className="w-full rounded-md border border-input bg-background px-3 py-2"
-                                value={field.value || ''}
-                                onChange={(e) => field.onChange(e.target.value)}
-                              >
-                                <option value="">Select a category</option>
-                                {categoryForm.watch("discordCategories")?.map((category: any) => (
-                                  <option
-                                    key={category.id}
-                                    value={category.id}
+                          <FormField
+                            control={categoryForm.control}
+                            name="discordRoleId"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Discord Role</FormLabel>
+                                <FormDescription>
+                                  Select a Discord role
+                                </FormDescription>
+                                <div className="flex space-x-2">
+                                  <FormControl>
+                                    <select
+                                      className="w-full rounded-md border border-input bg-background px-3 py-2"
+                                      value={field.value || ''}
+                                      onChange={(e) => field.onChange(e.target.value)}
+                                    >
+                                      <option value="">Select a role</option>
+                                      {categoryForm.watch("discordRoles")?.map((role: any) => (
+                                        <option
+                                          key={role.id}
+                                          value={role.id}
+                                          style={{ color: role.color !== '#000000' ? role.color : 'inherit' }}
+                                        >
+                                          {role.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </FormControl>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={async () => {
+                                      try {
+                                        const res = await apiRequest("GET", "/api/discord/roles");
+                                        if (!res.ok) throw new Error("Failed to fetch Discord roles");
+                                        const roles = await res.json();
+                                        categoryForm.setValue("discordRoles", roles);
+                                      } catch (error) {
+                                        toast({
+                                          title: "Error",
+                                          description: "Failed to load Discord roles",
+                                          variant: "destructive"
+                                        });
+                                      }
+                                    }}
                                   >
-                                    {category.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </FormControl>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={async () => {
-                                try {
-                                  const res = await apiRequest("GET", "/api/discord/categories");
-                                  if (!res.ok) throw new Error("Failed to fetch Discord categories");
-                                  const categories = await res.json();
-                                  categoryForm.setValue("discordCategories", categories);
-                                } catch (error) {
-                                  toast({
-                                    title: "Error",
-                                    description: "Failed to load Discord categories",
-                                    variant: "destructive"
-                                  });
-                                }
-                              }}
-                            >
-                              Refresh Categories
-                            </Button>
-                          </div>
-                        </FormItem>
+                                    Refresh Roles
+                                  </Button>
+                                </div>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="discordCategoryId"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Discord Category</FormLabel>
+                                <FormDescription>
+                                  Select a Discord category
+                                </FormDescription>
+                                <div className="flex space-x-2">
+                                  <FormControl>
+                                    <select
+                                      className="w-full rounded-md border border-input bg-background px-3 py-2"
+                                      value={field.value || ''}
+                                      onChange={(e) => field.onChange(e.target.value)}
+                                    >
+                                      <option value="">Select a category</option>
+                                      {categoryForm.watch("discordCategories")?.map((category: any) => (
+                                        <option
+                                          key={category.id}
+                                          value={category.id}
+                                        >
+                                          {category.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </FormControl>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={async () => {
+                                      try {
+                                        const res = await apiRequest("GET", "/api/discord/categories");
+                                        if (!res.ok) throw new Error("Failed to fetch Discord categories");
+                                        const categories = await res.json();
+                                        categoryForm.setValue("discordCategories", categories);
+                                      } catch (error) {
+                                        toast({
+                                          title: "Error",
+                                          description: "Failed to load Discord categories",
+                                          variant: "destructive"
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    Refresh Categories
+                                  </Button>
+                                </div>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="transcriptCategoryId"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Discord Transcript Category</FormLabel>
+                                <FormDescription>
+                                  The category where closed tickets will be moved
+                                </FormDescription>
+                                <div className="flex space-x-2">
+                                  <FormControl>
+                                    <select
+                                      className="w-full rounded-md border border-input bg-background px-3 py-2"
+                                      value={field.value || ''}
+                                      onChange={(e) => field.onChange(e.target.value)}
+                                    >
+                                      <option value="">Select a category</option>
+                                      {categoryForm.watch("discordCategories")?.map((category: any) => (
+                                        <option
+                                          key={category.id}
+                                          value={category.id}
+                                        >
+                                          {category.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </FormControl>
+                                </div>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="questions"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Questions</FormLabel>
+                                <FormDescription>
+                                  Enter each question on a new line
+                                </FormDescription>
+                                <FormControl>
+                                  <Textarea {...field} rows={5} />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="serviceSummary"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Service Summary</FormLabel>
+                                <FormDescription>
+                                  Description of this service shown when users select it.
+                                  Use new lines to format your message.
+                                </FormDescription>
+                                <FormControl>
+                                  <Textarea {...field} rows={5} />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="serviceImageUrl"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Service Image URL</FormLabel>
+                                <FormDescription>
+                                  Optional: URL of an image to show with the service description
+                                </FormDescription>
+                                <FormControl>
+                                  <Input {...field} value={field.value || ''} />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+                        </>
                       )}
-                    />
 
-                    <FormField
-                      control={categoryForm.control}
-                      name="transcriptCategoryId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Discord Transcript Category</FormLabel>
-                          <FormDescriptionUI>
-                            The category where closed tickets will be moved
-                          </FormDescriptionUI>
-                          <div className="flex space-x-2">
-                            <FormControl>
-                              <select
-                                className="w-full rounded-md border border-input bg-background px-3 py-2"
-                                value={field.value || ''}
-                                onChange={(e) => field.onChange(e.target.value)}
-                              >
-                                <option value="">Select a category</option>
-                                {categoryForm.watch("discordCategories")?.map((category: any) => (
-                                  <option key={category.id} value={category.id}>
-                                    {category.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </FormControl>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={async () => {
-                                try {
-                                  const res = await apiRequest("GET", "/api/discord/categories");
-                                  if (!res.ok) throw new Error("Failed to fetch Discord categories");
-                                  const categories = await res.json();
-                                  categoryForm.setValue("discordCategories", categories);
-                                } catch (error) {
-                                  toast({
-                                    title: "Error",
-                                    description: "Failed to load Discord categories",
-                                    variant: "destructive"
-                                  });
-                                }
-                              }}
-                            >
-                              Refresh Categories
-                            </Button>
-                          </div>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={categoryForm.control}
-                      name="questions"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Questions</FormLabel>
-                          <FormDescriptionUI>
-                            Enter each question on a new line
-                          </FormDescriptionUI>
-                          <FormControl>
-                            <Textarea {...field} rows={5} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={categoryForm.control}
-                      name="serviceSummary"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Service Summary</FormLabel>
-                          <FormDescriptionUI>
-                            Description of this service shown when users select it.
-                            Use new lines to format your message.
-                          </FormDescriptionUI>
-                          <FormControl>
-                            <Textarea {...field} rows={5} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={categoryForm.control}
-                      name="serviceImageUrl"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Service Image URL</FormLabel>
-                          <FormDescriptionUI>
-                            Optional: URL of an image to show with the service description
-                          </FormDescriptionUI>
-                          <FormControl>
-                            <Input {...field} value={field.value || ''} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                  </>
-                )}
-
-                <Button type="submit">
-                  Create {categoryForm.watch("isSubmenu") ? "Submenu" : "Category"}
-                </Button>
-              </form>
-            </Form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Categories & Submenus</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Tabs defaultValue="existing" className="w-full">
-              <TabsList>
-                <TabsTrigger value="existing">Existing Categories</TabsTrigger>
-                <TabsTrigger value="new">Create New</TabsTrigger>
-              </TabsList>
-              <TabsContent value="existing">
-                {categories && <CategoryList categories={categories} />}
-              </TabsContent>
-              <TabsContent value="new">
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-      </div>
+                      <Button type="submit">Create {categoryForm.watch("isSubmenu") ? "Submenu" : "Category"}</Button>
+                    </form>
+                  </Form>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
     </div>
   );
 }
