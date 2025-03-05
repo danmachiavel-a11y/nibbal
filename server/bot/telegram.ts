@@ -21,7 +21,10 @@ export class TelegramBot {
 
   constructor(bridge: BridgeManager) {
     try {
-      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+      if (!process.env.TELEGRAM_BOT_TOKEN?.trim()) {
+        throw new Error("Invalid Telegram bot token");
+      }
+      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
       this.bridge = bridge;
       this.userStates = new Map();
       this.setupHandlers();
@@ -443,16 +446,21 @@ export class TelegramBot {
     try {
       log("Starting Telegram bot...");
       await this.bot.launch({
-        // Add error handling for the launch process
+        dropPendingUpdates: true,
         onLaunch: () => {
           this._isConnected = true;
           log("Telegram bot started and connected successfully");
-        },
-        onError: (error) => {
-          log(`Telegram bot error: ${error}`, "error");
-          this._isConnected = false;
         }
+      }).catch(error => {
+        log(`Error in Telegram bot launch: ${error}`, "error");
+        this._isConnected = false;
+        throw error;
       });
+
+      // Verify connection by getting bot info
+      const botInfo = await this.bot.telegram.getMe();
+      log(`Connected as @${botInfo.username}`);
+
     } catch (error) {
       log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
@@ -475,7 +483,11 @@ export class TelegramBot {
   getIsConnected(): boolean {
     try {
       // Check if bot is actually running by attempting to get bot info
-      return this._isConnected && this.bot.botInfo !== undefined;
+      const connected = this._isConnected && this.bot.botInfo !== undefined;
+      if (!connected) {
+        log("Telegram bot is not connected", "warn");
+      }
+      return connected;
     } catch (error) {
       log(`Error checking Telegram bot connection: ${error}`, "error");
       return false;
@@ -486,6 +498,11 @@ export class TelegramBot {
     if (!this.getIsConnected()) {
       throw new Error("Telegram bot is not connected");
     }
-    await this.bot.telegram.sendMessage(chatId, message);
+    try {
+      await this.bot.telegram.sendMessage(chatId, message);
+    } catch (error) {
+      log(`Error sending Telegram message: ${error}`, "error");
+      throw error;
+    }
   }
 }

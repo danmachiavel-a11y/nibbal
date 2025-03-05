@@ -11,6 +11,45 @@ export async function registerRoutes(app: Express) {
   log("Setting up HTTP server...");
   const httpServer = createServer(app);
 
+  // Health check endpoint - always register first
+  app.get("/api/health", async (req, res) => {
+    try {
+      // Check basic server health
+      const serverHealth = {
+        status: "healthy",
+        timestamp: new Date().toISOString()
+      };
+
+      // Check bot health if bridge exists
+      if (bridge) {
+        const botHealth = await bridge.healthCheck();
+        res.json({
+          ...serverHealth,
+          bots: {
+            telegram: botHealth.telegram,
+            discord: botHealth.discord
+          }
+        });
+      } else {
+        res.json({
+          ...serverHealth,
+          bots: {
+            telegram: false,
+            discord: false,
+            message: "Bot bridge initializing"
+          }
+        });
+      }
+    } catch (error) {
+      log(`Health check failed: ${error}`, "error");
+      res.status(503).json({
+        status: "unhealthy",
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
+
   // Initialize bridge after routes are registered
   process.nextTick(async () => {
     log("Initializing bot bridge...");
