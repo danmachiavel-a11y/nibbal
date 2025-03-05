@@ -129,7 +129,7 @@ export class TelegramBot {
 
       // Start with first question
       await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for better UX
-      await ctx.reply(category.questions[0].text);
+      await ctx.reply(category.questions[0]);
       await ctx.answerCbQuery();
     });
 
@@ -188,7 +188,7 @@ export class TelegramBot {
       this.userStates.set(userId, state); // Update state
 
       console.log(`Moving to question ${state.currentQuestion + 1}`);
-      await ctx.reply(category.questions[state.currentQuestion].text);
+      await ctx.reply(category.questions[state.currentQuestion]);
     } else {
       // All questions answered, create ticket
       console.log('All questions answered, creating ticket');
