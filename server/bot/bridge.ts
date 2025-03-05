@@ -45,8 +45,18 @@ export class BridgeManager {
       log(`Category data for ticket:`, JSON.stringify(category, null, 2));
 
       // More strict checking for transcriptCategoryId
-      if (!category || !category.transcriptCategoryId || category.transcriptCategoryId.trim() === '') {
-        log(`No transcript category found or invalid. Category:`, JSON.stringify(category, null, 2));
+      if (!category) {
+        throw new Error("Category not found");
+      }
+
+      // Explicitly check transcript category ID
+      if (!category.transcriptCategoryId) {
+        log(`No transcript category ID found for category ${category.id}`);
+        throw new Error("No transcript category set for this service");
+      }
+
+      if (category.transcriptCategoryId.trim() === '') {
+        log(`Empty transcript category ID for category ${category.id}`);
         throw new Error("No transcript category set for this service");
       }
 

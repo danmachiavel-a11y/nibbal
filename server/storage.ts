@@ -218,26 +218,23 @@ export class MemStorage implements IStorage {
     console.log("Updating category in storage. Current data:", JSON.stringify(category, null, 2));
     console.log("Update payload:", JSON.stringify(updateData, null, 2));
 
-    // Handle transcriptCategoryId specifically
-    let transcriptCategoryId = category.transcriptCategoryId;
-    if (updateData.transcriptCategoryId !== undefined) {
-      transcriptCategoryId = updateData.transcriptCategoryId.trim() === '' ? null : updateData.transcriptCategoryId.trim();
-    }
-
+    // Create updated category object
     const updatedCategory = {
       ...category,
-      ...updateData,
-      id, // Preserve the ID
-      questions: Array.isArray(updateData.questions) ? updateData.questions : category.questions,
-      parentId: updateData.parentId === undefined ? category.parentId : updateData.parentId,
-      isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu,
+      name: updateData.name || category.name,
       discordRoleId: updateData.discordRoleId || category.discordRoleId,
       discordCategoryId: updateData.discordCategoryId || category.discordCategoryId,
-      transcriptCategoryId: transcriptCategoryId,
+      // Handle transcript category ID explicitly
+      transcriptCategoryId: updateData.transcriptCategoryId !== undefined ? 
+        (updateData.transcriptCategoryId.trim() || null) : 
+        category.transcriptCategoryId,
+      questions: Array.isArray(updateData.questions) ? updateData.questions : category.questions,
       serviceSummary: updateData.serviceSummary || category.serviceSummary,
       serviceImageUrl: updateData.serviceImageUrl === '' ? null : (updateData.serviceImageUrl || category.serviceImageUrl),
       displayOrder: updateData.displayOrder ?? category.displayOrder,
-      newRow: updateData.newRow ?? category.newRow
+      newRow: updateData.newRow ?? category.newRow,
+      parentId: updateData.parentId === undefined ? category.parentId : updateData.parentId,
+      isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu
     };
 
     console.log("Updated category:", JSON.stringify(updatedCategory, null, 2));
