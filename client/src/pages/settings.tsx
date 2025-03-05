@@ -25,66 +25,129 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useState, useEffect } from 'react';
+import { Folder, FolderOpen, Tag } from 'lucide-react';
 
-// CategoryList component definition (moved from a separate file)
+// Import removed 'Settings' to avoid naming conflict
+
 function CategoryList({ categories }: { categories: Category[] }) {
   const submenus = categories.filter(cat => cat.isSubmenu);
   const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
+
+  const toggleAccordion = (value: string) => {
+    setExpandedItems(current =>
+      current.includes(value)
+        ? current.filter(item => item !== value)
+        : [...current, value]
+    );
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="mb-4">
-        <h3 className="text-lg font-semibold">Root Categories</h3>
-        <Accordion type="multiple" className="w-full">
+    <div className="space-y-6">
+      {/* Root Categories Section */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Tag className="h-5 w-5" />
+          <h3 className="text-lg font-semibold">Root Categories</h3>
+          <span className="text-sm text-muted-foreground">
+            ({rootCategories.length})
+          </span>
+        </div>
+        <Accordion
+          type="multiple"
+          value={expandedItems}
+          onValueChange={setExpandedItems}
+          className="w-full space-y-2"
+        >
           {rootCategories.map(category => (
-            <AccordionItem key={category.id} value={category.id.toString()}>
-              <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-2">
+            <AccordionItem
+              key={category.id}
+              value={category.id.toString()}
+              className="border rounded-lg shadow-sm bg-card"
+            >
+              <AccordionTrigger className="px-4 hover:no-underline">
+                <div className="flex items-center gap-3">
+                  <Tag className="h-4 w-4 text-muted-foreground" />
                   <span>{category.name}</span>
                 </div>
               </AccordionTrigger>
-              <AccordionContent>
-                <CategoryEditor category={category} />
+              <AccordionContent className="px-4 pb-3">
+                <div className="border-l-2 pl-4 ml-2 border-muted">
+                  <CategoryEditor category={category} />
+                </div>
               </AccordionContent>
             </AccordionItem>
           ))}
         </Accordion>
       </div>
 
+      {/* Submenus Section */}
       <div>
-        <h3 className="text-lg font-semibold mb-2">Submenus</h3>
-        <Accordion type="multiple" className="w-full">
+        <div className="flex items-center gap-2 mb-4">
+          <Folder className="h-5 w-5" />
+          <h3 className="text-lg font-semibold">Submenus</h3>
+          <span className="text-sm text-muted-foreground">
+            ({submenus.length})
+          </span>
+        </div>
+        <Accordion
+          type="multiple"
+          value={expandedItems}
+          onValueChange={setExpandedItems}
+          className="w-full space-y-2"
+        >
           {submenus.map(submenu => (
-            <AccordionItem key={submenu.id} value={submenu.id.toString()}>
-              <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-2">
+            <AccordionItem
+              key={submenu.id}
+              value={submenu.id.toString()}
+              className="border rounded-lg shadow-sm bg-card"
+            >
+              <AccordionTrigger className="px-4 hover:no-underline">
+                <div className="flex items-center gap-3">
+                  {expandedItems.includes(submenu.id.toString())
+                    ? <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                    : <Folder className="h-4 w-4 text-muted-foreground" />
+                  }
                   <span>{submenu.name}</span>
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-sm text-muted-foreground ml-2">
                     ({categories.filter(cat => cat.parentId === submenu.id).length} categories)
                   </span>
                 </div>
               </AccordionTrigger>
-              <AccordionContent>
-                <div className="pl-4 border-l-2 border-border">
-                  <CategoryEditor category={submenu} />
+              <AccordionContent className="border-l-2 ml-6 pl-4">
+                <CategoryEditor category={submenu} />
 
-                  <div className="mt-4">
-                    <h4 className="text-sm font-medium mb-2">Submenu Categories</h4>
-                    <Accordion type="multiple" className="w-full">
-                      {categories
-                        .filter(cat => cat.parentId === submenu.id)
-                        .map(category => (
-                          <AccordionItem key={category.id} value={category.id.toString()}>
-                            <AccordionTrigger className="hover:no-underline">
-                              {category.name}
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <CategoryEditor category={category} />
-                            </AccordionContent>
-                          </AccordionItem>
-                        ))}
-                    </Accordion>
+                <div className="mt-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Tag className="h-4 w-4" />
+                    <h4 className="text-sm font-medium">Categories</h4>
                   </div>
+                  <Accordion
+                    type="multiple"
+                    value={expandedItems}
+                    onValueChange={setExpandedItems}
+                    className="w-full space-y-2"
+                  >
+                    {categories
+                      .filter(cat => cat.parentId === submenu.id)
+                      .map(category => (
+                        <AccordionItem
+                          key={category.id}
+                          value={`${category.id}-child`}
+                          className="border rounded-lg shadow-sm bg-card"
+                        >
+                          <AccordionTrigger className="px-4 hover:no-underline">
+                            <div className="flex items-center gap-3">
+                              <Tag className="h-4 w-4 text-muted-foreground" />
+                              <span>{category.name}</span>
+                            </div>
+                          </AccordionTrigger>
+                          <AccordionContent className="px-4 pb-3">
+                            <CategoryEditor category={category} />
+                          </AccordionContent>
+                        </AccordionItem>
+                      ))}
+                  </Accordion>
                 </div>
               </AccordionContent>
             </AccordionItem>
@@ -96,11 +159,11 @@ function CategoryList({ categories }: { categories: Category[] }) {
 }
 
 // Placeholder for CategoryEditor component -  needs to be defined elsewhere
-function CategoryEditor({category}: {category:Category}) {
-    return <div>Edit Category: {category.name}</div>
+function CategoryEditor({ category }: { category: Category }) {
+  return <div>Edit Category: {category.name}</div>
 }
 
-export default function Settings() {
+function SettingsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("existing");
@@ -483,3 +546,5 @@ export default function Settings() {
     </div>
   );
 }
+
+export default SettingsPage;
