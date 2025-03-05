@@ -170,6 +170,8 @@ function CategoryEditor({ category }: { category: Category }) {
       questions: category.questions?.join('\n') || "",
       serviceSummary: category.serviceSummary || "",
       serviceImageUrl: category.serviceImageUrl || "",
+      displayOrder: category.displayOrder || 0,
+      newRow: category.newRow || false,
       discordCategories: [],
       discordRoles: []
     }
@@ -216,7 +218,9 @@ function CategoryEditor({ category }: { category: Category }) {
         serviceSummary: data.serviceSummary,
         serviceImageUrl: data.serviceImageUrl,
         parentId: data.parentId,
-        isSubmenu: data.isSubmenu
+        isSubmenu: data.isSubmenu,
+        displayOrder: data.displayOrder,
+        newRow: data.newRow
       };
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
@@ -241,6 +245,44 @@ function CategoryEditor({ category }: { category: Category }) {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <div className="flex items-center gap-4 mb-4">
+          <FormField
+            control={form.control}
+            name="displayOrder"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Display Order</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    {...field}
+                    onChange={(e) => field.onChange(parseInt(e.target.value))}
+                    className="w-24"
+                  />
+                </FormControl>
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="newRow"
+            render={({ field }) => (
+              <FormItem className="flex items-center space-x-2">
+                <FormControl>
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={field.onChange}
+                    className="h-4 w-4"
+                  />
+                </FormControl>
+                <FormLabel className="m-0">Start New Row</FormLabel>
+              </FormItem>
+            )}
+          />
+        </div>
+
         <FormField
           control={form.control}
           name="name"
