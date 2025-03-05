@@ -196,6 +196,7 @@ export class MemStorage implements IStorage {
       // If it's a submenu, use empty/null values for these fields
       discordRoleId: insertCategory.isSubmenu ? "" : (insertCategory.discordRoleId || ""),
       discordCategoryId: insertCategory.isSubmenu ? "" : (insertCategory.discordCategoryId || ""),
+      transcriptCategoryId: insertCategory.transcriptCategoryId || null,
       questions: insertCategory.isSubmenu ? [] : (insertCategory.questions || []),
       serviceSummary: insertCategory.isSubmenu ? "" : (insertCategory.serviceSummary || "Our team is ready to assist you!"),
       serviceImageUrl: insertCategory.isSubmenu ? null : (insertCategory.serviceImageUrl || null),
@@ -216,9 +217,11 @@ export class MemStorage implements IStorage {
       id, 
       questions: Array.isArray(updateData.questions) ? updateData.questions : category.questions,
       parentId: updateData.parentId === undefined ? category.parentId : updateData.parentId,
-      isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu
+      isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu,
+      transcriptCategoryId: updateData.transcriptCategoryId || category.transcriptCategoryId
     };
 
+    console.log("Updating category in storage:", updatedCategory);
     this.categories.set(id, updatedCategory);
     return updatedCategory;
   }

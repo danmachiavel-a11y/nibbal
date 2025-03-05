@@ -39,13 +39,15 @@ export class BridgeManager {
       }
 
       // Get category for transcript category ID
-      const category = await storage.getCategory(ticket.categoryId);
+      const category = await storage.getCategory(ticket.categoryId!);
+      log(`Moving ticket ${ticketId} to transcripts. Category:`, category);
+
       if (!category?.transcriptCategoryId) {
         throw new Error("No transcript category set for this service");
       }
 
       // Move channel to transcripts category
-      const channel = await this.discordBot.moveChannelToCategory(
+      await this.discordBot.moveChannelToCategory(
         ticket.discordChannelId,
         category.transcriptCategoryId
       );
