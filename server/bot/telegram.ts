@@ -442,17 +442,9 @@ export class TelegramBot {
   async start() {
     try {
       log("Starting Telegram bot...");
-      await this.bot.launch({
-        // Add error handling for the launch process
-        onLaunch: () => {
-          this._isConnected = true;
-          log("Telegram bot started and connected successfully");
-        },
-        onError: (error) => {
-          log(`Telegram bot error: ${error}`, "error");
-          this._isConnected = false;
-        }
-      });
+      await this.bot.launch();
+      this._isConnected = true;
+      log("Telegram bot started and connected successfully");
     } catch (error) {
       log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
@@ -483,9 +475,13 @@ export class TelegramBot {
   }
 
   async sendMessage(chatId: number, message: string) {
-    if (!this.getIsConnected()) {
-      throw new Error("Telegram bot is not connected");
+    try {
+      // Don't block on isConnected check since the bot can still send messages
+      // even if it shows as not connected in the UI
+      await this.bot.telegram.sendMessage(chatId, message);
+    } catch (error) {
+      log(`Error sending Telegram message: ${error}`, "error");
+      throw error;
     }
-    await this.bot.telegram.sendMessage(chatId, message);
   }
 }

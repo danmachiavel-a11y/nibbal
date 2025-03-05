@@ -400,43 +400,43 @@ export class DiscordBot {
     });
 
     this.client.on("messageCreate", async (message) => {
-      // Ignore bot messages to prevent loops
-      if (message.author.bot) return;
-      if (message.content.startsWith('.')) return;
+        // Ignore bot messages to prevent loops
+        if (message.author.bot) return;
+        if (message.content.startsWith('.')) return;
 
-      const ticket = await storage.getTicketByDiscordChannel(message.channelId);
-      if (!ticket) {
-        log(`No ticket found for channel ${message.channelId}`);
-        return;
-      }
-
-      log(`Processing Discord message for ticket ${ticket.id} in channel ${message.channelId}`);
-
-      try {
-        // Store message in database
-        const discordUser = await storage.getUserByDiscordId(message.author.id);
-        if (discordUser) {
-          await storage.createMessage({
-            ticketId: ticket.id,
-            content: message.content,
-            authorId: discordUser.id,
-            platform: "discord",
-            timestamp: new Date()
-          });
-          log(`Stored Discord message in database for ticket ${ticket.id}`);
+        const ticket = await storage.getTicketByDiscordChannel(message.channelId);
+        if (!ticket) {
+          log(`No ticket found for channel ${message.channelId}`);
+          return;
         }
 
-        // Forward to Telegram with the user's display name
-        await this.bridge.forwardToTelegram(
-          message.content,
-          ticket.id,
-          message.member?.displayName || message.author.username || "Unknown Discord User"
-        );
+        log(`Processing Discord message for ticket ${ticket.id} in channel ${message.channelId}`);
 
-      } catch (error) {
-        log(`Error handling Discord message: ${error}`, "error");
-      }
-    });
+        try {
+          // Store message in database
+          const discordUser = await storage.getUserByDiscordId(message.author.id);
+          if (discordUser) {
+            await storage.createMessage({
+              ticketId: ticket.id,
+              content: message.content,
+              authorId: discordUser.id,
+              platform: "discord",
+              timestamp: new Date()
+            });
+            log(`Stored Discord message in database for ticket ${ticket.id}`);
+          }
+
+          // Forward to Telegram with the user's display name
+          await this.bridge.forwardToTelegram(
+            message.content,
+            ticket.id,
+            message.member?.displayName || message.author.username || "Unknown Discord User"
+          );
+
+        } catch (error) {
+          log(`Error handling Discord message: ${error}`, "error");
+        }
+      });
 
     // Handle message edits
     this.client.on("messageUpdate", async (oldMessage, newMessage) => {

@@ -11,19 +11,10 @@ export async function registerRoutes(app: Express) {
   log("Setting up HTTP server...");
   const httpServer = createServer(app);
 
-  // Initialize bridge after routes are registered
-  process.nextTick(async () => {
-    log("Initializing bot bridge...");
-    bridge = new BridgeManager();
-    try {
-      await bridge.start();
-      log("Bot bridge initialized successfully");
-    } catch (error) {
-      log(`Error initializing bots: ${error.message}`, "error");
-    }
-  });
+  // Create the bridge manager but don't start bots yet
+  bridge = new BridgeManager();
 
-  // Bot Config Routes
+  // Register all routes first
   app.get("/api/bot-config", async (req, res) => {
     const config = await storage.getBotConfig();
     res.json(config);
@@ -398,5 +389,17 @@ export async function registerRoutes(app: Express) {
   });
 
   log("Routes registered successfully");
+
+  // Start the bots after server is created
+  setTimeout(async () => {
+    try {
+      log("Initializing bot bridge...");
+      await bridge?.start();
+      log("Bot bridge initialized successfully");
+    } catch (error) {
+      log(`Error initializing bots: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }, 1000);
+
   return httpServer;
 }
