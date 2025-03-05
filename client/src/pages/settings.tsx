@@ -15,6 +15,8 @@ import { apiRequest } from "@/lib/queryClient";
 import type { Category, BotConfig } from "@shared/schema";
 import { CategoryGrid } from "@/components/CategoryGrid";
 import { useEffect } from "react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { ChevronDown, ChevronRight, Edit, Trash } from "lucide-react";
 
 const botConfigSchema = z.object({
   welcomeMessage: z.string(),
@@ -52,7 +54,7 @@ export function CategoryEditor({ category }: { category: Category }) {
   });
 
   // Filter for submenus, excluding the current category
-  const submenus = categories?.filter(cat => 
+  const submenus = categories?.filter(cat =>
     cat.isSubmenu && cat.id !== category.id
   ) || [];
 
@@ -452,6 +454,74 @@ export function CategoryEditor({ category }: { category: Category }) {
   );
 }
 
+export function CategoryList({ categories }: { categories: Category[] }) {
+  const submenus = categories.filter(cat => cat.isSubmenu);
+  const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
+
+  return (
+    <div className="space-y-4">
+      <div className="mb-4">
+        <h3 className="text-lg font-semibold">Root Categories</h3>
+        <Accordion type="multiple" className="w-full">
+          {rootCategories.map(category => (
+            <AccordionItem key={category.id} value={category.id.toString()}>
+              <AccordionTrigger className="hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <span>{category.name}</span>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <CategoryEditor category={category} />
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </div>
+
+      <div>
+        <h3 className="text-lg font-semibold mb-2">Submenus</h3>
+        <Accordion type="multiple" className="w-full">
+          {submenus.map(submenu => (
+            <AccordionItem key={submenu.id} value={submenu.id.toString()}>
+              <AccordionTrigger className="hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <span>{submenu.name}</span>
+                  <span className="text-sm text-muted-foreground">
+                    ({categories.filter(cat => cat.parentId === submenu.id).length} categories)
+                  </span>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="pl-4 border-l-2 border-border">
+                  <CategoryEditor category={submenu} />
+
+                  <div className="mt-4">
+                    <h4 className="text-sm font-medium mb-2">Submenu Categories</h4>
+                    <Accordion type="multiple" className="w-full">
+                      {categories
+                        .filter(cat => cat.parentId === submenu.id)
+                        .map(category => (
+                          <AccordionItem key={category.id} value={category.id.toString()}>
+                            <AccordionTrigger className="hover:no-underline">
+                              {category.name}
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <CategoryEditor category={category} />
+                            </AccordionContent>
+                          </AccordionItem>
+                        ))}
+                    </Accordion>
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -464,8 +534,6 @@ export default function Settings() {
     queryKey: ["/api/categories"]
   });
 
-  const submenus = categories?.filter(cat => cat.isSubmenu) || [];
-  const rootCategories = categories?.filter(cat => !cat.parentId && !cat.isSubmenu) || [];
 
   const botConfigForm = useForm({
     resolver: zodResolver(botConfigSchema),
@@ -488,7 +556,7 @@ export default function Settings() {
       isSubmenu: false,
       parentId: null,
       discordCategories: [],
-      discordRoles: [] 
+      discordRoles: []
     }
   });
 
@@ -509,7 +577,7 @@ export default function Settings() {
       }
     };
     loadDiscordCategories();
-  }, []); 
+  }, []);
 
   async function onBotConfigSubmit(data: z.infer<typeof botConfigSchema>) {
     try {
@@ -688,7 +756,7 @@ export default function Settings() {
                               onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
                             >
                               <option value="">None (Root Level)</option>
-                              {submenus.map(submenu => (
+                              {categories?.filter(cat => cat.isSubmenu).map(submenu => (
                                 <option key={submenu.id} value={submenu.id}>
                                   {submenu.name}
                                 </option>
@@ -912,96 +980,24 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {categories && categories.length > 0 && (
-          <Tabs defaultValue="root" className="w-full">
-            <TabsList>
-              <TabsTrigger value="root">Root Menu</TabsTrigger>
-              {submenus.map(submenu => (
-                <TabsTrigger key={submenu.id} value={submenu.id.toString()}>
-                  {submenu.name}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-
-            <TabsContent value="root">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Root Menu Layout</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CategoryGrid
-                    categories={rootCategories}
-                    onReorder={async (newCategories) => {
-                      try {
-                        for (let i = 0; i < newCategories.length; i++) {
-                          const res = await apiRequest("PATCH", `/api/categories/${newCategories[i].id}`, {
-                            displayOrder: i
-                          });
-                          if (!res.ok) throw new Error("Failed to update category order");
-                        }
-
-                        queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-                      } catch (error) {
-                        toast({
-                          title: "Error",
-                          description: "Failed to update category order",
-                          variant: "destructive"
-                        });
-                      }
-                    }}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {submenus.map(submenu => (
-              <TabsContent key={submenu.id} value={submenu.id.toString()}>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>{submenu.name} Layout</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <CategoryGrid
-                      categories={categories.filter(cat => cat.parentId === submenu.id)}
-                      onReorder={async (newCategories) => {
-                        try {
-                          for (let i = 0; i < newCategories.length; i++) {
-                            const res = await apiRequest("PATCH", `/api/categories/${newCategories[i].id}`, {
-                              displayOrder: i
-                            });
-                            if (!res.ok) throw new Error("Failed to update category order");
-                          }
-
-                          queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-                        } catch (error) {
-                          toast({
-                            title: "Error",
-                            description: "Failed to update category order",
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                    />
-                  </CardContent>
-                </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Categories & Submenus</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Tabs defaultValue="existing" className="w-full">
+              <TabsList>
+                <TabsTrigger value="existing">Existing Categories</TabsTrigger>
+                <TabsTrigger value="new">Create New</TabsTrigger>
+              </TabsList>
+              <TabsContent value="existing">
+                {categories && <CategoryList categories={categories} />}
               </TabsContent>
-            ))}
-          </Tabs>
-        )}
-        {categories && categories.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Existing Categories</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {categories.map(category => (
-                  <CategoryEditor key={category.id} category={category} />
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              <TabsContent value="new">
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
