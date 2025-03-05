@@ -39,7 +39,7 @@ export class DiscordBot {
     this.client.on("ready", async () => {
       log("Discord bot ready");
 
-      // Register the /paid slash command
+      // Register slash commands
       try {
         await this.client.application?.commands.create({
           name: 'paid',
@@ -55,9 +55,16 @@ export class DiscordBot {
             }
           ]
         });
-        log("Registered /paid slash command");
+
+        await this.client.application?.commands.create({
+          name: 'close',
+          description: 'Close the ticket and move it to transcripts',
+          type: ApplicationCommandType.ChatInput
+        });
+
+        log("Registered slash commands");
       } catch (error) {
-        log(`Error registering slash command: ${error}`, "error");
+        log(`Error registering slash commands: ${error}`, "error");
       }
     });
 
@@ -80,7 +87,6 @@ export class DiscordBot {
         try {
           await storage.updateTicketPayment(ticket.id, amount, interaction.user.id);
 
-          // Create an embed for the payment confirmation
           const embed = new EmbedBuilder()
             .setColor(0x00FF00)
             .setTitle('💰 Payment Recorded')
@@ -96,6 +102,65 @@ export class DiscordBot {
           log(`Error processing payment: ${error}`, "error");
           await interaction.reply({
             content: "Failed to process payment. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+
+      if (interaction.commandName === 'close') {
+        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+
+        if (!ticket) {
+          await interaction.reply({
+            content: "This command can only be used in ticket channels!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Get category for transcript category ID
+          const category = await storage.getCategory(ticket.categoryId);
+          if (!category?.transcriptCategoryId) {
+            await interaction.reply({
+              content: "No transcript category set for this service. Please set it in the dashboard.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          // Mark ticket as closed
+          await storage.updateTicketStatus(ticket.id, "closed");
+
+          // Move channel to transcripts category
+          const channel = await this.client.channels.fetch(interaction.channelId);
+          if (!(channel instanceof TextChannel)) {
+            throw new Error("Invalid channel type");
+          }
+
+          const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
+          if (!(transcriptCategory instanceof CategoryChannel)) {
+            throw new Error("Invalid transcript category");
+          }
+
+          await channel.setParent(transcriptCategory.id);
+
+          // Send confirmation embed
+          const embed = new EmbedBuilder()
+            .setColor(0x00FF00)
+            .setTitle('✅ Ticket Closed')
+            .setDescription(`Ticket closed by ${interaction.user.username}`)
+            .addFields(
+              { name: 'Status', value: 'Closed', inline: true },
+              { name: 'Moved to', value: transcriptCategory.name, inline: true }
+            )
+            .setTimestamp();
+
+          await interaction.reply({ embeds: [embed] });
+        } catch (error) {
+          log(`Error closing ticket: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to close ticket. Please try again.",
             ephemeral: true
           });
         }

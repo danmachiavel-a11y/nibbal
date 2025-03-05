@@ -25,6 +25,7 @@ const categorySchema = z.object({
   isSubmenu: z.boolean().optional(),
   discordRoleId: z.string().optional(),
   discordCategoryId: z.string().optional(),
+  transcriptCategoryId: z.string().optional(),
   questions: z.string().min(1, "At least one question is required"),
   serviceSummary: z.string().optional(),
   serviceImageUrl: z.string().nullable().optional(),
@@ -48,6 +49,7 @@ export function CategoryEditor({ category }: { category: Category }) {
       name: category.name,
       discordRoleId: category.discordRoleId,
       discordCategoryId: category.discordCategoryId,
+      transcriptCategoryId: category.transcriptCategoryId || "",
       questions: category.questions.join('\n'),
       serviceSummary: category.serviceSummary || "Our team is ready to assist you!",
       serviceImageUrl: category.serviceImageUrl || "",
@@ -65,6 +67,7 @@ export function CategoryEditor({ category }: { category: Category }) {
         isSubmenu: category.isSubmenu,
         discordRoleId: data.discordRoleId || "",
         discordCategoryId: data.discordCategoryId || "",
+        transcriptCategoryId: data.transcriptCategoryId || "",
         questions,
         serviceSummary: data.serviceSummary || category.serviceSummary,
         serviceImageUrl: data.serviceImageUrl,
@@ -217,6 +220,22 @@ export function CategoryEditor({ category }: { category: Category }) {
 
             <FormField
               control={form.control}
+              name="transcriptCategoryId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Discord Transcript Category ID</FormLabel>
+                  <FormDescriptionUI>
+                    The category where closed tickets will be moved
+                  </FormDescriptionUI>
+                  <FormControl>
+                    <Input {...field} value={field.value || ''} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="questions"
               render={({ field }) => (
                 <FormItem>
@@ -301,6 +320,7 @@ export default function Settings() {
       name: "",
       discordRoleId: "",
       discordCategoryId: "",
+      transcriptCategoryId: "",
       questions: "",
       serviceSummary: "Our team is ready to assist you!",
       serviceImageUrl: "",
@@ -338,6 +358,7 @@ export default function Settings() {
         isSubmenu: data.isSubmenu || false,
         discordRoleId: data.discordRoleId || "",
         discordCategoryId: data.discordCategoryId || "",
+        transcriptCategoryId: data.transcriptCategoryId || "",
         questions,
         serviceSummary: data.serviceSummary || "Our team is ready to assist you!",
         serviceImageUrl: data.serviceImageUrl || null,
@@ -517,6 +538,22 @@ export default function Settings() {
                           <FormLabel>Discord Category ID</FormLabel>
                           <FormControl>
                             <Input {...field} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={categoryForm.control}
+                      name="transcriptCategoryId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Discord Transcript Category ID</FormLabel>
+                          <FormDescriptionUI>
+                            The category where closed tickets will be moved
+                          </FormDescriptionUI>
+                          <FormControl>
+                            <Input {...field} value={field.value || ''} />
                           </FormControl>
                         </FormItem>
                       )}

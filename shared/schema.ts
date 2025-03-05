@@ -22,6 +22,7 @@ const categoriesConfig = {
   name: text("name").notNull(),
   discordRoleId: text("discord_role_id").notNull(),
   discordCategoryId: text("discord_category_id").notNull(),
+  transcriptCategoryId: text("transcript_category_id"), // Added transcript category ID
   questions: text("questions").array().notNull(),
   serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
   serviceImageUrl: text("service_image_url"),
