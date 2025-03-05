@@ -15,13 +15,14 @@ interface UserState {
 
 export class TelegramBot {
   private bot: Telegraf;
-  private userStates: Map<number, UserState>;
   private bridge: BridgeManager;
+  private userStates: Map<number, UserState>;
+  private isConnected: boolean = false;
 
   constructor(bridge: BridgeManager) {
-    this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-    this.userStates = new Map();
+    this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
     this.bridge = bridge;
+    this.userStates = new Map();
     this.setupHandlers();
   }
 
@@ -434,7 +435,24 @@ export class TelegramBot {
 
   async start() {
     await this.bot.launch();
-    console.log("Telegram bot started");
+    this.isConnected = true;
+    log("Telegram bot started");
+  }
+
+  async stop() {
+    try {
+      // Gracefully stop the bot
+      await this.bot.stop();
+      this.isConnected = false;
+      log("Telegram bot stopped");
+    } catch (error) {
+      log(`Error stopping Telegram bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  isConnected() {
+    return this.isConnected;
   }
 
   async sendMessage(chatId: number, message: string) {

@@ -5,46 +5,21 @@ import { BridgeManager } from "./bot/bridge";
 import { z } from "zod";
 import { log } from "./vite";
 
+let bridge: BridgeManager | null = null;
+
 export async function registerRoutes(app: Express) {
   log("Setting up HTTP server...");
   const httpServer = createServer(app);
 
-  // Initialize bot bridge asynchronously
-  log("Initializing bot bridge...");
-  const bridge = new BridgeManager();
-  bridge.start().catch(error => {
-    log(`Error initializing bots: ${error.message}`, "error");
-  });
-
-  // Add new route to fetch Discord categories
-  app.get("/api/discord/categories", async (req, res) => {
+  // Initialize bridge after routes are registered
+  process.nextTick(async () => {
+    log("Initializing bot bridge...");
+    bridge = new BridgeManager();
     try {
-      const discordBot = bridge.getDiscordBot();
-      if (!discordBot) {
-        throw new Error("Discord bot not initialized");
-      }
-
-      const categories = await discordBot.getCategories();
-      res.json(categories);
+      await bridge.start();
+      log("Bot bridge initialized successfully");
     } catch (error) {
-      log(`Error fetching Discord categories: ${error}`, "error");
-      res.status(500).json({ message: "Failed to fetch Discord categories" });
-    }
-  });
-
-  // Add new route to fetch Discord roles
-  app.get("/api/discord/roles", async (req, res) => {
-    try {
-      const discordBot = bridge.getDiscordBot();
-      if (!discordBot) {
-        throw new Error("Discord bot not initialized");
-      }
-
-      const roles = await discordBot.getRoles();
-      res.json(roles);
-    } catch (error) {
-      log(`Error fetching Discord roles: ${error}`, "error");
-      res.status(500).json({ message: "Failed to fetch Discord roles" });
+      log(`Error initializing bots: ${error.message}`, "error");
     }
   });
 
@@ -67,6 +42,118 @@ export async function registerRoutes(app: Express) {
 
     const config = await storage.updateBotConfig(result.data);
     res.json(config);
+  });
+
+  // Bot token configuration and status endpoints
+  app.get("/api/bot/telegram/status", async (req, res) => {
+    try {
+      if (!bridge) {
+        return res.json({ connected: false });
+      }
+      const telegramBot = bridge.getTelegramBot();
+      res.json({
+        connected: !!telegramBot?.isConnected(),
+      });
+    } catch (error) {
+      log(`Error checking Telegram bot status: ${error}`, "error");
+      res.status(500).json({ message: "Failed to check Telegram bot status" });
+    }
+  });
+
+  app.get("/api/bot/discord/status", async (req, res) => {
+    try {
+      if (!bridge) {
+        return res.json({ connected: false });
+      }
+      const discordBot = bridge.getDiscordBot();
+      res.json({
+        connected: !!discordBot?.isReady(),
+      });
+    } catch (error) {
+      log(`Error checking Discord bot status: ${error}`, "error");
+      res.status(500).json({ message: "Failed to check Discord bot status" });
+    }
+  });
+
+  // Update bot tokens
+  app.patch("/api/bot/config", async (req, res) => {
+    try {
+      const schema = z.object({
+        telegramToken: z.string().optional(),
+        discordToken: z.string().optional(),
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid request body" });
+      }
+
+      // Store tokens in environment variables
+      if (result.data.telegramToken) {
+        process.env.TELEGRAM_BOT_TOKEN = result.data.telegramToken;
+        log("Updated Telegram bot token");
+      }
+      if (result.data.discordToken) {
+        process.env.DISCORD_BOT_TOKEN = result.data.discordToken;
+        log("Updated Discord bot token");
+      }
+
+      // Restart the bridge with new tokens
+      if (bridge) {
+        log("Restarting bots with new configuration...");
+        await bridge.restart();
+        log("Bots restarted successfully");
+      } else {
+        // If bridge doesn't exist, create and start it
+        log("Creating new bot bridge...");
+        bridge = new BridgeManager();
+        await bridge.start();
+        log("New bot bridge started successfully");
+      }
+
+      res.json({ message: "Bot configuration updated successfully" });
+    } catch (error) {
+      log(`Error updating bot configuration: ${error}`, "error");
+      res.status(500).json({ message: "Failed to update bot configuration" });
+    }
+  });
+
+  // Add new route to fetch Discord categories
+  app.get("/api/discord/categories", async (req, res) => {
+    try {
+      if (!bridge) {
+        return res.status(503).json({ message: "Bot bridge not initialized" });
+      }
+      const discordBot = bridge.getDiscordBot();
+      if (!discordBot) {
+        throw new Error("Discord bot not initialized");
+      }
+
+      const categories = await discordBot.getCategories();
+      res.json(categories);
+    } catch (error) {
+      log(`Error fetching Discord categories: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch Discord categories" });
+    }
+  });
+
+  // Add new route to fetch Discord roles
+  app.get("/api/discord/roles", async (req, res) => {
+    try {
+      if (!bridge) {
+        return res.status(503).json({ message: "Bot bridge not initialized" });
+      }
+      const discordBot = bridge.getDiscordBot();
+      if (!discordBot) {
+        throw new Error("Discord bot not initialized");
+      }
+
+      const roles = await discordBot.getRoles();
+      res.json(roles);
+    } catch (error) {
+      log(`Error fetching Discord roles: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch Discord roles" });
+    }
   });
 
   // Category Routes
@@ -221,8 +308,8 @@ export async function registerRoutes(app: Express) {
             // Check each category for paid tickets
             for (const category of categories) {
               const tickets = await storage.getTicketsByCategory(category.id);
-              paidTicketCount += tickets.filter(t => 
-                t.userId === user?.id && 
+              paidTicketCount += tickets.filter(t =>
+                t.userId === user?.id &&
                 t.status === "paid"
               ).length;
             }

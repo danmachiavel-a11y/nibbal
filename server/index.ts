@@ -38,54 +38,65 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // First, create HTTP server and register routes
+  log("Setting up HTTP server...");
   const server = await registerRoutes(app);
 
-  // Create default test category
-  log("Creating default test category...");
-  const existingCategories = await storage.getCategories();
-  if (existingCategories.length === 0) {
-    const testCategory = {
-      name: 'Test Service',
-      discordRoleId: '1346324056244490363',
-      discordCategoryId: '1345983179353362447',
-      transcriptCategoryId: '1346383603365580820',
-      questions: [
-        'What is your issue?',
-        'When did this start?',
-        'Have you tried any solutions?'
-      ],
-      serviceSummary: 'Welcome to our Test Service! Our team specializes in handling test-related issues.',
-      serviceImageUrl: null
-    };
-    await storage.createCategory(testCategory);
-    log("Default test category created with data:", JSON.stringify(testCategory, null, 2));
-  }
-
+  // Add error handler
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
+    log(`Error handler caught: ${err.message}`, "error");
     res.status(status).json({ message });
-    throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
+  // Setup Vite or serve static files
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on port 5000
-  // this serves both the API and the client
-  const port = 5000;
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
+  // Start the server first
+  await new Promise<void>((resolve) => {
+    server.listen({
+      port: 5000,
+      host: "0.0.0.0",
+      reusePort: true,
+    }, () => {
+      log(`Server listening on port 5000`);
+      resolve();
+    });
   });
-})();
+
+  // Create default test category after server is up
+  try {
+    log("Creating default test category...");
+    const existingCategories = await storage.getCategories();
+    if (existingCategories.length === 0) {
+      const testCategory = {
+        name: 'Test Service',
+        discordRoleId: '1346324056244490363',
+        discordCategoryId: '1345983179353362447',
+        transcriptCategoryId: '1346383603365580820',
+        questions: [
+          'What is your issue?',
+          'When did this start?',
+          'Have you tried any solutions?'
+        ],
+        serviceSummary: 'Welcome to our Test Service! Our team specializes in handling test-related issues.',
+        serviceImageUrl: null
+      };
+      await storage.createCategory(testCategory);
+      log("Default test category created with data:", JSON.stringify(testCategory, null, 2));
+    }
+  } catch (error) {
+    log(`Error setting up default category: ${error}`, "error");
+    // Don't throw error here, let the server continue running
+  }
+
+  log("Server initialization completed successfully");
+})().catch(error => {
+  log(`Fatal error during startup: ${error}`, "error");
+  process.exit(1);
+});

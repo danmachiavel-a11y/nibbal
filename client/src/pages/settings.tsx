@@ -550,6 +550,23 @@ function SettingsPage() {
     }
   });
 
+  const botConfigForm = useForm({
+    defaultValues: {
+      telegramToken: "",
+      discordToken: ""
+    }
+  });
+
+  const onBotConfigSubmit = async (data: any) => {
+    try {
+      await apiRequest("PATCH", "/api/bot/config", data);
+      toast({ title: "Success", description: "Bot configuration saved successfully!" });
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to save bot configuration", variant: "destructive" });
+    }
+  };
+
+
   useEffect(() => {
     const loadDiscordData = async () => {
       try {
@@ -627,6 +644,7 @@ function SettingsPage() {
             <TabsList>
               <TabsTrigger value="existing">Existing Categories</TabsTrigger>
               <TabsTrigger value="new">Create New</TabsTrigger>
+              <TabsTrigger value="bot-config">Bot Configuration</TabsTrigger>
             </TabsList>
 
             <TabsContent value="existing">
@@ -897,6 +915,108 @@ function SettingsPage() {
                       )}
 
                       <Button type="submit">Create {categoryForm.watch("isSubmenu") ? "Submenu" : "Category"}</Button>
+                    </form>
+                  </Form>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="bot-config">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Bot Configuration</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Form {...botConfigForm}>
+                    <form onSubmit={botConfigForm.handleSubmit(onBotConfigSubmit)} className="space-y-4">
+                      <FormField
+                        control={botConfigForm.control}
+                        name="telegramToken"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Telegram Bot Token</FormLabel>
+                            <FormDescription>
+                              Enter your Telegram bot token. You can get this from @BotFather on Telegram.
+                            </FormDescription>
+                            <div className="flex space-x-2">
+                              <FormControl>
+                                <Input type="password" {...field} />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    const res = await apiRequest("GET", "/api/bot/telegram/status");
+                                    if (!res.ok) throw new Error("Failed to check Telegram bot status");
+                                    const status = await res.json();
+                                    toast({
+                                      title: "Telegram Bot Status",
+                                      description: status.connected ? "Connected" : "Not Connected",
+                                      variant: status.connected ? "default" : "destructive"
+                                    });
+                                  } catch (error) {
+                                    toast({
+                                      title: "Error",
+                                      description: "Failed to check Telegram bot status",
+                                      variant: "destructive"
+                                    });
+                                  }
+                                }}
+                              >
+                                Check Status
+                              </Button>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={botConfigForm.control}
+                        name="discordToken"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Discord Bot Token</FormLabel>
+                            <FormDescription>
+                              Enter your Discord bot token. You can get this from the Discord Developer Portal.
+                            </FormDescription>
+                            <div className="flex space-x-2">
+                              <FormControl>
+                                <Input type="password" {...field} />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    const res = await apiRequest("GET", "/api/bot/discord/status");
+                                    if (!res.ok) throw new Error("Failed to check Discord bot status");
+                                    const status = await res.json();
+                                    toast({
+                                      title: "Discord Bot Status",
+                                      description: status.connected ? "Connected" : "Not Connected",
+                                      variant: status.connected ? "default" : "destructive"
+                                    });
+                                  } catch (error) {
+                                    toast({
+                                      title: "Error",
+                                      description: "Failed to check Discord bot status",
+                                      variant: "destructive"
+                                    });
+                                  }
+                                }}
+                              >
+                                Check Status
+                              </Button>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="flex justify-end space-x-2">
+                        <Button type="submit" size="sm">
+                          Save Bot Configuration
+                        </Button>
+                      </div>
                     </form>
                   </Form>
                 </CardContent>

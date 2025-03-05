@@ -31,6 +31,29 @@ export class BridgeManager {
     }
   }
 
+  async restart() {
+    log("Restarting bots with new configuration...");
+    try {
+      // Stop both bots
+      await Promise.allSettled([
+        this.telegramBot.stop(),
+        this.discordBot.stop()
+      ]);
+
+      // Create new instances with updated tokens
+      this.telegramBot = new TelegramBot(this);
+      this.discordBot = new DiscordBot(this);
+
+      // Start both bots
+      await this.start();
+
+      log("Bots restarted successfully");
+    } catch (error) {
+      log(`Error restarting bots: ${error}`, "error");
+      throw error;
+    }
+  }
+
   async moveToTranscripts(ticketId: number): Promise<void> {
     try {
       const ticket = await storage.getTicket(ticketId);
@@ -184,6 +207,10 @@ export class BridgeManager {
     } catch (error) {
       log(`Error forwarding to Discord: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
+  }
+
+  getTelegramBot(): TelegramBot {
+    return this.telegramBot;
   }
 
   getDiscordBot(): DiscordBot {

@@ -584,4 +584,29 @@ export class DiscordBot {
   async start() {
     await this.client.login(process.env.DISCORD_BOT_TOKEN);
   }
+
+  async stop() {
+    try {
+      // Destroy all webhooks
+      for (const [_, webhook] of this.webhooks) {
+        try {
+          await webhook.delete();
+        } catch (error) {
+          log(`Error deleting webhook: ${error}`, "error");
+        }
+      }
+      this.webhooks.clear();
+
+      // Destroy the client
+      this.client.destroy();
+      log("Discord bot stopped");
+    } catch (error) {
+      log(`Error stopping Discord bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  isReady() {
+    return this.client.isReady();
+  }
 }
