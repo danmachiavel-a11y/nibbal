@@ -17,13 +17,19 @@ export class TelegramBot {
   private bot: Telegraf;
   private bridge: BridgeManager;
   private userStates: Map<number, UserState>;
-  private _isConnected: boolean = false;  // Renamed from isConnected
+  private _isConnected: boolean = false;
 
   constructor(bridge: BridgeManager) {
-    this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
-    this.bridge = bridge;
-    this.userStates = new Map();
-    this.setupHandlers();
+    try {
+      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+      this.bridge = bridge;
+      this.userStates = new Map();
+      this.setupHandlers();
+      log("Telegram bot instance created successfully");
+    } catch (error) {
+      log(`Error creating Telegram bot: ${error}`, "error");
+      throw error;
+    }
   }
 
   private setupHandlers() {
@@ -434,29 +440,52 @@ export class TelegramBot {
   }
 
   async start() {
-    await this.bot.launch();
-    this._isConnected = true;
-    log("Telegram bot started");
+    try {
+      log("Starting Telegram bot...");
+      await this.bot.launch({
+        // Add error handling for the launch process
+        onLaunch: () => {
+          this._isConnected = true;
+          log("Telegram bot started and connected successfully");
+        },
+        onError: (error) => {
+          log(`Telegram bot error: ${error}`, "error");
+          this._isConnected = false;
+        }
+      });
+    } catch (error) {
+      log(`Error starting Telegram bot: ${error}`, "error");
+      this._isConnected = false;
+      throw error;
+    }
   }
 
   async stop() {
     try {
-      // Gracefully stop the bot
+      log("Stopping Telegram bot...");
       await this.bot.stop();
       this._isConnected = false;
-      log("Telegram bot stopped");
+      log("Telegram bot stopped successfully");
     } catch (error) {
       log(`Error stopping Telegram bot: ${error}`, "error");
       throw error;
     }
   }
 
-  // Renamed method to avoid conflict
   getIsConnected(): boolean {
-    return this._isConnected;
+    try {
+      // Check if bot is actually running by attempting to get bot info
+      return this._isConnected && this.bot.botInfo !== undefined;
+    } catch (error) {
+      log(`Error checking Telegram bot connection: ${error}`, "error");
+      return false;
+    }
   }
 
   async sendMessage(chatId: number, message: string) {
+    if (!this.getIsConnected()) {
+      throw new Error("Telegram bot is not connected");
+    }
     await this.bot.telegram.sendMessage(chatId, message);
   }
 }
