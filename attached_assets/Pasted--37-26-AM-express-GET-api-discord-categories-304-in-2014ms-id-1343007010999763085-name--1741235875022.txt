@@ -1,0 +1,47 @@
+:37:26 AM [express] GET /api/discord/categories 304 in 2014ms :: [{"id":"1343007010999763085","name…
+4:37:27 AM [express] GET /api/discord/roles 304 in 1034ms :: [{"id":"1345980712741900309","name":"Te…
+Retrieved category 1: {
+  "id": 1,
+  "name": "Test Service",
+  "isSubmenu": false,
+  "parentId": null,
+  "displayOrder": 0,
+  "newRow": false,
+  "discordRoleId": "1346324056244490363",
+  "discordCategoryId": "1345983179353362447",
+  "transcriptCategoryId": "1346383603365580820",
+  "questions": [
+    "What is your issue?",
+    "When did this start?",
+    "Have you tried any solutions?"
+  ],
+  "serviceSummary": "Welcome to our Test Service! Our team specializes in handling test-related issues.",
+  "serviceImageUrl": null
+}
+4:37:30 AM [express] Starting Telegram bot (attempt 3/3)...
+4:37:30 AM [express] Starting Telegram bot...
+4:37:30 AM [warn] Stopping existing Telegram bot instance before starting a new one
+4:37:30 AM [warn] Error stopping existing bot: TypeError: this.bot.stopPolling is not a function
+4:37:30 AM [express] Creating new Telegram bot instance
+4:37:31 AM [error] Error starting Telegram bot: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+4:37:31 AM [error] 409 Conflict detected - another bot instance is already running
+4:37:31 AM [error] Telegram bot start attempt 3 failed: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+4:37:31 AM [error] Telegram bot failed to start after 3 attempts
+4:37:31 AM [error] Error reconnecting bots: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+4:37:31 AM [error] Health check failed: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Received message from user 1037841458. Current state: undefined
+4:37:38 AM [warn] Telegram bot is not connected
+4:37:38 AM [express] Bot disconnected, attempting to reconnect...
+Received message from user 1037841458. Current state: undefined
+4:37:43 AM [express] Attempting to reconnect Telegram bot...
+4:37:48 AM [express] Starting Telegram bot (attempt 1/3)...
+4:37:48 AM [express] Starting Telegram bot...
+4:37:48 AM [warn] Stopping existing Telegram bot instance before starting a new one
+4:37:48 AM [warn] Error stopping existing bot: TypeError: this.bot.stopPolling is not a function
+4:37:48 AM [express] Creating new Telegram bot instance
+4:37:48 AM [error] Error starting Telegram bot: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+4:37:48 AM [error] 409 Conflict detected - another bot instance is already running
+4:37:48 AM [error] Telegram bot start attempt 3 failed: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+4:37:48 AM [error] Telegram bot failed to start after 3 attempts
+4:37:48 AM [express] Bots initialization completed
+4:37:48 AM [express] Bot bridge initialized successfully

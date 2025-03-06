@@ -189,7 +189,7 @@ export class TelegramBot {
       if (this.bot) {
         log("Stopping existing Telegram bot instance before starting a new one", "warn");
         try {
-          await this.bot.stopPolling();
+          await this.bot.stop();
           await new Promise(resolve => setTimeout(resolve, 5000));
         } catch (stopError) {
           log(`Error stopping existing bot: ${stopError}`, "warn");
@@ -198,7 +198,7 @@ export class TelegramBot {
       }
 
       log("Creating new Telegram bot instance");
-      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
       await this.setupHandlers();
 
@@ -232,7 +232,6 @@ export class TelegramBot {
   async stop() {
     try {
       log("Stopping Telegram bot...");
-
       this.stopHeartbeat();
 
       if (this._isConnected && this.bot) {
