@@ -281,7 +281,7 @@ export class BridgeManager {
     }
   }
 
-  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string) {
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, imageUrl?: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
@@ -291,7 +291,7 @@ export class BridgeManager {
         return;
       }
 
-      await this.discordBot.sendMessage(ticket.discordChannelId, content, username, avatarUrl);
+      await this.discordBot.sendMessage(ticket.discordChannelId, content, username, avatarUrl, imageUrl);
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
       log(`Error forwarding to Discord: ${error instanceof Error ? error.message : String(error)}`, "error");

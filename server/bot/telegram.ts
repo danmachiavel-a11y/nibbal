@@ -336,6 +336,61 @@ export class TelegramBot {
         await this.handleQuestionnaireResponse(ctx, state);
       }
     });
+
+    // Add handler for photos
+    this.bot.on("photo", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      // Only handle photos for active tickets
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) return;
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("Please start a ticket first before sending photos.");
+        return;
+      }
+
+      try {
+        // Get the best quality photo
+        const photos = ctx.message.photo;
+        const bestPhoto = photos[photos.length - 1];
+        const file = await ctx.telegram.getFile(bestPhoto.file_id);
+        const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+
+        // Store message in database first
+        await storage.createMessage({
+          ticketId: activeTicket.id,
+          content: ctx.message.caption || "Image sent",
+          authorId: user.id,
+          platform: "telegram",
+          timestamp: new Date()
+        });
+
+        // Forward to Discord
+        await this.bridge.forwardToDiscord(
+          ctx.message.caption || "Sent an image:",
+          activeTicket.id,
+          ctx.from.first_name || ctx.from.username || "Telegram User",
+          imageUrl // This will be the avatar URL
+        );
+
+        // Also forward the actual image to Discord
+        await this.bridge.forwardToDiscord(
+          "",
+          activeTicket.id,
+          ctx.from.first_name || ctx.from.username || "Telegram User",
+          undefined,
+          imageUrl // This will be the image to send
+        );
+
+        log(`Successfully forwarded photo from Telegram to Discord for ticket ${activeTicket.id}`);
+      } catch (error) {
+        log(`Error handling photo message: ${error}`, "error");
+        await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
+      }
+    });
   }
 
   private async handleQuestionnaireResponse(ctx: Context, state: UserState) {

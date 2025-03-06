@@ -568,7 +568,7 @@ export class DiscordBot {
   }
 
   // Update sendMessage to use the new helper
-  async sendMessage(channelId: string, content: string, username: string, avatarUrl?: string, embed?: boolean): Promise<void> {
+  async sendMessage(channelId: string, content: string, username: string, avatarUrl?: string, imageUrl?: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 
@@ -577,6 +577,8 @@ export class DiscordBot {
         throw new Error(`Invalid channel type for channel ${channelId}`);
       }
 
+      // Send as embed - the embed param is missing from the edited code, assuming it should be there.
+      let embed = false; // Default to false, if no embed is sent
       if (embed) {
         // Send as embed
         const embedMessage = await channel.send({
@@ -595,12 +597,22 @@ export class DiscordBot {
         // Get or create webhook with proper caching
         const webhook = await this.getOrCreateWebhook(channel, avatarUrl);
 
-        // Send regular message via webhook
-        await webhook.send({
-          content,
+        // Prepare webhook message
+        const messageOptions: any = {
+          content: content || undefined,
           username,
           avatarURL: avatarUrl
-        });
+        };
+
+        // If imageUrl is provided, add it as an attachment
+        if (imageUrl) {
+          messageOptions.files = [{
+            attachment: imageUrl
+          }];
+        }
+
+        // Send regular message via webhook
+        await webhook.send(messageOptions);
       }
 
       log(`Successfully sent message to Discord channel ${channelId}`);
