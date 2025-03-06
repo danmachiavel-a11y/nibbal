@@ -834,8 +834,9 @@ export class TelegramBot {
         // Format answers for Discord before creating ticket
         const formattedAnswers = state.answers.map((answer, index) => {
           const question = category.questions[index];
-          return `**${question}**\n\`\`\`${answer}\`\`\`\n`;
-        }).join('\n');
+          const cleanAnswer = answer.replace(/^.*\n/, '').trim(); // Remove any question text from the answer
+          return `**${question}**\n\`\`\`${cleanAnswer}\`\`\``;
+        }).join('\n\n');
 
         // Create ticket with formatted answers
         state.answers = [formattedAnswers];
