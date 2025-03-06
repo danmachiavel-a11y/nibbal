@@ -798,13 +798,6 @@ export class TelegramBot {
     // Store the answer
     state.answers.push(ctx.message.text);
 
-    // Send confirmation of received answer with monospace formatting
-    await ctx.reply(
-      `Q: ${category.questions[state.currentQuestion]}\n` +
-      `A: \`${ctx.message.text}\``,
-      { parse_mode: 'MarkdownV2' }
-    );
-
     // Check if we have more questions
     if (state.currentQuestion < category.questions.length - 1) {
       // Move to next question
@@ -825,6 +818,13 @@ export class TelegramBot {
     } else {
       // All questions answered, create ticket
       try {
+        // Format answers for Discord before creating ticket
+        const formattedAnswers = state.answers.map((answer, index) =>
+          `Q: ${category.questions[index]}\nA: \`${answer}\``
+        );
+
+        // Create ticket with formatted answers
+        state.answers = formattedAnswers;
         await this.createTicket(ctx);
       } catch (error) {
         log(`Error creating ticket: ${error}`, "error");
@@ -958,8 +958,7 @@ export class TelegramBot {
 
     const user = await storage.getUserByTelegramId(userId.toString());
     if (user) {
-      const activeTicket = await storage.getActiveTicketByUserId(user.id);
-      if (activeTicket) {
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);if (activeTicket) {
         const activeCategory = await storage.getCategory(activeTicket.categoryId);
         await ctx.reply(
           `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\n` +
@@ -974,7 +973,7 @@ export class TelegramBot {
       // Initialize questionnaire state before sending anything
       this.setState(userId, {
         categoryId,
-        currentQuestion:0,
+        currentQuestion: 0,
         answers: [],
         inQuestionnaire: true
       });
