@@ -11,7 +11,7 @@ interface CommandCooldown {
 interface UserState {
   categoryId: number;
   currentQuestion: number;
-  answers: string[] | any[]; // Modified to accept both string[] and the new embed object
+  answers: string[] | any[];
   inQuestionnaire: boolean;
 }
 
@@ -831,23 +831,19 @@ export class TelegramBot {
       }
 
       try {
-        // Format answers for Discord before creating ticket
-        const formattedAnswers = state.answers.map((answer: string, index) => {
-          const question = category.questions[index];
-          const cleanAnswer = answer.replace(/^.*\n/, '').trim(); // Remove any question text from the answer
-          return {
-            name: question,
-            value: `\`\`\`${cleanAnswer}\`\`\``
-          };
-        });
-
-        // Create ticket with formatted answers
-        state.answers = [{
+        // Format answers for Discord
+        const formattedAnswers = [{
           type: 'embed',
-          title: '🎫 New Ticket Questionnaire',
+          title: '🎫 New Ticket Questions',
           color: 0x5865F2, // Discord blue color
-          fields: formattedAnswers
+          fields: category.questions.map((question, index) => ({
+            name: question,
+            value: `\`\`\`${state.answers[index].trim()}\`\`\``
+          }))
         }];
+
+        // Update state with formatted answers
+        state.answers = formattedAnswers;
         await this.createTicket(ctx);
       } catch (error) {
         log(`Error creating ticket: ${error}`, "error");
