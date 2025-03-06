@@ -527,4 +527,27 @@ export class TelegramBot {
       throw error;
     }
   }
+  async sendPhoto(chatId: number, imageUrl: string, caption?: string) {
+    try {
+      // Validate chat ID
+      if (!Number.isInteger(chatId) || chatId <= 0) {
+        throw new Error(`Invalid Telegram chat ID: ${chatId}`);
+      }
+
+      // Validate URL
+      if (!imageUrl || typeof imageUrl !== 'string') {
+        throw new Error('Invalid image URL');
+      }
+
+      await this.bot.telegram.sendPhoto(chatId, imageUrl, {
+        caption: caption,
+        parse_mode: 'Markdown'
+      });
+
+      log(`Successfully sent photo to Telegram chat: ${chatId}`);
+    } catch (error) {
+      log(`Error sending Telegram photo: ${error}`, "error");
+      throw error;
+    }
+  }
 }
