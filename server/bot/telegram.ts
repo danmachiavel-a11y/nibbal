@@ -672,16 +672,18 @@ export class TelegramBot {
     if (!category) return;
 
     const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-    const name = category.name;
+    const name = escapeMarkdown(category.name);
     const summary = category.serviceSummary;
 
-    const messageText = `${name}\n\n${summary}`;
+    // Format the message with proper Markdown escaping
+    const messageText = `*${name}*\n\n${summary}`;
 
     try {
       await ctx.replyWithPhoto(
         { url: photoUrl },
         {
-          caption: messageText
+          caption: messageText,
+          parse_mode: 'Markdown'  // Use 'Markdown' instead of 'MarkdownV2' for simpler formatting
         }
       );
 
@@ -721,7 +723,9 @@ export class TelegramBot {
     } catch (error) {
       log(`Error sending category photo: ${error}`, "error");
       // Fallback to text-only message if photo fails
-      await ctx.reply(messageText);
+      await ctx.reply(messageText, { 
+        parse_mode: 'Markdown'
+      });
     }
   }
 }
