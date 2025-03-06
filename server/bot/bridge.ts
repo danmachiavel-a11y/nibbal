@@ -230,8 +230,14 @@ export class BridgeManager {
         message += `A: ${answer}\n\n`;
       }
 
-      // Send and pin the formatted Q&A
-      await this.discordBot.sendMessage(channelId, message, "Ticket Bot", undefined, true);
+      // Send the formatted Q&A
+      await this.discordBot.sendMessage(
+        channelId,
+        message,
+        "Ticket Bot",
+        undefined, // avatarUrl
+        undefined  // imageUrl
+      );
       log(`Ticket channel created: ${channelName}`);
     } catch (error) {
       log(`Error creating Discord channel: ${error}`, "error");

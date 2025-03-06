@@ -1,0 +1,18 @@
+}
+1:48:17 AM [error] Error starting Telegram bot: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:17 AM [error] Telegram bot start attempt 1 failed: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:22 AM [express] Starting Telegram bot...
+1:48:22 AM [error] Error starting Telegram bot: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:22 AM [error] Telegram bot start attempt 1 failed: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:27 AM [express] Starting Telegram bot...
+1:48:27 AM [error] Error starting Telegram bot: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:27 AM [error] Telegram bot start attempt 2 failed: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:32 AM [express] Starting Telegram bot...
+1:48:32 AM [error] Error starting Telegram bot: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:32 AM [error] Telegram bot start attempt 2 failed: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:37 AM [express] Starting Telegram bot...
+1:48:38 AM [error] Error starting Telegram bot: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:38 AM [error] Telegram bot start attempt 3 failed: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:38 AM [error] Telegram bot failed to start after 3 attempts
+1:48:38 AM [error] Error reconnecting bots: Error: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+1:48:42 AM [warn] Telegram b

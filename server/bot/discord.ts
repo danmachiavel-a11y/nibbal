@@ -577,43 +577,25 @@ export class DiscordBot {
         throw new Error(`Invalid channel type for channel ${channelId}`);
       }
 
-      // Send as embed - the embed param is missing from the edited code, assuming it should be there.
-      let embed = false; // Default to false, if no embed is sent
-      if (embed) {
-        // Send as embed
-        const embedMessage = await channel.send({
-          embeds: [
-            new EmbedBuilder()
-              .setDescription(content)
-              .setColor(0x0099FF)
-          ]
-        });
+      // Get or create webhook with proper caching
+      const webhook = await this.getOrCreateWebhook(channel, avatarUrl);
 
-        // Add delay before pinning to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        await embedMessage.pin();
-        log(`Pinned embed message in channel ${channelId}`);
-      } else {
-        // Get or create webhook with proper caching
-        const webhook = await this.getOrCreateWebhook(channel, avatarUrl);
+      // Prepare webhook message
+      const messageOptions: any = {
+        content: content || undefined,
+        username,
+        avatarURL: avatarUrl
+      };
 
-        // Prepare webhook message
-        const messageOptions: any = {
-          content: content || undefined,
-          username,
-          avatarURL: avatarUrl
-        };
-
-        // If imageUrl is provided, add it as an attachment
-        if (imageUrl) {
-          messageOptions.files = [{
-            attachment: imageUrl
-          }];
-        }
-
-        // Send regular message via webhook
-        await webhook.send(messageOptions);
+      // If imageUrl is provided, add it as an attachment
+      if (imageUrl) {
+        messageOptions.files = [{
+          attachment: imageUrl
+        }];
       }
+
+      // Send regular message via webhook
+      await webhook.send(messageOptions);
 
       log(`Successfully sent message to Discord channel ${channelId}`);
     } catch (error) {
