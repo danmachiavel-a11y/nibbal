@@ -3,6 +3,15 @@ import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 
+function escapeMarkdown(text: string): string {
+    const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+    let escaped = text;
+    for (const char of specialChars) {
+      escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+    }
+    return escaped;
+  }
+
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
 }
@@ -167,7 +176,7 @@ export class TelegramBot {
 
       // Display category info and start questionnaire
       const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-      const summary = `*${category.name}*\n\n${category.serviceSummary}`;
+      const summary = `*${escapeMarkdown(category.name)}*\n\n${escapeMarkdown(category.serviceSummary)}`;
 
       try {
         await ctx.replyWithPhoto(
@@ -603,7 +612,7 @@ export class TelegramBot {
       }
 
       await this.bot.telegram.sendPhoto(chatId, imageUrl, {
-        caption: caption,
+        caption: caption ? escapeMarkdown(caption) : undefined,
         parse_mode: 'MarkdownV2'
       });
 
