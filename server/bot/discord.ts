@@ -23,6 +23,7 @@ export class DiscordBot {
   private client: Client;
   private bridge: BridgeManager;
   private webhooks: Map<string, Webhook>;
+  private webhookCreationLock: Set<string> = new Set(); // Add lock to prevent concurrent creation
 
   constructor(bridge: BridgeManager) {
     this.client = new Client({
@@ -480,6 +481,67 @@ export class DiscordBot {
     }
   }
 
+  // Add helper function for webhook management
+  private async getOrCreateWebhook(channel: TextChannel, avatarUrl?: string): Promise<Webhook> {
+    try {
+      // Check cache first
+      let webhook = this.webhooks.get(channel.id);
+      if (webhook) {
+        try {
+          // Verify webhook is still valid
+          await webhook.fetch();
+          return webhook;
+        } catch (error) {
+          log(`Cached webhook invalid, will create new one: ${error}`, "error");
+          this.webhooks.delete(channel.id);
+        }
+      }
+
+      // Prevent concurrent webhook creation for same channel
+      if (this.webhookCreationLock.has(channel.id)) {
+        log(`Waiting for webhook creation lock on channel ${channel.id}`);
+        // Wait for lock to be released
+        while (this.webhookCreationLock.has(channel.id)) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        // Check cache again after waiting
+        webhook = this.webhooks.get(channel.id);
+        if (webhook) return webhook;
+      }
+
+      // Set lock
+      this.webhookCreationLock.add(channel.id);
+
+      try {
+        // Check for existing webhook first
+        const existingWebhooks = await channel.fetchWebhooks();
+        webhook = existingWebhooks.find(w => w.name === "Telegram Bridge");
+
+        if (!webhook) {
+          // Add delay to avoid rate limits
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          log(`Creating new webhook for channel ${channel.id}`);
+          webhook = await channel.createWebhook({
+            name: "Telegram Bridge",
+            avatar: avatarUrl
+          });
+        }
+
+        // Cache the webhook
+        this.webhooks.set(channel.id, webhook);
+        log(`Using webhook: ${webhook.id} for channel ${channel.id}`);
+        return webhook;
+      } finally {
+        // Always release lock
+        this.webhookCreationLock.delete(channel.id);
+      }
+    } catch (error) {
+      log(`Error getting/creating webhook: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  // Update sendMessage to use the new helper
   async sendMessage(channelId: string, content: string, username: string, avatarUrl?: string, embed?: boolean): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
@@ -487,28 +549,6 @@ export class DiscordBot {
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
         throw new Error(`Invalid channel type for channel ${channelId}`);
-      }
-
-      // Get existing webhook or create new one with rate limit handling
-      let webhook = this.webhooks.get(channelId);
-      if (!webhook) {
-        const existingWebhooks = await channel.fetchWebhooks();
-        webhook = existingWebhooks.find(w => w.name === "Telegram Bridge");
-
-        if (!webhook) {
-          log(`Creating new webhook for channel ${channelId}`);
-          // Add delay to avoid rate limits
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          webhook = await channel.createWebhook({
-            name: "Telegram Bridge",
-            avatar: avatarUrl
-          });
-          this.webhooks.set(channelId, webhook);
-          log(`Created webhook: ${webhook.id} for channel ${channelId}`);
-        } else {
-          this.webhooks.set(channelId, webhook);
-          log(`Using existing webhook: ${webhook.id} for channel ${channelId}`);
-        }
       }
 
       if (embed) {
@@ -526,6 +566,9 @@ export class DiscordBot {
         await embedMessage.pin();
         log(`Pinned embed message in channel ${channelId}`);
       } else {
+        // Get or create webhook with proper caching
+        const webhook = await this.getOrCreateWebhook(channel, avatarUrl);
+
         // Send regular message via webhook
         await webhook.send({
           content,
