@@ -659,15 +659,21 @@ export class TelegramBot {
 
     console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
 
-    state.inQuestionnaire = true;
-    this.userStates.set(userId, state);
-
+    // Store the answer
     state.answers.push(ctx.message.text);
 
+    // Check if we have more questions
     if (state.currentQuestion < category.questions.length - 1) {
+      // Move to next question
       state.currentQuestion++;
+
+      // Add delay before next question
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Send next question
       await ctx.reply(category.questions[state.currentQuestion]);
     } else {
+      // All questions answered, create ticket
       state.inQuestionnaire = false;
       await this.createTicket(ctx);
     }
@@ -849,13 +855,13 @@ export class TelegramBot {
       }
     }
 
-    const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-    const name = escapeMarkdown(category.name);
-    const summary = escapeMarkdown(category.serviceSummary);
-
-    const messageText = `*${name}*\n\n${summary}`;
-
     try {
+      // Send category info first
+      const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
+      const name = escapeMarkdown(category.name);
+      const summary = escapeMarkdown(category.serviceSummary || '');
+      const messageText = `*${name}*\n\n${summary}`;
+
       await ctx.replyWithPhoto(
         { url: photoUrl },
         {
@@ -864,26 +870,28 @@ export class TelegramBot {
         }
       );
 
-      // Set questionnaire state immediately after category selection
+      // Set questionnaire state and wait before starting questions
       this.userStates.set(userId, {
         categoryId,
         currentQuestion: 0,
         answers: [],
-        inQuestionnaire: true // Set to true immediately
+        inQuestionnaire: true
       });
 
       if (category.questions && category.questions.length > 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Add delay before first question
+        await new Promise(resolve => setTimeout(resolve, 2000));
         await ctx.reply(category.questions[0]);
       } else {
-        // If no questions, create ticket directly
         await this.createTicket(ctx);
       }
     } catch (error) {
-      log(`Error sending category photo: ${error}`, "error");
-      await ctx.reply(messageText, {
-        parse_mode: 'MarkdownV2'
-      });
+      log(`Error handling category selection: ${error}`, "error");
+      await ctx.reply(
+        "❌ There was an error starting your ticket. Please try /start again."
+      );
+      // Clean up state on error
+      this.userStates.delete(userId);
     }
   }
 }
