@@ -19,9 +19,9 @@ export function Navbar() {
         <div className="flex h-14 items-center space-x-4">
           {navItems.map(({ href, label, icon: Icon }) => (
             <Link key={href} href={href}>
-              <a
+              <div //Added div to wrap the link, preventing nested <a> tags.
                 className={cn(
-                  "flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors",
+                  "flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer", //Added cursor-pointer for better UX
                   location === href
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:text-foreground hover:bg-accent"
@@ -29,7 +29,7 @@ export function Navbar() {
               >
                 <Icon className="h-4 w-4" />
                 {label}
-              </a>
+              </div>
             </Link>
           ))}
         </div>

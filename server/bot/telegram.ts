@@ -53,7 +53,7 @@ interface UserState {
 }
 
 export class TelegramBot {
-  private bot: Telegraf;
+  private bot: Telegraf | null = null;
   private bridge: BridgeManager;
   private userStates: Map<number, UserState>;
   private _isConnected: boolean = false;
@@ -80,10 +80,8 @@ export class TelegramBot {
         });
       }
 
-      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
       this.bridge = bridge;
       this.userStates = new Map();
-      this.setupHandlers();
       TelegramBot.instance = this;
 
       log("Telegram bot instance created successfully");
@@ -101,7 +99,7 @@ export class TelegramBot {
         if (!this._isConnected || this.isStarting) return;
 
         // Check connection by getting bot info
-        await this.bot.telegram.getMe();
+        await this.bot?.telegram.getMe();
       } catch (error) {
         log("Heartbeat check failed, connection may be lost", "warn");
         await this.handleDisconnect();
@@ -188,7 +186,7 @@ export class TelegramBot {
       log("Starting Telegram bot...");
 
       // Stop existing bot if running
-      if (this._isConnected) {
+      if (this._isConnected && this.bot) {
         await this.stop();
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -198,9 +196,31 @@ export class TelegramBot {
       this.userStates.clear();
       this.stopHeartbeat();
 
+      // Before starting, ensure no other instances are running
+      if (this.bot) {
+        log("Stopping existing Telegram bot instance before starting a new one", "warn");
+        try {
+          await this.bot.stopPolling();
+          // Wait for existing connections to fully close
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        } catch (stopError) {
+          log(`Error stopping existing bot: ${stopError}`, "warn");
+        }
+        this.bot = null;
+      }
+
+      log("Creating new Telegram bot instance");
+      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+      
+      await this.setupHandlers();
+
       // Start the bot
       await this.bot.launch({
-        dropPendingUpdates: true
+        dropPendingUpdates: true,
+        polling: {
+          timeout: 30,
+          limit: 100
+        }
       });
 
       // Verify connection
@@ -215,6 +235,11 @@ export class TelegramBot {
     } catch (error) {
       log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
+      // Special handling for 409 conflicts
+      if (error instanceof Error && error.message.includes("409: Conflict")) {
+        log("409 Conflict detected - another bot instance is already running", "error");
+        // We'll handle this in the bridge reconnect logic
+      }
       throw error;
     } finally {
       this.releaseStartLock();
@@ -227,7 +252,7 @@ export class TelegramBot {
 
       this.stopHeartbeat();
 
-      if (this._isConnected) {
+      if (this._isConnected && this.bot) {
         await this.bot.stop();
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -237,6 +262,7 @@ export class TelegramBot {
       this.isStarting = false;
       this.userStates.clear();
       this.reconnectAttempts = 0;
+      this.bot = null;
 
       log("Telegram bot stopped successfully");
     } catch (error) {
@@ -683,7 +709,7 @@ export class TelegramBot {
   getIsConnected(): boolean {
     try {
       // Consider bot connected if we have the botInfo and _isConnected flag
-      const connected = this._isConnected && this.bot.botInfo !== undefined && !this.isStarting;
+      const connected = this._isConnected && this.bot?.botInfo !== undefined && !this.isStarting;
       if (!connected) {
         log("Telegram bot is not connected", "warn");
       }
@@ -709,7 +735,7 @@ export class TelegramBot {
       // Trim message if it's too long (Telegram limit is 4096 characters)
       const trimmedMessage = message.slice(0, 4000);
 
-      await this.bot.telegram.sendMessage(chatId, trimmedMessage);
+      await this.bot?.telegram.sendMessage(chatId, trimmedMessage);
       log(`Successfully sent message to Telegram chat: ${chatId}`);
     } catch (error) {
       log(`Error sending Telegram message: ${error}`, "error");
@@ -728,7 +754,7 @@ export class TelegramBot {
         throw new Error('Invalid image URL');
       }
 
-      await this.bot.telegram.sendPhoto(chatId, imageUrl, {
+      await this.bot?.telegram.sendPhoto(chatId, imageUrl, {
         caption: caption ? escapeMarkdown(caption) : undefined,
         parse_mode: 'MarkdownV2'
       });
