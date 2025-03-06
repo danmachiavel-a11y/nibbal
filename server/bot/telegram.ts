@@ -1,255 +1,470 @@
-import { Telegraf, Markup } from "telegraf";
+import { Telegraf, Context } from "telegraf";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
-import fetch from 'node-fetch';
-import imgbbUploader from 'imgbb-uploader';
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
 }
 
-if (!process.env.IMGBB_API_KEY) {
-  throw new Error("IMGBB_API_KEY is required for image forwarding");
+interface UserState {
+  categoryId: number;
+  currentQuestion: number;
+  answers: string[];
 }
 
 export class TelegramBot {
   private bot: Telegraf;
   private bridge: BridgeManager;
+  private userStates: Map<number, UserState>;
   private _isConnected: boolean = false;
-  private connectionAttempts: number = 0;
-  private readonly MAX_RETRIES: number = 3;
-  private readonly RETRY_DELAY: number = 5000;
 
   constructor(bridge: BridgeManager) {
-    this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN as string);
-    this.bridge = bridge;
-    this.setupHandlers();
+    try {
+      if (!process.env.TELEGRAM_BOT_TOKEN?.trim()) {
+        throw new Error("Invalid Telegram bot token");
+      }
+      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+      this.bridge = bridge;
+      this.userStates = new Map();
+      this.setupHandlers();
+      log("Telegram bot instance created successfully");
+    } catch (error) {
+      log(`Error creating Telegram bot: ${error}`, "error");
+      throw error;
+    }
   }
 
   private setupHandlers() {
-    // Add start command handler with customizable buttons
-    this.bot.command('start', async (ctx) => {
-      try {
-        log(`Received /start command from user ${ctx.from.id}`);
+    // Start command
+    this.bot.command("start", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
 
-        // Get custom buttons from settings or use defaults
-        const buttons = await storage.getTelegramButtons() || [
-          '/create - Create a new ticket',
-          '/list - View your tickets',
-          '/help - Show help'
-        ];
+      // Check if user has any active tickets
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const category = await storage.getCategory(activeTicket.categoryId);
+          await ctx.reply(
+            "❌ You already have an active ticket in " +
+              `*${category?.name || "Unknown"}* category.\n\n` +
+              "Please use /close to close your current ticket before starting a new one, " +
+              "or continue chatting here to update your existing ticket.",
+            { parse_mode: "Markdown" }
+          );
+          return;
+        }
+      }
 
-        // Create markup for buttons
-        const markup = Markup.keyboard(
-          buttons.map(button => [button])
-        ).resize();
+      const botConfig = await storage.getBotConfig();
+      const categories = await storage.getCategories();
 
-        const welcomeMessage = "Welcome! I'll help you manage your support tickets. Your messages will be forwarded to our support team.";
+      // Organize categories and submenus
+      const submenus = categories.filter(cat => cat.isSubmenu);
+      const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
 
-        await ctx.reply(welcomeMessage, markup);
-        log(`Sent welcome message with buttons to user ${ctx.from.id}`);
-      } catch (error) {
-        log(`Error handling start command: ${error}`, "error");
-        await ctx.reply("Sorry, there was an error. Please try /start again.");
+      // Create keyboard with proper row layout
+      const keyboard: { text: string; callback_data: string; }[][] = [];
+      let currentRow: { text: string; callback_data: string; }[] = [];
+
+      // First add submenus
+      for (const submenu of submenus) {
+        const button = {
+          text: submenu.name,
+          callback_data: `submenu_${submenu.id}`
+        };
+
+        if (submenu.newRow && currentRow.length > 0) {
+          keyboard.push([...currentRow]);
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
+        }
+      }
+
+      // Then add root categories
+      for (const category of rootCategories) {
+        const button = {
+          text: category.name,
+          callback_data: `category_${category.id}`
+        };
+
+        if (category.newRow && currentRow.length > 0) {
+          keyboard.push([...currentRow]);
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
+        }
+      }
+
+      if (currentRow.length > 0) {
+        keyboard.push(currentRow);
+      }
+
+      const welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
+
+      if (botConfig?.welcomeImageUrl) {
+        try {
+          await ctx.replyWithPhoto(
+            botConfig.welcomeImageUrl,
+            {
+              caption: welcomeMessage,
+              reply_markup: { inline_keyboard: keyboard }
+            }
+          );
+        } catch (error) {
+          console.error("Failed to send welcome image:", error);
+          await ctx.reply(welcomeMessage, {
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        }
+      } else {
+        await ctx.reply(welcomeMessage, {
+          reply_markup: { inline_keyboard: keyboard }
+        });
       }
     });
 
-    // Handle messages
+    // Category/Submenu selection
+    this.bot.on("callback_query", async (ctx) => {
+      const data = ctx.callbackQuery?.data;
+      if (!data) return;
+
+      if (data.startsWith("submenu_")) {
+        // Handle submenu selection
+        const submenuId = parseInt(data.split("_")[1]);
+        const categories = await storage.getCategories();
+        const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
+
+        // Create keyboard for submenu categories
+        const keyboard = submenuCategories.map(category => [{
+          text: category.name,
+          callback_data: `category_${category.id}`
+        }]);
+
+        await ctx.reply("Please select a category:", {
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        await ctx.answerCbQuery();
+        return;
+      }
+
+      if (!data.startsWith("category_")) return;
+
+      const categoryId = parseInt(data.split("_")[1]);
+      const category = await storage.getCategory(categoryId);
+      if (!category) return;
+
+      // Display category info and start questionnaire
+      const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
+      const summary = `*${category.name} Service*\n\n` +
+        `${category.serviceSummary}\n\n` +
+        `*How it works:*\n` +
+        `1. Answer our questions\n` +
+        `2. A ticket will be created\n` +
+        `3. Our team will assist you promptly\n\n` +
+        `Let's begin with some questions:`;
+
+      try {
+        await ctx.replyWithPhoto(
+          { url: photoUrl },
+          {
+            caption: summary,
+            parse_mode: 'Markdown'
+          }
+        );
+      } catch (error) {
+        await ctx.reply(summary, { parse_mode: 'Markdown' });
+      }
+
+      // Initialize user state
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      // Check for active tickets again before starting questionnaire
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const activeCategory = await storage.getCategory(activeTicket.categoryId);
+          await ctx.reply(
+            "❌ You already have an active ticket in " +
+              `*${activeCategory?.name || "Unknown"}* category.\n\n` +
+              "Please use /close to close your current ticket before starting a new one.",
+            { parse_mode: "Markdown" }
+          );
+          return;
+        }
+      }
+
+      // Initialize questionnaire
+      this.userStates.set(userId, {
+        categoryId,
+        currentQuestion: 0,
+        answers: []
+      });
+
+      // Start with first question
+      if (category.questions && category.questions.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for better UX
+        await ctx.reply(category.questions[0]);
+      } else {
+        // If no questions, create ticket directly
+        await this.createTicket(ctx);
+      }
+
+      await ctx.answerCbQuery();
+    });
+
+    // Status command
+    this.bot.command("status", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets.");
+        return;
+      }
+
+      const category = await storage.getCategory(activeTicket.categoryId);
+      await ctx.reply(
+        `Your active ticket:\n\n` +
+          `Category: *${category?.name || "Unknown"}*\n` +
+          `Status: *${activeTicket.status}*\n` +
+          `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
+        { parse_mode: "Markdown" }
+      );
+    });
+
+    // Close command
+    this.bot.command("close", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets to close.");
+        return;
+      }
+
+      try {
+        // Get category for transcript category ID
+        const category = await storage.getCategory(activeTicket.categoryId);
+        if (!category?.transcriptCategoryId) {
+          await ctx.reply(
+            "❌ Cannot close ticket: No transcript category set for this service. " +
+              "Please contact an administrator."
+          );
+          return;
+        }
+
+        // Mark ticket as closed
+        await storage.updateTicketStatus(activeTicket.id, "closed");
+
+        // Try to move Discord channel if it exists
+        if (activeTicket.discordChannelId) {
+          try {
+            await this.bridge.moveToTranscripts(activeTicket.id);
+            await ctx.reply(
+              "✅ Your ticket has been closed and moved to transcripts.\n" +
+                "Use /start to create a new ticket if needed."
+            );
+          } catch (error) {
+            console.error("Error moving to transcripts:", error);
+            await ctx.reply(
+              "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
+                "An administrator will handle this. You can use /start to create a new ticket if needed."
+            );
+          }
+        } else {
+          await ctx.reply(
+            "✅ Your ticket has been closed.\n" +
+              "Use /start to create a new ticket if needed."
+          );
+        }
+      } catch (error) {
+        console.error("Error closing ticket:", error);
+        await ctx.reply(
+          "❌ There was an error closing your ticket. Please try again or contact an administrator."
+        );
+      }
+    });
+
+    // Handle all text messages
     this.bot.on("text", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      try {
-        log(`Received message from Telegram user ${userId}: ${ctx.message.text}`);
+      const state = this.userStates.get(userId);
+      console.log(`Received message from user ${userId}. Current state:`, state);
 
-        if (ctx.message.text.startsWith('/')) {
-          // Handle commands
-          const command = ctx.message.text.split(' ')[0].substring(1);
-          switch (command) {
-            case 'create':
-              await ctx.reply('Please create a ticket through our website. Once created, you can chat here!');
-              break;
-            case 'list':
-              await this.handleListTickets(ctx);
-              break;
-            case 'help':
-              await this.handleHelp(ctx);
-              break;
-            default:
-              // Unknown command
-              await ctx.reply('Unknown command. Use /help to see available commands.');
-          }
-          return;
-        }
-
-        // Handle regular chat messages
-        const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) {
-          log(`No user found for Telegram ID ${userId}`);
-          await ctx.reply("Please register through our website first to create tickets.");
-          return;
-        }
-
+      // Check if user has an active ticket first
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
         const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (!activeTicket) {
-          log(`No active ticket found for user ${userId}`);
-          await ctx.reply("You don't have an active ticket. Please create one through our website.");
+        if (activeTicket) {
+          await this.handleTicketMessage(ctx, user, activeTicket);
           return;
         }
-
-        // Forward to Discord
-        await this.bridge.forwardToDiscord(
-          ctx.message.text,
-          activeTicket.id,
-          ctx.from?.first_name || ctx.from?.username || "Telegram User"
-        );
-        log(`Message forwarded to Discord for ticket ${activeTicket.id}`);
-      } catch (error) {
-        log(`Error handling Telegram message: ${error}`, "error");
-        await ctx.reply("Sorry, there was an error processing your message. Please try again later.");
       }
-    });
 
-    // Handle photos
-    this.bot.on("photo", async (ctx) => {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      try {
-        log(`Received photo from Telegram user ${userId}`);
-
-        // Get user from storage
-        const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) {
-          log(`No user found for Telegram ID ${userId}`);
-          await ctx.reply("Please register through our website first to create tickets.");
-          return;
-        }
-
-        // Check for active ticket
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (!activeTicket) {
-          log(`No active ticket found for user ${userId}`);
-          await ctx.reply("You don't have an active ticket. Please create one through our website.");
-          return;
-        }
-
-        // Get the photo with highest quality
-        const photos = ctx.message.photo;
-        const photo = photos[photos.length - 1];
-
-        // Get photo URL
-        const fileLink = await ctx.telegram.getFileLink(photo.file_id);
-
-        try {
-          // Upload to ImgBB for permanent storage
-          const imgbbUrl = await this.uploadToImgBB(fileLink.href);
-
-          // Forward permanent URL to Discord
-          await this.bridge.forwardToDiscord(
-            `[Image] ${imgbbUrl}`,
-            activeTicket.id,
-            ctx.from?.first_name || ctx.from?.username || "Telegram User"
-          );
-          log(`Photo forwarded to Discord for ticket ${activeTicket.id}`);
-        } catch (error) {
-          log(`Error uploading to ImgBB: ${error}`, "error");
-          await ctx.reply("Sorry, there was an error processing your image. Please try again later.");
-        }
-      } catch (error) {
-        log(`Error handling Telegram photo: ${error}`, "error");
-        await ctx.reply("Sorry, there was an error processing your photo. Please try again later.");
+      // If no active ticket, handle as part of questionnaire
+      if (state) {
+        await this.handleQuestionnaireResponse(ctx, state);
       }
-    });
-
-    // Error handler
-    this.bot.catch((error) => {
-      log(`Telegram bot error: ${error}`, "error");
     });
   }
 
-  private async handleListTickets(ctx: any) {
-    try {
-      const user = await storage.getUserByTelegramId(ctx.from.id.toString());
-      if (!user) {
-        await ctx.reply("Please register through our website first to view tickets.");
-        return;
-      }
-
-      const tickets = await storage.getTickets(user.id);
-      if (!tickets || tickets.length === 0) {
-        await ctx.reply("You don't have any tickets yet. Create one through our website!");
-        return;
-      }
-
-      let message = "Your tickets:\n\n";
-      tickets.forEach((ticket: any) => {
-        message += `#${ticket.id} - ${ticket.status}\n`;
-      });
-
-      await ctx.reply(message);
-    } catch (error) {
-      log(`Error listing tickets: ${error}`, "error");
-      await ctx.reply("Sorry, there was an error fetching your tickets.");
-    }
-  }
-
-  private async handleHelp(ctx: any) {
-    const helpText = `
-Available commands:
-/start - Show main menu
-/create - Create a new ticket
-/list - View your tickets
-/help - Show this help message
-
-You can also send messages and images directly when you have an active ticket.
-    `;
-    await ctx.reply(helpText);
-  }
-
-  async start() {
-    if (this._isConnected) {
-      log("Telegram bot is already running");
+  private async handleQuestionnaireResponse(ctx: Context, state: UserState) {
+    const category = await storage.getCategory(state.categoryId);
+    if (!category) {
+      console.error(`Category ${state.categoryId} not found`);
       return;
     }
 
+    const userId = ctx.from?.id;
+    if (!userId || !ctx.message || !('text' in ctx.message)) return;
+
+    console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
+
+    // Store the answer
+    state.answers.push(ctx.message.text);
+
+    // Check if we have more questions
+    if (state.currentQuestion < category.questions.length - 1) {
+      // Move to next question
+      state.currentQuestion++;
+      this.userStates.set(userId, state); // Update state
+
+      console.log(`Moving to question ${state.currentQuestion + 1}`);
+      await ctx.reply(category.questions[state.currentQuestion]);
+    } else {
+      // All questions answered, create ticket
+      console.log('All questions answered, creating ticket');
+      await this.createTicket(ctx);
+    }
+  }
+
+  private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    try {
+      // Store message in database
+      await storage.createMessage({
+        ticketId: ticket.id,
+        content: ctx.message.text,
+        authorId: user.id,
+        platform: "telegram",
+        timestamp: new Date()
+      });
+
+      // Forward message to Discord
+      await this.bridge.forwardToDiscord(
+        ctx.message.text,
+        ticket.id,
+        ctx.from?.first_name || ctx.from?.username || "Telegram User"
+      );
+      console.log(`Message forwarded to Discord for ticket ${ticket.id}`);
+    } catch (error) {
+      console.error("Error handling ticket message:", error);
+      await ctx.reply("Sorry, there was an error sending your message. Please try again.");
+    }
+  }
+
+  private async createTicket(ctx: Context) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const state = this.userStates.get(userId);
+    if (!state) return;
+
+    try {
+      // Create or get user
+      let user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        user = await storage.createUser({
+          telegramId: userId.toString(),
+          discordId: null,
+          username: ctx.from?.username || "Unknown",
+          isBanned: false
+        });
+      }
+
+      // Create ticket
+      const ticket = await storage.createTicket({
+        userId: user.id,
+        categoryId: state.categoryId,
+        status: "open",
+        discordChannelId: null,
+        claimedBy: null,
+        amount: null,
+        answers: state.answers
+      });
+
+      // Clear user state
+      this.userStates.delete(userId);
+
+      try {
+        // Try to create Discord channel
+        await this.bridge.createTicketChannel(ticket);
+        await ctx.reply("✅ Ticket created! Our support team will assist you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
+      } catch (error) {
+        // If Discord channel creation fails, still create ticket but inform user
+        await ctx.reply("✅ Ticket created! However, there might be a slight delay before our team can respond. Please be patient.");
+        console.error("Discord channel creation error:", error);
+      }
+    } catch (error) {
+      console.error("Error creating ticket:", error);
+      await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
+    }
+  }
+
+  async start() {
     try {
       log("Starting Telegram bot...");
-      this.connectionAttempts = 0;
-
-      const tryConnect = async () => {
-        try {
-          await this.bot.launch();
+      await this.bot.launch({
+        dropPendingUpdates: true,
+        onLaunch: () => {
           this._isConnected = true;
-          log("Telegram bot started successfully");
-        } catch (error) {
-          this.connectionAttempts++;
-          log(`Telegram connection attempt ${this.connectionAttempts} failed: ${error}`, "error");
-
-          if (this.connectionAttempts < this.MAX_RETRIES) {
-            log(`Retrying in ${this.RETRY_DELAY}ms...`);
-            await new Promise(resolve => setTimeout(resolve, this.RETRY_DELAY));
-            return tryConnect();
-          }
-          throw error;
+          log("Telegram bot started and connected successfully");
         }
-      };
+      });
 
-      await tryConnect();
+      // Verify connection by getting bot info
+      const botInfo = await this.bot.telegram.getMe();
+      log(`Connected as @${botInfo.username}`);
+
     } catch (error) {
-      this._isConnected = false;
       log(`Error starting Telegram bot: ${error}`, "error");
+      this._isConnected = false;
       throw error;
     }
   }
 
   async stop() {
-    if (!this._isConnected) {
-      log("Telegram bot is not running");
-      return;
-    }
-
     try {
       log("Stopping Telegram bot...");
       await this.bot.stop();
@@ -262,39 +477,21 @@ You can also send messages and images directly when you have an active ticket.
   }
 
   getIsConnected(): boolean {
-    return this._isConnected;
-  }
-
-  private async uploadToImgBB(imageUrl: string): Promise<string> {
     try {
-      log(`Downloading image from URL: ${imageUrl}`);
-
-      // Download image
-      const response = await fetch(imageUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch image: ${response.statusText}`);
+      // Check if bot is actually running by attempting to get bot info
+      const connected = this._isConnected && this.bot.botInfo !== undefined;
+      if (!connected) {
+        log("Telegram bot is not connected", "warn");
       }
-
-      const buffer = await response.arrayBuffer();
-      log(`Downloaded image, size: ${buffer.byteLength} bytes`);
-
-      // Upload to ImgBB without expiration for permanent storage
-      const result = await imgbbUploader(process.env.IMGBB_API_KEY!, {
-        base64string: Buffer.from(buffer).toString('base64')
-      });
-
-      log(`Successfully uploaded image to ImgBB: ${result.url}`);
-      return result.url;
+      return connected;
     } catch (error) {
-      log(`Error uploading to ImgBB: ${error}`, "error");
-      throw error;
+      log(`Error checking Telegram bot connection: ${error}`, "error");
+      return false;
     }
   }
 
   async sendMessage(chatId: number, message: string) {
     try {
-      log(`Attempting to send message to Telegram chat ${chatId}`);
-
       // Validate chat ID
       if (!Number.isInteger(chatId) || chatId <= 0) {
         throw new Error(`Invalid Telegram chat ID: ${chatId}`);
@@ -312,37 +509,6 @@ You can also send messages and images directly when you have an active ticket.
       log(`Successfully sent message to Telegram chat: ${chatId}`);
     } catch (error) {
       log(`Error sending Telegram message: ${error}`, "error");
-      throw error;
-    }
-  }
-
-  async sendImage(chatId: number, imageUrl: string, caption?: string) {
-    try {
-      log(`Attempting to send image to Telegram chat ${chatId}. URL: ${imageUrl}`);
-
-      // Validate chat ID
-      if (!Number.isInteger(chatId) || chatId <= 0) {
-        throw new Error(`Invalid Telegram chat ID: ${chatId}`);
-      }
-
-      // Validate image URL
-      if (!imageUrl || typeof imageUrl !== 'string') {
-        throw new Error('Invalid image URL');
-      }
-
-      try {
-        // Use ImgBB URL directly if it's already uploaded
-        await this.bot.telegram.sendPhoto(chatId, imageUrl, {
-          caption: caption ? caption.slice(0, 1024) : undefined // Telegram caption limit
-        });
-        log(`Successfully sent image to Telegram chat: ${chatId}`);
-      } catch (error) {
-        log(`Error sending image as URL: ${error}`, "error");
-        // If sending photo fails, send as URL
-        await this.sendMessage(chatId, `${caption}\n${imageUrl}`);
-      }
-    } catch (error) {
-      log(`Error sending Telegram image: ${error}`, "error");
       throw error;
     }
   }

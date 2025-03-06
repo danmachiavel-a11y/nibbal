@@ -7,130 +7,113 @@ import { log } from "../vite";
 export class BridgeManager {
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
-  private _isConnected: boolean = false;
-  private readyPromise: Promise<void>;
-  private readyResolve!: () => void;
-  private connectionTimeout: NodeJS.Timeout | null = null;
+  private retryAttempts: number = 0;
+  private maxRetries: number = 3;
+  private retryTimeout: number = 5000; // 5 seconds
+  private healthCheckInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     log("Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
-    this.readyPromise = new Promise((resolve) => {
-      this.readyResolve = resolve;
-    });
+    this.startHealthCheck();
   }
 
-  async start() {
+  private startHealthCheck() {
+    // Run health check every 30 seconds
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        const health = await this.healthCheck();
+        if (!health.telegram || !health.discord) {
+          log("Bot disconnected, attempting to reconnect...");
+          await this.reconnectDisconnectedBots(health);
+        }
+      } catch (error) {
+        log(`Health check failed: ${error}`, "error");
+      }
+    }, 30000);
+  }
+
+  private async reconnectDisconnectedBots(health: { telegram: boolean; discord: boolean }) {
     try {
-      // Check if already running
-      if (this._isConnected) {
-        log("Bridge is already running");
-        return;
+      if (!health.telegram) {
+        log("Attempting to reconnect Telegram bot...");
+        await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
       }
-
-      log("Starting bots...");
-
-      // Start Discord bot first
-      log("Starting Discord bot...");
-      await this.discordBot.start();
-
-      // Set a connection timeout
-      this.connectionTimeout = setTimeout(() => {
-        if (!this._isConnected) {
-          log("Bridge manager connection timeout - attempting restart", "error");
-          this.stop().catch(e => log(`Error stopping during timeout: ${e}`, "error"));
-        }
-      }, 30000); // 30 second timeout
-
-      // Wait for Discord to be ready before starting Telegram
-      if (!this.discordBot.isReady()) {
-        log("Waiting for Discord bot to be ready...");
-        await new Promise(resolve => setTimeout(resolve, 5000));
-
-        if (!this.discordBot.isReady()) {
-          throw new Error("Discord bot failed to initialize");
-        }
+      if (!health.discord) {
+        log("Attempting to reconnect Discord bot...");
+        await this.startBotWithRetry(() => this.discordBot.start(), "Discord");
       }
-
-      log("Starting Telegram bot...");
-      await this.telegramBot.start();
-
-      // Clear timeout and mark as connected
-      if (this.connectionTimeout) {
-        clearTimeout(this.connectionTimeout);
-        this.connectionTimeout = null;
-      }
-
-      this._isConnected = true;
-      this.readyResolve();
-      log("Bridge initialization completed successfully");
     } catch (error) {
-      this._isConnected = false;
-      if (this.connectionTimeout) {
-        clearTimeout(this.connectionTimeout);
-        this.connectionTimeout = null;
-      }
-      log(`Error starting bots: ${error}`, "error");
-      // Try to stop any partially started bots
-      await this.stop().catch(e => log(`Error during cleanup: ${e}`, "error"));
-      throw error;
+      log(`Error reconnecting bots: ${error}`, "error");
     }
   }
 
-  async stop() {
+  async start() {
+    log("Starting bots...");
     try {
-      if (!this._isConnected) {
-        log("Bridge is not running");
-        return;
-      }
-
-      log("Stopping bots...");
-      this._isConnected = false;
-
-      // Clear any pending timeouts
-      if (this.connectionTimeout) {
-        clearTimeout(this.connectionTimeout);
-        this.connectionTimeout = null;
-      }
-
-      // Stop both bots and handle errors individually
-      const results = await Promise.allSettled([
-        this.telegramBot.stop(),
-        this.discordBot.stop()
+      await Promise.allSettled([
+        this.startBotWithRetry(
+          () => this.telegramBot.start(),
+          "Telegram"
+        ),
+        this.startBotWithRetry(
+          () => this.discordBot.start(),
+          "Discord"
+        )
       ]);
-
-      // Log any errors that occurred during shutdown
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          log(`Error stopping ${index === 0 ? 'Telegram' : 'Discord'} bot: ${result.reason}`, "error");
-        }
-      });
-
-      // Reset ready promise
-      this.readyPromise = new Promise((resolve) => {
-        this.readyResolve = resolve;
-      });
-
-      log("Bots stopped successfully");
+      log("Bots initialization completed");
     } catch (error) {
-      log(`Error stopping bots: ${error}`, "error");
-      throw error;
+      log(`Error starting bots: ${error}`, "error");
+    }
+  }
+
+  private async startBotWithRetry(
+    startFn: () => Promise<void>,
+    botName: string
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        await startFn();
+        this.retryAttempts = 0; // Reset on success
+        log(`${botName} bot started successfully`);
+        return;
+      } catch (error) {
+        log(`${botName} bot start attempt ${attempt} failed: ${error}`, "error");
+        if (attempt === this.maxRetries) {
+          log(`${botName} bot failed to start after ${this.maxRetries} attempts`, "error");
+          throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, this.retryTimeout));
+      }
     }
   }
 
   async restart() {
-    log("Restarting bots...");
+    log("Restarting bots with new configuration...");
     try {
-      // Stop existing bots
-      await this.stop();
+      // Clear health check interval
+      if (this.healthCheckInterval) {
+        clearInterval(this.healthCheckInterval);
+        this.healthCheckInterval = null;
+      }
 
-      // Create new instances
+      // Stop both bots with graceful shutdown
+      await Promise.allSettled([
+        this.telegramBot.stop(),
+        this.discordBot.stop()
+      ]);
+
+      // Create new instances with updated tokens
       this.telegramBot = new TelegramBot(this);
       this.discordBot = new DiscordBot(this);
 
-      // Start new instances
+      // Start both bots with retry mechanism
       await this.start();
+
+      // Restart health check
+      this.startHealthCheck();
+
       log("Bots restarted successfully");
     } catch (error) {
       log(`Error restarting bots: ${error}`, "error");
@@ -146,18 +129,6 @@ export class BridgeManager {
       telegram: this.telegramBot.getIsConnected(),
       discord: this.discordBot.isReady()
     };
-  }
-
-  getTelegramBot(): TelegramBot {
-    return this.telegramBot;
-  }
-
-  getDiscordBot(): DiscordBot {
-    return this.discordBot;
-  }
-
-  isConnected(): boolean {
-    return this._isConnected;
   }
 
   async moveToTranscripts(ticketId: number): Promise<void> {
@@ -322,35 +293,11 @@ export class BridgeManager {
     }
   }
 
-  async forwardImageToTelegram(imageUrl: string, ticketId: number, username: string) {
-    try {
-      const ticket = await storage.getTicket(ticketId);
-      log(`Forwarding image to Telegram - Ticket: ${JSON.stringify(ticket)}`);
+  getTelegramBot(): TelegramBot {
+    return this.telegramBot;
+  }
 
-      if (!ticket || !ticket.userId) {
-        log(`Invalid ticket or missing user ID: ${ticketId}`, "error");
-        return;
-      }
-
-      const user = await storage.getUser(ticket.userId);
-      log(`Found user: ${JSON.stringify(user)}`);
-
-      if (!user || !user.telegramId) {
-        log(`Invalid user or missing Telegram ID for ticket: ${ticketId}`, "error");
-        return;
-      }
-
-      // Add safety check for valid Telegram ID
-      if (!user.telegramId.match(/^\d+$/)) {
-        log(`Invalid Telegram ID format for user: ${user.id}`, "error");
-        return;
-      }
-
-      // Send image to Telegram
-      await this.telegramBot.sendImage(parseInt(user.telegramId), imageUrl, `${username} sent an image`);
-      log(`Successfully sent image to Telegram user: ${user.username}`);
-    } catch (error) {
-      log(`Error forwarding image to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
-    }
+  getDiscordBot(): DiscordBot {
+    return this.discordBot;
   }
 }

@@ -966,8 +966,8 @@ function SettingsPage() {
                                     const status = await res.json();
                                     toast({
                                       title: "Telegram Bot Status",
-                                      description: status.connected
-                                        ? "Connected and ready"
+                                      description: status.connected 
+                                        ? "Connected and ready" 
                                         : "Not connected - This is normal during testing. The bot will work in production.",
                                       variant: status.connected ? "default" : "secondary"
                                     });
@@ -1016,6 +1016,7 @@ function SettingsPage() {
                                   } catch (error) {
                                     toast({
                                       title: "Error",
+                                    title: "Error",
                                       description: "Failed to check Discord bot status",
                                       variant: "destructive"
                                     });
@@ -1029,7 +1030,7 @@ function SettingsPage() {
                         )}
                       />
 
-                      <div className="flex justify-end spacex-2">
+                      <div className="flex justify-end space-x-2">
                         <Button type="submit" size="sm">
                           Save Bot Configuration
                         </Button>
