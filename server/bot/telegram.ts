@@ -381,13 +381,28 @@ export class TelegramBot {
         timestamp: new Date()
       });
 
-      // Forward message to Discord
+      // Get user's avatar URL if available
+      let avatarUrl: string | undefined;
+      try {
+        const photos = await this.bot.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+        if (photos && photos.total_count > 0) {
+          const fileId = photos.photos[0][0].file_id;
+          const file = await this.bot.telegram.getFile(fileId);
+          avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        }
+      } catch (error) {
+        log(`Error getting Telegram user avatar: ${error}`, "error");
+        // Continue without avatar if there's an error
+      }
+
+      // Forward message to Discord with avatar
       await this.bridge.forwardToDiscord(
         ctx.message.text,
         ticket.id,
-        ctx.from?.first_name || ctx.from?.username || "Telegram User"
+        ctx.from?.first_name || ctx.from?.username || "Telegram User",
+        avatarUrl
       );
-      console.log(`Message forwarded to Discord for ticket ${ticket.id}`);
+      log(`Message forwarded to Discord for ticket ${ticket.id}`);
     } catch (error) {
       console.error("Error handling ticket message:", error);
       await ctx.reply("Sorry, there was an error sending your message. Please try again.");
