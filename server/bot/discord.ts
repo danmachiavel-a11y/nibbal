@@ -74,6 +74,8 @@ export class DiscordBot {
   private bridge: BridgeManager;
   private webhooks: Map<string, Webhook>;
   private _isReady: boolean = false;
+  private readyPromise: Promise<void>;
+  private readyResolve!: () => void;
 
   constructor(bridge: BridgeManager) {
     this.client = new Client({
@@ -85,6 +87,9 @@ export class DiscordBot {
     });
     this.bridge = bridge;
     this.webhooks = new Map();
+    this.readyPromise = new Promise((resolve) => {
+      this.readyResolve = resolve;
+    });
     this.setupHandlers();
   }
 
@@ -98,6 +103,10 @@ export class DiscordBot {
 
       log("Starting Discord bot...");
       await this.client.login(process.env.DISCORD_BOT_TOKEN);
+
+      // Wait for ready event
+      await this.readyPromise;
+      log("Discord bot is fully initialized and ready");
     } catch (error) {
       this._isReady = false;
       log(`Error starting Discord bot: ${error}`, "error");
@@ -130,6 +139,12 @@ export class DiscordBot {
       // Destroy the client
       this.client.destroy();
       this._isReady = false;
+
+      // Reset ready promise
+      this.readyPromise = new Promise((resolve) => {
+        this.readyResolve = resolve;
+      });
+
       log("Discord bot stopped");
     } catch (error) {
       log(`Error stopping Discord bot: ${error}`, "error");
@@ -141,85 +156,28 @@ export class DiscordBot {
     return this._isReady;
   }
 
-  async getCategories() {
-    return Cooldown.execute('getCategories', async () => {
-      try {
-        if (!this._isReady) {
-          throw new Error("Discord bot is not ready");
-        }
-
-        const guilds = await this.client.guilds.fetch();
-        const firstGuild = guilds.first();
-        if (!firstGuild) {
-          throw new Error("Bot is not in any servers");
-        }
-
-        const guild = await firstGuild.fetch();
-        const categories = await guild.channels.fetch();
-
-        // Filter and map in one pass to reduce operations
-        const categoryChannels = Array.from(categories.values())
-          .filter(channel => channel?.type === ChannelType.GuildCategory)
-          .map(category => ({
-            id: category!.id,
-            name: category!.name
-          }));
-
-        if (categoryChannels.length === 0) {
-          log("Warning: No categories found in Discord server");
-        }
-
-        return categoryChannels;
-      } catch (error) {
-        log(`Error getting Discord categories: ${error}`, "error");
-        throw error;
-      }
-    }, 30000); // 30 second cooldown
-  }
-
-  async getRoles() {
-    return Cooldown.execute('getRoles', async () => {
-      try {
-        if (!this._isReady) {
-          throw new Error("Discord bot is not ready");
-        }
-
-        const guilds = await this.client.guilds.fetch();
-        const firstGuild = guilds.first();
-        if (!firstGuild) {
-          throw new Error("Bot is not in any servers");
-        }
-
-        const guild = await firstGuild.fetch();
-        const roles = await guild.roles.fetch();
-
-        // Convert to array and sort in one pass
-        const roleList = Array.from(roles.values())
-          .map(role => ({
-            id: role.id,
-            name: role.name,
-            color: role.hexColor,
-            position: role.position
-          }))
-          .sort((a, b) => b.position - a.position);
-
-        if (roleList.length === 0) {
-          log("Warning: No roles found in Discord server");
-        }
-
-        return roleList;
-      } catch (error) {
-        log(`Error getting Discord roles: ${error}`, "error");
-        throw error;
-      }
-    }, 30000); // 30 second cooldown
-  }
-
   private setupHandlers() {
     this.client.on("ready", () => {
+      log("Discord bot connected and ready");
       this._isReady = true;
-      log("Discord bot ready");
+      this.readyResolve();
       this.registerSlashCommands();
+    });
+
+    // Log disconnects
+    this.client.on("disconnect", () => {
+      log("Discord bot disconnected", "error");
+      this._isReady = false;
+    });
+
+    // Log reconnects
+    this.client.on("reconnecting", () => {
+      log("Discord bot reconnecting...");
+    });
+
+    // Handle errors
+    this.client.on("error", (error) => {
+      log(`Discord bot error: ${error}`, "error");
     });
 
     this.client.on('interactionCreate', async (interaction) => {
@@ -561,6 +519,78 @@ export class DiscordBot {
         newMessage.member?.displayName || newMessage.author?.username || "Unknown Discord User"
       );
     });
+  }
+
+  async getCategories() {
+    return Cooldown.execute('getCategories', async () => {
+      try {
+        if (!this._isReady) {
+          log("Discord bot is not ready, waiting for ready state...");
+          await this.readyPromise;
+        }
+
+        log("Fetching Discord categories...");
+        const guilds = await this.client.guilds.fetch();
+        const firstGuild = guilds.first();
+        if (!firstGuild) {
+          throw new Error("Bot is not in any servers");
+        }
+
+        const guild = await firstGuild.fetch();
+        const categories = await guild.channels.fetch();
+
+        // Filter and map in one pass to reduce operations
+        const categoryChannels = Array.from(categories.values())
+          .filter(channel => channel?.type === ChannelType.GuildCategory)
+          .map(category => ({
+            id: category!.id,
+            name: category!.name
+          }));
+
+        log(`Found ${categoryChannels.length} categories`);
+        return categoryChannels;
+      } catch (error) {
+        log(`Error getting Discord categories: ${error}`, "error");
+        throw error;
+      }
+    }, 30000); // 30 second cooldown
+  }
+
+  async getRoles() {
+    return Cooldown.execute('getRoles', async () => {
+      try {
+        if (!this._isReady) {
+          log("Discord bot is not ready, waiting for ready state...");
+          await this.readyPromise;
+        }
+
+        log("Fetching Discord roles...");
+        const guilds = await this.client.guilds.fetch();
+        const firstGuild = guilds.first();
+        if (!firstGuild) {
+          throw new Error("Bot is not in any servers");
+        }
+
+        const guild = await firstGuild.fetch();
+        const roles = await guild.roles.fetch();
+
+        // Convert to array and sort in one pass
+        const roleList = Array.from(roles.values())
+          .map(role => ({
+            id: role.id,
+            name: role.name,
+            color: role.hexColor,
+            position: role.position
+          }))
+          .sort((a, b) => b.position - a.position);
+
+        log(`Found ${roleList.length} roles`);
+        return roleList;
+      } catch (error) {
+        log(`Error getting Discord roles: ${error}`, "error");
+        throw error;
+      }
+    }, 30000); // 30 second cooldown
   }
 
   private async registerSlashCommands() {

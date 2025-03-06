@@ -19,10 +19,16 @@ export class BridgeManager {
     try {
       // Start bots sequentially to avoid overwhelming APIs
       await this.telegramBot.start();
+      log("Telegram bot started successfully");
+
       await this.discordBot.start();
+      log("Discord bot started successfully");
+
       log("Bots initialization completed");
     } catch (error) {
       log(`Error starting bots: ${error}`, "error");
+      // Try to stop any partially started bots
+      await this.stop().catch(e => log(`Error during cleanup: ${e}`, "error"));
       throw error;
     }
   }
@@ -37,6 +43,7 @@ export class BridgeManager {
       log("Bots stopped successfully");
     } catch (error) {
       log(`Error stopping bots: ${error}`, "error");
+      throw error;
     }
   }
 
