@@ -8,33 +8,68 @@ export class BridgeManager {
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
   private _isConnected: boolean = false;
+  private readyPromise: Promise<void>;
+  private readyResolve!: () => void;
+  private connectionTimeout: NodeJS.Timeout | null = null;
 
   constructor() {
     log("Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
+    this.readyPromise = new Promise((resolve) => {
+      this.readyResolve = resolve;
+    });
   }
 
   async start() {
     log("Starting bots...");
     try {
-      // Check if already connected
+      // Check if already running
       if (this._isConnected) {
-        log("Bridge is already connected");
+        log("Bridge is already running");
         return;
       }
 
-      // Start bots sequentially to avoid overwhelming APIs
-      await this.telegramBot.start();
-      log("Telegram bot started successfully");
-
+      log("Starting Discord bot...");
       await this.discordBot.start();
-      log("Discord bot started successfully");
+
+      // Set a connection timeout
+      this.connectionTimeout = setTimeout(() => {
+        if (!this._isConnected) {
+          log("Bridge manager connection timeout - attempting restart", "error");
+          this.stop().catch(e => log(`Error stopping during timeout: ${e}`, "error"));
+        }
+      }, 30000); // 30 second timeout
+
+      // Wait for Discord to be ready before starting Telegram
+      // This ensures Discord channels are available for ticket creation
+      if (!this.discordBot.isReady()) {
+        log("Waiting for Discord bot to be ready...");
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        if (!this.discordBot.isReady()) {
+          throw new Error("Discord bot failed to initialize");
+        }
+      }
+
+      log("Starting Telegram bot...");
+      await this.telegramBot.start();
+
+      // Clear timeout and mark as connected
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
 
       this._isConnected = true;
+      this.readyResolve();
       log("Bridge initialization completed successfully");
     } catch (error) {
       this._isConnected = false;
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
       log(`Error starting bots: ${error}`, "error");
       // Try to stop any partially started bots
       await this.stop().catch(e => log(`Error during cleanup: ${e}`, "error"));
@@ -44,8 +79,19 @@ export class BridgeManager {
 
   async stop() {
     try {
+      if (!this._isConnected) {
+        log("Bridge is not running");
+        return;
+      }
+
       log("Stopping bots...");
       this._isConnected = false;
+
+      // Clear any pending timeouts
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
 
       // Stop both bots and handle errors individually
       const results = await Promise.allSettled([
@@ -58,6 +104,11 @@ export class BridgeManager {
         if (result.status === 'rejected') {
           log(`Error stopping ${index === 0 ? 'Telegram' : 'Discord'} bot: ${result.reason}`, "error");
         }
+      });
+
+      // Reset ready promise
+      this.readyPromise = new Promise((resolve) => {
+        this.readyResolve = resolve;
       });
 
       log("Bots stopped successfully");
@@ -102,6 +153,10 @@ export class BridgeManager {
 
   getDiscordBot(): DiscordBot {
     return this.discordBot;
+  }
+
+  isConnected(): boolean {
+    return this._isConnected;
   }
 
   async moveToTranscripts(ticketId: number): Promise<void> {

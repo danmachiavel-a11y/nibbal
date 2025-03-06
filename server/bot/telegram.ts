@@ -25,19 +25,41 @@ export class TelegramBot {
   }
 
   private setupHandlers() {
+    // Add start command handler
+    this.bot.command('start', async (ctx) => {
+      try {
+        log(`Received /start command from user ${ctx.from.id}`);
+        const reply = "Welcome! I'll help you manage your support tickets. Your messages will be forwarded to our support team.";
+        await ctx.reply(reply);
+        log(`Sent welcome message to user ${ctx.from.id}`);
+      } catch (error) {
+        log(`Error handling start command: ${error}`, "error");
+      }
+    });
+
     // Handle text messages
     this.bot.on("text", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
 
       try {
+        log(`Received message from Telegram user ${userId}`);
+
         // Get user from storage
         const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) return;
+        if (!user) {
+          log(`No user found for Telegram ID ${userId}`);
+          await ctx.reply("Please register through our website first to create tickets.");
+          return;
+        }
 
         // Check for active ticket
         const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (!activeTicket) return;
+        if (!activeTicket) {
+          log(`No active ticket found for user ${userId}`);
+          await ctx.reply("You don't have an active ticket. Please create one through our website.");
+          return;
+        }
 
         // Forward to Discord
         await this.bridge.forwardToDiscord(
@@ -48,6 +70,7 @@ export class TelegramBot {
         log(`Message forwarded to Discord for ticket ${activeTicket.id}`);
       } catch (error) {
         log(`Error handling Telegram message: ${error}`, "error");
+        await ctx.reply("Sorry, there was an error processing your message. Please try again later.");
       }
     });
 
@@ -57,13 +80,23 @@ export class TelegramBot {
       if (!userId) return;
 
       try {
+        log(`Received photo from Telegram user ${userId}`);
+
         // Get user from storage
         const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) return;
+        if (!user) {
+          log(`No user found for Telegram ID ${userId}`);
+          await ctx.reply("Please register through our website first to create tickets.");
+          return;
+        }
 
         // Check for active ticket
         const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (!activeTicket) return;
+        if (!activeTicket) {
+          log(`No active ticket found for user ${userId}`);
+          await ctx.reply("You don't have an active ticket. Please create one through our website.");
+          return;
+        }
 
         // Get the photo with highest quality
         const photos = ctx.message.photo;
@@ -82,20 +115,20 @@ export class TelegramBot {
             activeTicket.id,
             ctx.from?.first_name || ctx.from?.username || "Telegram User"
           );
+          log(`Photo forwarded to Discord for ticket ${activeTicket.id}`);
         } catch (error) {
           log(`Error uploading to ImgBB: ${error}`, "error");
-          // If ImgBB upload fails, send original Telegram URL
-          await this.bridge.forwardToDiscord(
-            `[Image] ${fileLink.href}`,
-            activeTicket.id,
-            ctx.from?.first_name || ctx.from?.username || "Telegram User"
-          );
+          await ctx.reply("Sorry, there was an error processing your image. Please try again later.");
         }
-
-        log(`Photo forwarded to Discord for ticket ${activeTicket.id}`);
       } catch (error) {
         log(`Error handling Telegram photo: ${error}`, "error");
+        await ctx.reply("Sorry, there was an error processing your photo. Please try again later.");
       }
+    });
+
+    // Add error handler
+    this.bot.catch((error) => {
+      log(`Telegram bot error: ${error}`, "error");
     });
   }
 
