@@ -810,20 +810,25 @@ export class TelegramBot {
         inQuestionnaire: true
       });
 
-      // Add delay before next question
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Add shorter delay before next question
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Send next question
       await ctx.reply(category.questions[state.currentQuestion]);
     } else {
       // All questions answered, create ticket
-      this.userStates.delete(userId);
-      this.stateCleanups.delete(userId);
-      this.activeUsers.delete(userId);
-      await this.createTicket(ctx);
+      try {
+        await this.createTicket(ctx);
+      } catch (error) {
+        log(`Error creating ticket: ${error}`, "error");
+        await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
+        // Clean up state on error
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+      }
     }
   }
-
 
   private async createTicket(ctx: Context) {
     const userId = ctx.from?.id;
@@ -843,6 +848,7 @@ export class TelegramBot {
         });
       }
 
+      // Keep state until ticket is fully created
       const ticket = await storage.createTicket({
         userId: user.id,
         categoryId: state.categoryId,
@@ -853,23 +859,24 @@ export class TelegramBot {
         answers: state.answers
       });
 
-      this.userStates.delete(userId);
-      this.stateCleanups.delete(userId);
-      this.activeUsers.delete(userId);
-
       try {
+        // Create Discord channel first
         await this.bridge.createTicketChannel(ticket);
         await ctx.reply("✅ Ticket created! Our support team will assist you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
       } catch (error) {
+        log(`Discord channel creation error: ${error}`, "error");
         await ctx.reply("✅ Ticket created! However, there might be a slight delay before our team can respond. Please be patient.");
-        console.error("Discord channel creation error:", error);
       }
+
+      // Only clean up state after successful ticket creation
+      this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
     } catch (error) {
-      console.error("Error creating ticket:", error);
-      await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
+      log(`Error creating ticket: ${error}`, "error");
+      throw error; // Let the caller handle the error
     }
   }
-
 
   getIsConnected(): boolean {
     try {
@@ -960,7 +967,7 @@ export class TelegramBot {
       // Initialize questionnaire state before sending anything
       this.setState(userId, {
         categoryId,
-        currentQuestion: 0,
+        currentQuestion:0,
         answers: [],
         inQuestionnaire: true
       });
