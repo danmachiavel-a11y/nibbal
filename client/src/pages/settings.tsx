@@ -558,12 +558,54 @@ function SettingsPage() {
     }
   });
 
+  useEffect(() => {
+    const loadBotConfig = async () => {
+      try {
+        const res = await apiRequest("GET", "/api/bot/config");
+        if (!res.ok) throw new Error("Failed to fetch bot configuration");
+        const config = await res.json();
+
+        // Set form values with the loaded configuration
+        botConfigForm.setValue("telegramToken", config.telegramToken || "");
+        botConfigForm.setValue("discordToken", config.discordToken || "");
+        botConfigForm.setValue("welcomeMessage", config.welcomeMessage || "");
+        botConfigForm.setValue("welcomeImageUrl", config.welcomeImageUrl || "");
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Failed to load bot configuration",
+          variant: "destructive"
+        });
+      }
+    };
+    loadBotConfig();
+  }, []);
+
   const onBotConfigSubmit = async (data: any) => {
     try {
-      await apiRequest("PATCH", "/api/bot/config", data);
-      toast({ title: "Success", description: "Bot configuration saved successfully!" });
+      // Send all bot configuration fields
+      const res = await apiRequest("PATCH", "/api/bot/config", {
+        telegramToken: data.telegramToken,
+        discordToken: data.discordToken,
+        welcomeMessage: data.welcomeMessage,
+        welcomeImageUrl: data.welcomeImageUrl
+      });
+
+      if (!res.ok) throw new Error("Failed to update bot configuration");
+
+      toast({ 
+        title: "Success", 
+        description: "Bot configuration saved successfully!" 
+      });
+
+      // Refresh the bots to apply new configuration
+      await apiRequest("POST", "/api/bot/restart");
     } catch (error) {
-      toast({ title: "Error", description: "Failed to save bot configuration", variant: "destructive" });
+      toast({ 
+        title: "Error", 
+        description: "Failed to save bot configuration", 
+        variant: "destructive" 
+      });
     }
   };
 
