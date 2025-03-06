@@ -43,8 +43,8 @@ export class BridgeManager {
     try {
       if (!health.telegram) {
         log("Attempting to reconnect Telegram bot...");
-        // Add delay before reconnection
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Add longer delay before reconnection
+        await new Promise(resolve => setTimeout(resolve, 5000));
         await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
       }
       if (!health.discord) {
@@ -53,6 +53,7 @@ export class BridgeManager {
       }
     } catch (error) {
       log(`Error reconnecting bots: ${error}`, "error");
+      throw error;
     }
   }
 
@@ -81,8 +82,9 @@ export class BridgeManager {
   ): Promise<void> {
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        // Add delay between attempts
+        // Add significant delay between attempts
         if (attempt > 1) {
+          log(`Waiting ${this.retryTimeout/1000} seconds before attempt ${attempt}...`);
           await new Promise(resolve => setTimeout(resolve, this.retryTimeout));
         }
 
@@ -99,6 +101,9 @@ export class BridgeManager {
           log(`${botName} bot failed to start after ${this.maxRetries} attempts`, "error");
           throw error;
         }
+
+        // Add additional delay after failure
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
   }

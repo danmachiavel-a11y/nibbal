@@ -48,7 +48,10 @@ export class TelegramBot {
 
       // Ensure single instance
       if (TelegramBot.instance) {
-        throw new Error("TelegramBot instance already exists");
+        // If instance exists, stop it before creating new one
+        TelegramBot.instance.stop().catch(error => {
+          log(`Error stopping existing instance: ${error}`, "error");
+        });
       }
 
       this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
@@ -66,25 +69,32 @@ export class TelegramBot {
   private async cleanupBeforeStart() {
     try {
       if (this.isStarting) {
-        throw new Error("Bot is already starting");
+        log("Bot is already starting, waiting for current start to complete...");
+        return false;
       }
 
       this.isStarting = true;
 
       // Stop existing instance if connected
       if (this._isConnected) {
-        await this.stop();
-        // Add delay after stopping
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        try {
+          await this.bot.stop();
+          // Add delay after stopping
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (error) {
+          log(`Error stopping bot during cleanup: ${error}`, "error");
+        }
       }
 
       // Reset state
       this._isConnected = false;
       this.userStates.clear();
+
+      return true;
     } catch (error) {
       log(`Error during cleanup: ${error}`, "error");
       this.isStarting = false;
-      throw error;
+      return false;
     }
   }
 
@@ -93,7 +103,10 @@ export class TelegramBot {
       log("Starting Telegram bot...");
 
       // Cleanup before starting
-      await this.cleanupBeforeStart();
+      const canStart = await this.cleanupBeforeStart();
+      if (!canStart) {
+        throw new Error("Cannot start bot at this time");
+      }
 
       try {
         await this.bot.launch({
@@ -101,7 +114,7 @@ export class TelegramBot {
         });
 
         // Add delay to ensure proper startup
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
         // Verify connection by getting bot info
         const botInfo = await this.bot.telegram.getMe();
@@ -118,6 +131,7 @@ export class TelegramBot {
         this.isStarting = false;
       }
     } catch (error) {
+      this.isStarting = false;
       log(`Error starting Telegram bot: ${error}`, "error");
       throw error;
     }
@@ -130,7 +144,8 @@ export class TelegramBot {
       // Only attempt to stop if connected
       if (this._isConnected) {
         await this.bot.stop();
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Add delay after stopping
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
       // Reset state
