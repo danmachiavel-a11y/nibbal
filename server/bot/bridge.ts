@@ -102,8 +102,8 @@ export class BridgeManager {
           throw error;
         }
 
-        // Add additional delay after failure
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Add longer delay after failure
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
   }

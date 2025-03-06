@@ -68,9 +68,22 @@ export class TelegramBot {
 
   private async cleanupBeforeStart() {
     try {
+      // Add retry mechanism for waiting when bot is already starting
       if (this.isStarting) {
         log("Bot is already starting, waiting for current start to complete...");
-        return false;
+        let retries = 0;
+        const maxRetries = 3;
+
+        while (this.isStarting && retries < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          retries++;
+          log(`Waiting for existing startup to complete (attempt ${retries}/${maxRetries})...`);
+        }
+
+        if (this.isStarting) {
+          log("Timed out waiting for existing startup");
+          return false;
+        }
       }
 
       this.isStarting = true;
@@ -105,7 +118,8 @@ export class TelegramBot {
       // Cleanup before starting
       const canStart = await this.cleanupBeforeStart();
       if (!canStart) {
-        throw new Error("Cannot start bot at this time");
+        log("Cannot start bot at this time - cleanup failed or bot is already starting");
+        return;
       }
 
       try {
@@ -114,7 +128,7 @@ export class TelegramBot {
         });
 
         // Add delay to ensure proper startup
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
         // Verify connection by getting bot info
         const botInfo = await this.bot.telegram.getMe();
@@ -591,6 +605,7 @@ export class TelegramBot {
       await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
     }
   }
+
 
 
   getIsConnected(): boolean {

@@ -966,8 +966,8 @@ function SettingsPage() {
                                     const status = await res.json();
                                     toast({
                                       title: "Telegram Bot Status",
-                                      description: status.connected 
-                                        ? "Connected and ready" 
+                                      description: status.connected
+                                        ? "Connected and ready"
                                         : "Not connected - This is normal during testing. The bot will work in production.",
                                       variant: status.connected ? "default" : "secondary"
                                     });
@@ -1010,13 +1010,11 @@ function SettingsPage() {
                                     const status = await res.json();
                                     toast({
                                       title: "Discord Bot Status",
-                                      description: status.connected ? "Connected" : "Not Connected",
-                                      variant: status.connected ? "default" : "destructive"
+                                      description: status.connected ? "Connected" : "Not Connected",                                      variant: status.connected ? "default" : "destructive"
                                     });
                                   } catch (error) {
                                     toast({
                                       title: "Error",
-                                    title: "Error",
                                       description: "Failed to check Discord bot status",
                                       variant: "destructive"
                                     });
