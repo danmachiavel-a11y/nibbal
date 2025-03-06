@@ -6,32 +6,27 @@ import { log } from "../vite";
 function escapeMarkdown(text: string): string {
   if (!text) return '';
 
-  // Don't escape asterisks used for bold formatting
+  // Characters that need escaping in MarkdownV2
+  const specialChars = ['_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+
+  // If text is meant to be bold (wrapped in **)
   if (text.startsWith('**') && text.endsWith('**')) {
     const content = text.slice(2, -2); // Remove ** from start and end
 
-    // Characters that need escaping in MarkdownV2
-    const specialChars = ['_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-
-    // Escape backslash first to avoid double escaping
-    let escaped = content.replace(/\\/g, '\\\\');
-
-    // Escape all other special characters
+    // Escape special characters in the content
+    let escaped = content;
     for (const char of specialChars) {
-      const regex = new RegExp(`(?<!\\\\)${char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
-      escaped = escaped.replace(regex, `\\${char}`);
+      escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
     }
 
-    // Re-add the bold markers
-    return `**${escaped}**`;
+    // Add bold markers back
+    return `*${escaped}*`;  // Telegram uses single * for bold in MarkdownV2
   }
 
-  // Regular escaping for text without bold markers
-  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-  let escaped = text.replace(/\\/g, '\\\\');
-  for (const char of specialChars) {
-    const regex = new RegExp(`(?<!\\\\)${char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
-    escaped = escaped.replace(regex, `\\${char}`);
+  // Regular text without bold formatting
+  let escaped = text;
+  for (const char of [...specialChars, '*']) {
+    escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
   }
   return escaped;
 }
@@ -687,9 +682,10 @@ export class TelegramBot {
 
     const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
     const name = escapeMarkdown(category.name);
+    // Escape the summary text while preserving bold formatting if present
     const summary = escapeMarkdown(category.serviceSummary);
 
-    // Format the message with proper Markdown escaping
+    // Format the message
     const messageText = `*${name}*\n\n${summary}`;
 
     try {
@@ -712,7 +708,7 @@ export class TelegramBot {
         if (activeTicket) {
           const activeCategory = await storage.getCategory(activeTicket.categoryId!);
           await ctx.reply(
-            `You already have an active ticket in ${escapeMarkdown(activeCategory?.name || "Unknown")} category.\n\nPlease use /close to close your current ticket before starting a new one.`,
+            `You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category\\.\n\nPlease use /close to close your current ticket before starting a new one\\.`,
             { parse_mode: 'MarkdownV2' }
           );
           return;
