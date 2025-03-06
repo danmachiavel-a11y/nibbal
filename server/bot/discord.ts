@@ -42,70 +42,85 @@ export class DiscordBot {
       // Check if commands are already registered
       const existingCommands = await this.client.application?.commands.fetch();
       if (existingCommands && existingCommands.size > 0) {
-        log("Slash commands already registered");
+        log("Slash commands already registered, skipping registration");
         return;
       }
 
-      await this.client.application?.commands.create({
-        name: 'paid',
-        description: 'Mark a ticket as paid with the specified amount',
-        type: ApplicationCommandType.ChatInput,
-        options: [
-          {
-            name: 'amount',
-            description: 'The payment amount',
-            type: ApplicationCommandOptionType.Integer,
-            required: true,
-            min_value: 1
-          }
-        ]
-      });
+      // Add delay to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-      await this.client.application?.commands.create({
-        name: 'close',
-        description: 'Close the ticket and move it to transcripts',
-        type: ApplicationCommandType.ChatInput
-      });
+      // Commands to register
+      const commands = [
+        {
+          name: 'paid',
+          description: 'Mark a ticket as paid with the specified amount',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'amount',
+              description: 'The payment amount',
+              type: ApplicationCommandOptionType.Integer,
+              required: true,
+              min_value: 1
+            }
+          ]
+        },
+        {
+          name: 'close',
+          description: 'Close the ticket and move it to transcripts',
+          type: ApplicationCommandType.ChatInput
+        },
+        {
+          name: 'delete',
+          description: 'Delete this ticket channel',
+          type: ApplicationCommandType.ChatInput
+        },
+        {
+          name: 'deleteall',
+          description: 'Delete all tickets in a category',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'category',
+              description: 'The category to delete tickets from',
+              type: ApplicationCommandOptionType.Channel,
+              channelTypes: [ChannelType.GuildCategory],
+              required: true
+            }
+          ]
+        },
+        {
+          name: 'closeall',
+          description: 'Close all tickets in a category',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'category',
+              description: 'The category to close tickets from',
+              type: ApplicationCommandOptionType.Channel,
+              channelTypes: [ChannelType.GuildCategory],
+              required: true
+            }
+          ]
+        }
+      ];
 
-      await this.client.application?.commands.create({
-        name: 'delete',
-        description: 'Delete this ticket channel',
-        type: ApplicationCommandType.ChatInput
-      });
+      // Register commands with rate limit handling
+      for (const command of commands) {
+        try {
+          await this.client.application?.commands.create(command);
+          // Add delay between each command registration
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          log(`Registered command: ${command.name}`);
+        } catch (error) {
+          log(`Error registering command ${command.name}: ${error}`, "error");
+        }
+      }
 
-      await this.client.application?.commands.create({
-        name: 'deleteall',
-        description: 'Delete all tickets in a category',
-        type: ApplicationCommandType.ChatInput,
-        options: [
-          {
-            name: 'category',
-            description: 'The category to delete tickets from',
-            type: ApplicationCommandOptionType.Channel,
-            channelTypes: [ChannelType.GuildCategory],
-            required: true
-          }
-        ]
-      });
-
-      await this.client.application?.commands.create({
-        name: 'closeall',
-        description: 'Close all tickets in a category',
-        type: ApplicationCommandType.ChatInput,
-        options: [
-          {
-            name: 'category',
-            description: 'The category to close tickets from',
-            type: ApplicationCommandOptionType.Channel,
-            channelTypes: [ChannelType.GuildCategory],
-            required: true
-          }
-        ]
-      });
-
-      log("Registered slash commands");
+      log("Completed slash command registration");
     } catch (error) {
-      log(`Error registering slash commands: ${error}`, "error");
+      log(`Error in slash command registration: ${error}`, "error");
+      throw error;
     }
   }
 
