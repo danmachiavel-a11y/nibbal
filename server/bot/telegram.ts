@@ -579,7 +579,7 @@ export class TelegramBot {
 
       const state = this.userStates.get(userId);
       if (!state?.inQuestionnaire) {
-        await ctx.reply("There's nothing to cancel.");
+        await ctx.reply("There's nothing to cancel. Use /start to create a new ticket.");
         return;
       }
 
@@ -797,6 +797,13 @@ export class TelegramBot {
 
     // Store the answer
     state.answers.push(ctx.message.text);
+
+    // Send confirmation of received answer with monospace formatting
+    await ctx.reply(
+      `Q: ${category.questions[state.currentQuestion]}\n` +
+      `A: \`${ctx.message.text}\``,
+      { parse_mode: 'MarkdownV2' }
+    );
 
     // Check if we have more questions
     if (state.currentQuestion < category.questions.length - 1) {
