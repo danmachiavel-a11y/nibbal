@@ -359,6 +359,20 @@ export class TelegramBot {
         const file = await ctx.telegram.getFile(bestPhoto.file_id);
         const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
 
+        // Get user's avatar URL if available
+        let avatarUrl: string | undefined;
+        try {
+          const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+          if (photos && photos.total_count > 0) {
+            const fileId = photos.photos[0][0].file_id;
+            const file = await ctx.telegram.getFile(fileId);
+            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+          }
+        } catch (error) {
+          log(`Error getting Telegram user avatar: ${error}`, "error");
+          // Continue without avatar if there's an error
+        }
+
         // Store message in database first
         await storage.createMessage({
           ticketId: activeTicket.id,
@@ -368,21 +382,21 @@ export class TelegramBot {
           timestamp: new Date()
         });
 
-        // Forward to Discord
+        // Forward to Discord with caption if present
         await this.bridge.forwardToDiscord(
           ctx.message.caption || "Sent an image:",
           activeTicket.id,
           ctx.from.first_name || ctx.from.username || "Telegram User",
-          imageUrl // This will be the avatar URL
+          avatarUrl // Use the user's profile photo as avatar
         );
 
-        // Also forward the actual image to Discord
+        // Also forward the actual image
         await this.bridge.forwardToDiscord(
           "",
           activeTicket.id,
           ctx.from.first_name || ctx.from.username || "Telegram User",
-          undefined,
-          imageUrl // This will be the image to send
+          avatarUrl, // Keep the same avatar
+          imageUrl // Send the actual image as attachment
         );
 
         log(`Successfully forwarded photo from Telegram to Discord for ticket ${activeTicket.id}`);
