@@ -11,7 +11,7 @@ interface CommandCooldown {
 interface UserState {
   categoryId: number;
   currentQuestion: number;
-  answers: string[];
+  answers: string[] | any[]; // Modified to accept both string[] and the new embed object
   inQuestionnaire: boolean;
 }
 
@@ -832,14 +832,22 @@ export class TelegramBot {
 
       try {
         // Format answers for Discord before creating ticket
-        const formattedAnswers = state.answers.map((answer, index) => {
+        const formattedAnswers = state.answers.map((answer: string, index) => {
           const question = category.questions[index];
           const cleanAnswer = answer.replace(/^.*\n/, '').trim(); // Remove any question text from the answer
-          return `**${question}**\n\`\`\`${cleanAnswer}\`\`\``;
-        }).join('\n\n');
+          return {
+            name: question,
+            value: `\`\`\`${cleanAnswer}\`\`\``
+          };
+        });
 
         // Create ticket with formatted answers
-        state.answers = [formattedAnswers];
+        state.answers = [{
+          type: 'embed',
+          title: '🎫 New Ticket Questionnaire',
+          color: 0x5865F2, // Discord blue color
+          fields: formattedAnswers
+        }];
         await this.createTicket(ctx);
       } catch (error) {
         log(`Error creating ticket: ${error}`, "error");
@@ -947,7 +955,7 @@ export class TelegramBot {
         parse_mode: 'MarkdownV2'
       });
 
-      log(`Successfully sent photo to Telegram chat: ${chatId}`);
+      log(`Successfully sent phototo Telegram chat: ${chatId}`);
     } catch (error) {
       log(`Error sending Telegram photo: ${error}`, "error");
       throw error;
