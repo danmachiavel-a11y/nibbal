@@ -65,7 +65,7 @@ export class DiscordBot {
 
       // If we have working webhooks, use the least recently used one
       if (webhooks.length > 0) {
-        const webhook = webhooks.reduce((prev, curr) => 
+        const webhook = webhooks.reduce((prev, curr) =>
           prev.lastUsed < curr.lastUsed ? prev : curr
         );
         webhook.lastUsed = Date.now();
@@ -121,7 +121,7 @@ export class DiscordBot {
     }
   }
 
-  async sendWebhookMessage(channelId: string, message: string): Promise<void> {
+  async sendWebhookMessage(channelId: string, message: string | any): Promise<void> {
     try {
       // Check webhook rate limit
       await rateLimiter.webhookCheck(channelId);
@@ -133,7 +133,23 @@ export class DiscordBot {
       if (!webhookClient) throw new Error("Failed to get webhook");
 
       try {
-        await webhookClient.send(message);
+        // Handle embed messages
+        if (typeof message === 'object' && message.type === 'embed') {
+          await webhookClient.send({
+            embeds: [{
+              title: message.title,
+              color: message.color,
+              fields: message.fields.map((field: any) => ({
+                name: field.name,
+                value: field.value,
+                inline: false
+              }))
+            }]
+          });
+        } else {
+          // Regular text messages
+          await webhookClient.send(message);
+        }
 
         // Reset failure count on success
         const webhooks = this.webhookPool.get(channelId) || [];
@@ -200,10 +216,10 @@ export class DiscordBot {
     try {
       // Check channel edit rate limit
       await rateLimiter.channelEditCheck(channelId);
-      
+
       // Global rate limit check
       await rateLimiter.globalCheck();
-      
+
       const channel = await this.client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
         await channel.edit(options);
@@ -217,10 +233,10 @@ export class DiscordBot {
     try {
       // Check messages fetch rate limit
       await rateLimiter.messagesFetchCheck(channelId);
-      
+
       // Global rate limit check
       await rateLimiter.globalCheck();
-      
+
       const channel = await this.client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
         const messages = await (channel as TextChannel).messages.fetch({ limit });

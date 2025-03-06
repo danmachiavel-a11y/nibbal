@@ -832,18 +832,19 @@ export class TelegramBot {
 
       try {
         // Format answers for Discord
-        const formattedAnswers = [{
+        const formattedAnswers = {
           type: 'embed',
           title: '🎫 New Ticket Questions',
           color: 0x5865F2, // Discord blue color
           fields: category.questions.map((question, index) => ({
             name: question,
-            value: `\`\`\`${state.answers[index].trim()}\`\`\``
+            value: `\`\`\`${state.answers[index] || 'No answer provided'}\`\`\``,
+            inline: false
           }))
-        }];
+        };
 
         // Update state with formatted answers
-        state.answers = formattedAnswers;
+        state.answers = [formattedAnswers];
         await this.createTicket(ctx);
       } catch (error) {
         log(`Error creating ticket: ${error}`, "error");
