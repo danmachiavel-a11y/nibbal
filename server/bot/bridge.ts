@@ -20,23 +20,23 @@ export class BridgeManager {
   }
 
   private startHealthCheck() {
-    // Run health check every 30 seconds
+    // Run health check every 60 seconds instead of 30
     this.healthCheckInterval = setInterval(async () => {
       try {
         // Add delay between checks to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
         const health = await this.healthCheck();
 
         if (!health.telegram || !health.discord) {
           log("Bot disconnected, attempting to reconnect...");
           // Add delay before reconnection attempt
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, 5000));
           await this.reconnectDisconnectedBots(health);
         }
       } catch (error) {
         log(`Health check failed: ${error}`, "error");
       }
-    }, 30000); // Keep 30 second interval but add internal delays
+    }, 60000); // Increased from 30000 to 60000 ms
   }
 
   private async reconnectDisconnectedBots(health: { telegram: boolean; discord: boolean }) {
@@ -147,10 +147,20 @@ export class BridgeManager {
     telegram: boolean;
     discord: boolean;
   }> {
-    return {
-      telegram: this.telegramBot.getIsConnected(),
-      discord: this.discordBot.isReady()
-    };
+    try {
+      // Add delay to prevent rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return {
+        telegram: this.telegramBot.getIsConnected(),
+        discord: this.discordBot.isReady()
+      };
+    } catch (error) {
+      log(`Error in health check: ${error}`, "error");
+      return {
+        telegram: false,
+        discord: false
+      };
+    }
   }
 
   async moveToTranscripts(ticketId: number): Promise<void> {

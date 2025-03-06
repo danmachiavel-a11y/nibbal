@@ -607,11 +607,10 @@ export class TelegramBot {
   }
 
 
-
   getIsConnected(): boolean {
     try {
-      // Check if bot is actually running by attempting to get bot info
-      const connected = this._isConnected && this.bot.botInfo !== undefined;
+      // Consider bot connected if we have the botInfo and _isConnected flag
+      const connected = this._isConnected && this.bot.botInfo !== undefined && !this.isStarting;
       if (!connected) {
         log("Telegram bot is not connected", "warn");
       }
