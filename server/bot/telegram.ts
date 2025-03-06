@@ -59,6 +59,10 @@ export class TelegramBot {
   private _isConnected: boolean = false;
   private static instance: TelegramBot | null = null;
   private isStarting: boolean = false;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private reconnectAttempts: number = 0;
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private readonly INITIAL_RECONNECT_DELAY = 2000; // 2 seconds
 
   constructor(bridge: BridgeManager) {
     try {
@@ -79,6 +83,10 @@ export class TelegramBot {
       this.userStates = new Map();
       this.setupHandlers();
       TelegramBot.instance = this;
+
+      // Setup heartbeat check
+      this.startHeartbeat();
+
       log("Telegram bot instance created successfully");
     } catch (error) {
       log(`Error creating Telegram bot: ${error}`, "error");
@@ -86,21 +94,74 @@ export class TelegramBot {
     }
   }
 
+  private startHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+
+    this.heartbeatInterval = setInterval(async () => {
+      try {
+        if (this._isConnected && !this.isStarting) {
+          // Check connection by getting bot info
+          await this.bot.telegram.getMe();
+        }
+      } catch (error) {
+        log("Heartbeat check failed, connection may be lost", "warn");
+        this._isConnected = false;
+        await this.handleDisconnect();
+      }
+    }, 30000); // Check every 30 seconds
+  }
+
+  private async handleDisconnect() {
+    if (this.isStarting) return; // Don't handle disconnect if already reconnecting
+
+    log("Bot disconnected, attempting to reconnect...");
+
+    // Calculate delay with exponential backoff
+    const delay = this.INITIAL_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts);
+
+    // Wait before attempting reconnect
+    await new Promise(resolve => setTimeout(resolve, delay));
+
+    try {
+      await this.start();
+      this.reconnectAttempts = 0; // Reset attempts on successful reconnection
+    } catch (error) {
+      this.reconnectAttempts++;
+      log(`Reconnection attempt ${this.reconnectAttempts} failed: ${error}`, "error");
+
+      if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+        await this.handleDisconnect(); // Try again
+      } else {
+        log("Max reconnection attempts reached, manual intervention required", "error");
+      }
+    }
+  }
+
   private async cleanupBeforeStart() {
     try {
+      // Clear any existing timers
+      if (this.heartbeatInterval) {
+        clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = null;
+      }
+
       // Add retry mechanism for waiting when bot is already starting
       if (this.isStarting) {
         log("Bot is already starting, waiting for current start to complete...");
         let retries = 0;
         const maxRetries = 3;
+        const retryDelay = 2000; // 2 seconds
 
         while (this.isStarting && retries < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
           retries++;
           log(`Waiting for existing startup to complete (attempt ${retries}/${maxRetries})...`);
         }
 
         if (this.isStarting) {
+          this.isStarting = false; // Force reset if stuck
           log("Timed out waiting for existing startup");
           return false;
         }
@@ -156,6 +217,10 @@ export class TelegramBot {
 
         // Set connected status after successful launch and verification
         this._isConnected = true;
+
+        // Start heartbeat monitoring
+        this.startHeartbeat();
+
         log("Telegram bot started and connected successfully");
       } catch (error) {
         // Reset state on error
@@ -175,6 +240,12 @@ export class TelegramBot {
     try {
       log("Stopping Telegram bot...");
 
+      // Clear heartbeat interval
+      if (this.heartbeatInterval) {
+        clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = null;
+      }
+
       // Only attempt to stop if connected
       if (this._isConnected) {
         await this.bot.stop();
@@ -186,6 +257,7 @@ export class TelegramBot {
       this._isConnected = false;
       this.isStarting = false;
       this.userStates.clear();
+      this.reconnectAttempts = 0;
 
       log("Telegram bot stopped successfully");
     } catch (error) {
@@ -747,7 +819,7 @@ export class TelegramBot {
     } catch (error) {
       log(`Error sending category photo: ${error}`, "error");
       // Fallback to text-only message if photo fails
-      await ctx.reply(messageText, { 
+      await ctx.reply(messageText, {
         parse_mode: 'MarkdownV2'
       });
     }
