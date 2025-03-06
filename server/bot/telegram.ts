@@ -822,6 +822,33 @@ export class TelegramBot {
     const category = await storage.getCategory(categoryId);
     if (!category) return;
 
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    // Check for existing questionnaire or active ticket first
+    const state = this.userStates.get(userId);
+    if (state?.inQuestionnaire) {
+      await ctx.reply(
+        "❌ You are currently answering questions for a ticket.\n" +
+        "Use /cancel to cancel the current process first."
+      );
+      return;
+    }
+
+    const user = await storage.getUserByTelegramId(userId.toString());
+    if (user) {
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (activeTicket) {
+        const activeCategory = await storage.getCategory(activeTicket.categoryId);
+        await ctx.reply(
+          `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\n` +
+          "Please use /close to close your current ticket before starting a new one.",
+          { parse_mode: 'MarkdownV2' }
+        );
+        return;
+      }
+    }
+
     const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
     const name = escapeMarkdown(category.name);
     const summary = escapeMarkdown(category.serviceSummary);
@@ -837,33 +864,19 @@ export class TelegramBot {
         }
       );
 
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (activeTicket) {
-          const activeCategory = await storage.getCategory(activeTicket.categoryId!);
-          await ctx.reply(
-            `You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\nPlease use /close to close your current ticket before starting a new one.`,
-            { parse_mode: 'MarkdownV2' }
-          );
-          return;
-        }
-      }
-
+      // Set questionnaire state immediately after category selection
       this.userStates.set(userId, {
         categoryId,
         currentQuestion: 0,
         answers: [],
-        inQuestionnaire: false
+        inQuestionnaire: true // Set to true immediately
       });
 
       if (category.questions && category.questions.length > 0) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         await ctx.reply(category.questions[0]);
       } else {
+        // If no questions, create ticket directly
         await this.createTicket(ctx);
       }
     } catch (error) {
