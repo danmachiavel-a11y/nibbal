@@ -6,19 +6,33 @@ import { log } from "../vite";
 function escapeMarkdown(text: string): string {
   if (!text) return '';
 
-  // Characters that need escaping in MarkdownV2
+  // Don't escape asterisks used for bold formatting
+  if (text.startsWith('**') && text.endsWith('**')) {
+    const content = text.slice(2, -2); // Remove ** from start and end
+
+    // Characters that need escaping in MarkdownV2
+    const specialChars = ['_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+
+    // Escape backslash first to avoid double escaping
+    let escaped = content.replace(/\\/g, '\\\\');
+
+    // Escape all other special characters
+    for (const char of specialChars) {
+      const regex = new RegExp(`(?<!\\\\)${char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+      escaped = escaped.replace(regex, `\\${char}`);
+    }
+
+    // Re-add the bold markers
+    return `**${escaped}**`;
+  }
+
+  // Regular escaping for text without bold markers
   const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-
-  // Escape backslash first to avoid double escaping
   let escaped = text.replace(/\\/g, '\\\\');
-
-  // Escape all other special characters
   for (const char of specialChars) {
-    // Use a regex that matches the character even if it's already escaped
     const regex = new RegExp(`(?<!\\\\)${char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
     escaped = escaped.replace(regex, `\\${char}`);
   }
-
   return escaped;
 }
 
@@ -698,7 +712,7 @@ export class TelegramBot {
         if (activeTicket) {
           const activeCategory = await storage.getCategory(activeTicket.categoryId!);
           await ctx.reply(
-            `You already have an active ticket in ${escapeMarkdown(activeCategory?.name || "Unknown")} category\\.\n\nPlease use /close to close your current ticket before starting a new one\\.`,
+            `You already have an active ticket in ${escapeMarkdown(activeCategory?.name || "Unknown")} category.\n\nPlease use /close to close your current ticket before starting a new one.`,
             { parse_mode: 'MarkdownV2' }
           );
           return;
