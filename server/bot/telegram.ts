@@ -1,4 +1,4 @@
-import { Telegraf } from "telegraf";
+import { Telegraf, Markup } from "telegraf";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
@@ -25,16 +25,78 @@ export class TelegramBot {
   }
 
   private setupHandlers() {
-    // Add start command handler
+    // Add start command handler with buttons
     this.bot.command('start', async (ctx) => {
       try {
         log(`Received /start command from user ${ctx.from.id}`);
-        const reply = "Welcome! I'll help you manage your support tickets. Your messages will be forwarded to our support team.";
-        await ctx.reply(reply);
-        log(`Sent welcome message to user ${ctx.from.id}`);
+
+        const welcomeMessage = "Welcome! I'll help you manage your support tickets. Your messages will be forwarded to our support team.";
+
+        // Create keyboard with common actions
+        const keyboard = Markup.keyboard([
+          ['📝 Create New Ticket', '🔍 View My Tickets'],
+          ['❓ Help', '⚙️ Settings']
+        ]).resize();
+
+        await ctx.reply(welcomeMessage, keyboard);
+        log(`Sent welcome message with keyboard to user ${ctx.from.id}`);
       } catch (error) {
         log(`Error handling start command: ${error}`, "error");
       }
+    });
+
+    // Handle keyboard button actions
+    this.bot.hears('📝 Create New Ticket', async (ctx) => {
+      try {
+        await ctx.reply('Please create a new ticket through our website. Once created, you can chat here!');
+      } catch (error) {
+        log(`Error handling create ticket button: ${error}`, "error");
+      }
+    });
+
+    this.bot.hears('🔍 View My Tickets', async (ctx) => {
+      try {
+        const user = await storage.getUserByTelegramId(ctx.from.id.toString());
+        if (!user) {
+          await ctx.reply("Please register through our website first to view tickets.");
+          return;
+        }
+
+        const tickets = await storage.getTicketsByUserId(user.id);
+        if (tickets.length === 0) {
+          await ctx.reply("You don't have any tickets yet. Create one through our website!");
+          return;
+        }
+
+        let message = "Your tickets:\n\n";
+        tickets.forEach((ticket, index) => {
+          message += `${index + 1}. Ticket #${ticket.id} - ${ticket.status}\n`;
+        });
+
+        await ctx.reply(message);
+      } catch (error) {
+        log(`Error handling view tickets button: ${error}`, "error");
+      }
+    });
+
+    this.bot.hears('❓ Help', async (ctx) => {
+      const helpText = `
+How to use this bot:
+
+1. Create a ticket on our website
+2. Once created, you can send messages here
+3. All messages will be forwarded to our support team
+4. You can send text and images
+
+Commands:
+/start - Show main menu
+/help - Show this help message
+      `;
+      await ctx.reply(helpText);
+    });
+
+    this.bot.hears('⚙️ Settings', async (ctx) => {
+      await ctx.reply('Please visit our website to manage your account settings.');
     });
 
     // Handle text messages
