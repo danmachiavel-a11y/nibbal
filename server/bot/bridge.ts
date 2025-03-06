@@ -22,7 +22,6 @@ export class BridgeManager {
   }
 
   async start() {
-    log("Starting bots...");
     try {
       // Check if already running
       if (this._isConnected) {
@@ -30,6 +29,9 @@ export class BridgeManager {
         return;
       }
 
+      log("Starting bots...");
+
+      // Start Discord bot first
       log("Starting Discord bot...");
       await this.discordBot.start();
 
@@ -42,7 +44,6 @@ export class BridgeManager {
       }, 30000); // 30 second timeout
 
       // Wait for Discord to be ready before starting Telegram
-      // This ensures Discord channels are available for ticket creation
       if (!this.discordBot.isReady()) {
         log("Waiting for Discord bot to be ready...");
         await new Promise(resolve => setTimeout(resolve, 5000));
