@@ -7,6 +7,7 @@ import { log } from "../vite";
 export class BridgeManager {
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
+  private _isConnected: boolean = false;
 
   constructor() {
     log("Initializing Bridge Manager");
@@ -17,6 +18,12 @@ export class BridgeManager {
   async start() {
     log("Starting bots...");
     try {
+      // Check if already connected
+      if (this._isConnected) {
+        log("Bridge is already connected");
+        return;
+      }
+
       // Start bots sequentially to avoid overwhelming APIs
       await this.telegramBot.start();
       log("Telegram bot started successfully");
@@ -24,8 +31,10 @@ export class BridgeManager {
       await this.discordBot.start();
       log("Discord bot started successfully");
 
-      log("Bots initialization completed");
+      this._isConnected = true;
+      log("Bridge initialization completed successfully");
     } catch (error) {
+      this._isConnected = false;
       log(`Error starting bots: ${error}`, "error");
       // Try to stop any partially started bots
       await this.stop().catch(e => log(`Error during cleanup: ${e}`, "error"));
@@ -36,10 +45,21 @@ export class BridgeManager {
   async stop() {
     try {
       log("Stopping bots...");
-      await Promise.allSettled([
+      this._isConnected = false;
+
+      // Stop both bots and handle errors individually
+      const results = await Promise.allSettled([
         this.telegramBot.stop(),
         this.discordBot.stop()
       ]);
+
+      // Log any errors that occurred during shutdown
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          log(`Error stopping ${index === 0 ? 'Telegram' : 'Discord'} bot: ${result.reason}`, "error");
+        }
+      });
+
       log("Bots stopped successfully");
     } catch (error) {
       log(`Error stopping bots: ${error}`, "error");
@@ -48,7 +68,7 @@ export class BridgeManager {
   }
 
   async restart() {
-    log("Restarting bots with new configuration...");
+    log("Restarting bots...");
     try {
       // Stop existing bots
       await this.stop();

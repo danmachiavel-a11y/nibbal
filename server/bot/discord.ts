@@ -50,9 +50,7 @@ class Cooldown {
       return result;
     } catch (error) {
       log(`Error executing ${key}: ${error}`, "error");
-      // If we have cached data and hit an error, return cached data
       if (cached) {
-        log(`Returning cached data for ${key} due to error`);
         return cached.data;
       }
       throw error;
@@ -76,6 +74,7 @@ export class DiscordBot {
   private _isReady: boolean = false;
   private readyPromise: Promise<void>;
   private readyResolve!: () => void;
+  private connectionTimeout: NodeJS.Timeout | null = null;
 
   constructor(bridge: BridgeManager) {
     this.client = new Client({
@@ -102,13 +101,44 @@ export class DiscordBot {
       }
 
       log("Starting Discord bot...");
+
+      // Reset ready promise
+      this.readyPromise = new Promise((resolve) => {
+        this.readyResolve = resolve;
+      });
+
+      // Set a connection timeout
+      this.connectionTimeout = setTimeout(() => {
+        if (!this._isReady) {
+          log("Discord bot connection timeout - attempting restart", "error");
+          this.stop().catch(e => log(`Error stopping bot during timeout: ${e}`, "error"));
+        }
+      }, 30000); // 30 second timeout
+
+      // Login and wait for ready event
       await this.client.login(process.env.DISCORD_BOT_TOKEN);
+      log("Discord login successful, waiting for ready event...");
 
       // Wait for ready event
-      await this.readyPromise;
+      await Promise.race([
+        this.readyPromise,
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Discord login timeout")), 30000)
+        )
+      ]);
+
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
+
       log("Discord bot is fully initialized and ready");
     } catch (error) {
       this._isReady = false;
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
       log(`Error starting Discord bot: ${error}`, "error");
       throw error;
     }
@@ -116,12 +146,18 @@ export class DiscordBot {
 
   async stop() {
     try {
-      if (!this._isReady) {
+      if (!this._isReady && !this.client.isReady()) {
         log("Discord bot is not running");
         return;
       }
 
       log("Stopping Discord bot...");
+
+      // Clear any pending timeouts
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
 
       // Clear cooldowns and cache
       Cooldown.clearCache();
@@ -145,7 +181,7 @@ export class DiscordBot {
         this.readyResolve = resolve;
       });
 
-      log("Discord bot stopped");
+      log("Discord bot stopped successfully");
     } catch (error) {
       log(`Error stopping Discord bot: ${error}`, "error");
       throw error;
@@ -153,15 +189,17 @@ export class DiscordBot {
   }
 
   isReady() {
-    return this._isReady;
+    return this._isReady && this.client.isReady();
   }
 
   private setupHandlers() {
-    this.client.on("ready", () => {
+    this.client.once("ready", () => {
       log("Discord bot connected and ready");
       this._isReady = true;
       this.readyResolve();
-      this.registerSlashCommands();
+      this.registerSlashCommands().catch(error => 
+        log(`Error registering slash commands: ${error}`, "error")
+      );
     });
 
     // Log disconnects
@@ -553,7 +591,7 @@ export class DiscordBot {
         log(`Error getting Discord categories: ${error}`, "error");
         throw error;
       }
-    }, 30000); // 30 second cooldown
+    });
   }
 
   async getRoles() {
@@ -590,7 +628,7 @@ export class DiscordBot {
         log(`Error getting Discord roles: ${error}`, "error");
         throw error;
       }
-    }, 30000); // 30 second cooldown
+    });
   }
 
   private async registerSlashCommands() {
