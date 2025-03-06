@@ -683,7 +683,7 @@ export class TelegramBot {
         { url: photoUrl },
         {
           caption: messageText,
-          parse_mode: 'Markdown'  // Use 'Markdown' instead of 'MarkdownV2' for simpler formatting
+          parse_mode: 'MarkdownV2'
         }
       );
 
@@ -724,7 +724,7 @@ export class TelegramBot {
       log(`Error sending category photo: ${error}`, "error");
       // Fallback to text-only message if photo fails
       await ctx.reply(messageText, { 
-        parse_mode: 'Markdown'
+        parse_mode: 'MarkdownV2'
       });
     }
   }
