@@ -249,21 +249,24 @@ export class BridgeManager {
       const updatedTicket = await storage.getTicket(ticket.id);
       log(`Updated ticket status: ${JSON.stringify(updatedTicket)}`);
 
-      // Format Q&A for embed
-      let message = '';
-      for (const question of category.questions) {
-        const answer = ticket.answers?.[category.questions.indexOf(question)] || 'No answer provided';
-        message += `**Q: ${question}**\n`;
-        message += `A: ${answer}\n\n`;
-      }
+      // Create embed for Q&A
+      const embed = {
+        embeds: [{
+          title: '🎫 New Ticket Questions',
+          color: 0x5865F2,
+          fields: category.questions.map((question, index) => ({
+            name: question,
+            value: `\`\`\`${ticket.answers?.[index] || 'No answer provided'}\`\`\``,
+            inline: false
+          }))
+        }]
+      };
 
-      // Send the formatted Q&A
+      // Send the formatted embed
       await this.discordBot.sendMessage(
         channelId,
-        message,
-        "Ticket Bot",
-        undefined, // avatarUrl
-        undefined  // imageUrl
+        embed,
+        "Ticket Bot"
       );
       log(`Ticket channel created: ${channelName}`);
     } catch (error) {
