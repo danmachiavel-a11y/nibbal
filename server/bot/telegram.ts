@@ -816,15 +816,29 @@ export class TelegramBot {
       // Send next question
       await ctx.reply(category.questions[state.currentQuestion]);
     } else {
-      // All questions answered, create ticket
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const activeCategory = await storage.getCategory(activeTicket.categoryId);
+          await ctx.reply(
+            `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\n` +
+            "Please use /close to close your current ticket before starting a new one.",
+            { parse_mode: 'MarkdownV2' }
+          );
+          return;
+        }
+      }
+
       try {
         // Format answers for Discord before creating ticket
-        const formattedAnswers = state.answers.map((answer, index) =>
-          `Q: ${category.questions[index]}\nA: \`${answer}\``
-        );
+        const formattedAnswers = state.answers.map((answer, index) => {
+          const question = category.questions[index];
+          return `**${question}**\n\`\`\`${answer}\`\`\`\n`;
+        }).join('\n');
 
         // Create ticket with formatted answers
-        state.answers = formattedAnswers;
+        state.answers = [formattedAnswers];
         await this.createTicket(ctx);
       } catch (error) {
         log(`Error creating ticket: ${error}`, "error");
@@ -958,7 +972,8 @@ export class TelegramBot {
 
     const user = await storage.getUserByTelegramId(userId.toString());
     if (user) {
-      const activeTicket = await storage.getActiveTicketByUserId(user.id);if (activeTicket) {
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (activeTicket) {
         const activeCategory = await storage.getCategory(activeTicket.categoryId);
         await ctx.reply(
           `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\n` +
