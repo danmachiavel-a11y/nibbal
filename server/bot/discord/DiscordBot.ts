@@ -133,22 +133,44 @@ export class DiscordBot {
       if (!webhookClient) throw new Error("Failed to get webhook");
 
       try {
+        let messageContent: any;
+
         // Handle embed messages
-        if (typeof message === 'object' && message.type === 'embed') {
-          await webhookClient.send({
+        if (typeof message === 'object') {
+          messageContent = {
             embeds: [{
               title: message.title,
+              description: message.description,
               color: message.color,
               fields: message.fields.map((field: any) => ({
                 name: field.name,
-                value: field.value,
-                inline: false
+                value: `\`\`\`${field.value}\`\`\``,
+                inline: field.inline || false
               }))
             }]
-          });
+          };
         } else {
           // Regular text messages
-          await webhookClient.send(message);
+          messageContent = message;
+        }
+
+        // Send message
+        const sentMessage = await webhookClient.send(messageContent);
+
+        // Pin the message if it's an embed (questionnaire)
+        if (typeof message === 'object' && message.title?.includes('New Ticket Questions')) {
+          const channel = await this.client.channels.fetch(channelId) as TextChannel;
+          if (channel) {
+            const messages = await channel.messages.fetchPinned();
+            // Unpin old messages if there are too many
+            while (messages.size >= 50) {
+              const oldestPin = messages.last();
+              if (oldestPin) await oldestPin.unpin();
+              messages.delete(oldestPin!.id);
+            }
+            // Pin the new message
+            await sentMessage.pin();
+          }
         }
 
         // Reset failure count on success

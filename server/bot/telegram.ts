@@ -816,36 +816,26 @@ export class TelegramBot {
       // Send next question
       await ctx.reply(category.questions[state.currentQuestion]);
     } else {
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (activeTicket) {
-          const activeCategory = await storage.getCategory(activeTicket.categoryId);
-          await ctx.reply(
-            `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\n` +
-            "Please use /close to close your current ticket before starting a new one.",
-            { parse_mode: 'MarkdownV2' }
-          );
-          return;
-        }
-      }
-
       try {
-        // Format answers for Discord
-        const formattedAnswers = {
-          type: 'embed',
-          title: '🎫 New Ticket Questions',
-          color: 0x5865F2, // Discord blue color
-          fields: category.questions.map((question, index) => ({
-            name: question,
-            value: `\`\`\`${state.answers[index] || 'No answer provided'}\`\`\``,
+        // Format answers for Discord in embed format
+        const fields = [];
+        for (let i = 0; i < category.questions.length; i++) {
+          fields.push({
+            name: category.questions[i],
+            value: state.answers[i] || 'No answer provided',
             inline: false
-          }))
+          });
+        }
+
+        // Create embed object
+        const embed = {
+          title: '🎫 New Ticket Questions',
+          color: 0x5865F2,
+          fields: fields
         };
 
-        // Update state with formatted answers
-        state.answers = [formattedAnswers];
-        await this.createTicket(ctx);
+        // Create ticket with embed
+        await this.createTicket(ctx, embed);
       } catch (error) {
         log(`Error creating ticket: ${error}`, "error");
         await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
@@ -857,7 +847,7 @@ export class TelegramBot {
     }
   }
 
-  private async createTicket(ctx: Context) {
+  private async createTicket(ctx: Context, embed?: any) {
     const userId = ctx.from?.id;
     if (!userId) return;
 
@@ -875,7 +865,7 @@ export class TelegramBot {
         });
       }
 
-      // Keep state until ticket is fully created
+      // Create ticket with answers
       const ticket = await storage.createTicket({
         userId: user.id,
         categoryId: state.categoryId,
@@ -883,7 +873,7 @@ export class TelegramBot {
         discordChannelId: null,
         claimedBy: null,
         amount: null,
-        answers: state.answers
+        answers: embed ? [embed] : state.answers
       });
 
       try {
@@ -901,7 +891,7 @@ export class TelegramBot {
       this.activeUsers.delete(userId);
     } catch (error) {
       log(`Error creating ticket: ${error}`, "error");
-      throw error; // Let the caller handle the error
+      throw error;
     }
   }
 
@@ -976,8 +966,7 @@ export class TelegramBot {
       return;
     }
 
-    const user = await storage.getUserByTelegramId(userId.toString());
-    if (user) {
+    const user = await storage.getUserByTelegramId(userId.toString());if (user) {
       const activeTicket = await storage.getActiveTicketByUserId(user.id);
       if (activeTicket) {
         const activeCategory = await storage.getCategory(activeTicket.categoryId);
