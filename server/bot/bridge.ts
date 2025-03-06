@@ -23,15 +23,20 @@ export class BridgeManager {
     // Run health check every 30 seconds
     this.healthCheckInterval = setInterval(async () => {
       try {
+        // Add delay between checks to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 1000));
         const health = await this.healthCheck();
+
         if (!health.telegram || !health.discord) {
           log("Bot disconnected, attempting to reconnect...");
+          // Add delay before reconnection attempt
+          await new Promise(resolve => setTimeout(resolve, 2000));
           await this.reconnectDisconnectedBots(health);
         }
       } catch (error) {
         log(`Health check failed: ${error}`, "error");
       }
-    }, 30000);
+    }, 30000); // Keep 30 second interval but add internal delays
   }
 
   private async reconnectDisconnectedBots(health: { telegram: boolean; discord: boolean }) {

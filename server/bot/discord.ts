@@ -37,73 +37,82 @@ export class DiscordBot {
     this.setupHandlers();
   }
 
+  private async registerSlashCommands() {
+    try {
+      // Check if commands are already registered
+      const existingCommands = await this.client.application?.commands.fetch();
+      if (existingCommands && existingCommands.size > 0) {
+        log("Slash commands already registered");
+        return;
+      }
+
+      await this.client.application?.commands.create({
+        name: 'paid',
+        description: 'Mark a ticket as paid with the specified amount',
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            name: 'amount',
+            description: 'The payment amount',
+            type: ApplicationCommandOptionType.Integer,
+            required: true,
+            min_value: 1
+          }
+        ]
+      });
+
+      await this.client.application?.commands.create({
+        name: 'close',
+        description: 'Close the ticket and move it to transcripts',
+        type: ApplicationCommandType.ChatInput
+      });
+
+      await this.client.application?.commands.create({
+        name: 'delete',
+        description: 'Delete this ticket channel',
+        type: ApplicationCommandType.ChatInput
+      });
+
+      await this.client.application?.commands.create({
+        name: 'deleteall',
+        description: 'Delete all tickets in a category',
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            name: 'category',
+            description: 'The category to delete tickets from',
+            type: ApplicationCommandOptionType.Channel,
+            channelTypes: [ChannelType.GuildCategory],
+            required: true
+          }
+        ]
+      });
+
+      await this.client.application?.commands.create({
+        name: 'closeall',
+        description: 'Close all tickets in a category',
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            name: 'category',
+            description: 'The category to close tickets from',
+            type: ApplicationCommandOptionType.Channel,
+            channelTypes: [ChannelType.GuildCategory],
+            required: true
+          }
+        ]
+      });
+
+      log("Registered slash commands");
+    } catch (error) {
+      log(`Error registering slash commands: ${error}`, "error");
+    }
+  }
+
   private setupHandlers() {
     this.client.on("ready", async () => {
       log("Discord bot ready");
-
-      // Register slash commands
-      try {
-        await this.client.application?.commands.create({
-          name: 'paid',
-          description: 'Mark a ticket as paid with the specified amount',
-          type: ApplicationCommandType.ChatInput,
-          options: [
-            {
-              name: 'amount',
-              description: 'The payment amount',
-              type: ApplicationCommandOptionType.Integer,
-              required: true,
-              min_value: 1
-            }
-          ]
-        });
-
-        await this.client.application?.commands.create({
-          name: 'close',
-          description: 'Close the ticket and move it to transcripts',
-          type: ApplicationCommandType.ChatInput
-        });
-
-        await this.client.application?.commands.create({
-          name: 'delete',
-          description: 'Delete this ticket channel',
-          type: ApplicationCommandType.ChatInput
-        });
-
-        await this.client.application?.commands.create({
-          name: 'deleteall',
-          description: 'Delete all tickets in a category',
-          type: ApplicationCommandType.ChatInput,
-          options: [
-            {
-              name: 'category',
-              description: 'The category to delete tickets from',
-              type: ApplicationCommandOptionType.Channel,
-              channelTypes: [ChannelType.GuildCategory],
-              required: true
-            }
-          ]
-        });
-
-        await this.client.application?.commands.create({
-          name: 'closeall',
-          description: 'Close all tickets in a category',
-          type: ApplicationCommandType.ChatInput,
-          options: [
-            {
-              name: 'category',
-              description: 'The category to close tickets from',
-              type: ApplicationCommandOptionType.Channel,
-              channelTypes: [ChannelType.GuildCategory],
-              required: true
-            }
-          ]
-        });
-
-        log("Registered slash commands");
-      } catch (error) {
-        log(`Error registering slash commands: ${error}`, "error");
-      }
+      await this.registerSlashCommands();
     });
 
     // Handle slash commands
@@ -465,16 +474,26 @@ export class DiscordBot {
         throw new Error(`Invalid channel type for channel ${channelId}`);
       }
 
-      // Create or get webhook
+      // Get existing webhook or create new one with rate limit handling
       let webhook = this.webhooks.get(channelId);
       if (!webhook) {
-        log(`Creating new webhook for channel ${channelId}`);
-        webhook = await channel.createWebhook({
-          name: "Telegram Bridge",
-          avatar: avatarUrl
-        });
-        this.webhooks.set(channelId, webhook);
-        log(`Created webhook: ${webhook.id} for channel ${channelId}`);
+        const existingWebhooks = await channel.fetchWebhooks();
+        webhook = existingWebhooks.find(w => w.name === "Telegram Bridge");
+
+        if (!webhook) {
+          log(`Creating new webhook for channel ${channelId}`);
+          // Add delay to avoid rate limits
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          webhook = await channel.createWebhook({
+            name: "Telegram Bridge",
+            avatar: avatarUrl
+          });
+          this.webhooks.set(channelId, webhook);
+          log(`Created webhook: ${webhook.id} for channel ${channelId}`);
+        } else {
+          this.webhooks.set(channelId, webhook);
+          log(`Using existing webhook: ${webhook.id} for channel ${channelId}`);
+        }
       }
 
       if (embed) {
@@ -487,7 +506,8 @@ export class DiscordBot {
           ]
         });
 
-        // Pin the embed message
+        // Add delay before pinning to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 1000));
         await embedMessage.pin();
         log(`Pinned embed message in channel ${channelId}`);
       } else {
