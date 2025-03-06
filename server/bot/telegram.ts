@@ -4,13 +4,23 @@ import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 
 function escapeMarkdown(text: string): string {
-    const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-    let escaped = text;
-    for (const char of specialChars) {
-      escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
-    }
-    return escaped;
+  if (!text) return '';
+
+  // Characters that need escaping in MarkdownV2
+  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+
+  // Escape backslash first to avoid double escaping
+  let escaped = text.replace(/\\/g, '\\\\');
+
+  // Escape all other special characters
+  for (const char of specialChars) {
+    // Use a regex that matches the character even if it's already escaped
+    const regex = new RegExp(`(?<!\\\\)${char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+    escaped = escaped.replace(regex, `\\${char}`);
   }
+
+  return escaped;
+}
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
@@ -171,62 +181,9 @@ export class TelegramBot {
       if (!data.startsWith("category_")) return;
 
       const categoryId = parseInt(data.split("_")[1]);
-      const category = await storage.getCategory(categoryId);
-      if (!category) return;
-
-      // Display category info and start questionnaire
-      const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-      const summary = `*${escapeMarkdown(category.name)}*\n\n${escapeMarkdown(category.serviceSummary)}`;
-
-      try {
-        await ctx.replyWithPhoto(
-          { url: photoUrl },
-          {
-            caption: summary,
-            parse_mode: 'MarkdownV2'
-          }
-        );
-      } catch (error) {
-        await ctx.reply(summary, { parse_mode: 'MarkdownV2' });
-      }
-
-      // Initialize user state for questionnaire
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      // Check for active tickets again before starting questionnaire
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (activeTicket) {
-          const activeCategory = await storage.getCategory(activeTicket.categoryId);
-          await ctx.reply(
-            "❌ You already have an active ticket in " +
-              `*${activeCategory?.name || "Unknown"}* category.\n\n` +
-              "Please use /close to close your current ticket before starting a new one.",
-            { parse_mode: "Markdown" }
-          );
-          return;
-        }
-      }
-
-      // Initialize questionnaire
-      this.userStates.set(userId, {
-        categoryId,
-        currentQuestion: 0,
-        answers: []
-      });
-
-      // Start with first question
-      if (category.questions && category.questions.length > 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for better UX
-        await ctx.reply(category.questions[0]);
-      } else {
-        // If no questions, create ticket directly
-        await this.createTicket(ctx);
-      }
-
+      await this.handleCategorySelection(ctx, categoryId);
       await ctx.answerCbQuery();
+
     });
 
     // Status command
@@ -529,24 +486,41 @@ export class TelegramBot {
     }
   }
 
+  private async cleanupBeforeStart() {
+    try {
+      // Try to stop any existing bot instance
+      if (this._isConnected) {
+        await this.stop();
+        // Add delay after stopping
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    } catch (error) {
+      log(`Error during cleanup: ${error}`, "error");
+    }
+  }
+
   async start() {
     try {
       log("Starting Telegram bot...");
+
+      // Cleanup before starting
+      await this.cleanupBeforeStart();
+
       await this.bot.launch({
-        dropPendingUpdates: true,
-        onLaunch: () => {
-          this._isConnected = true;
-          log("Telegram bot started and connected successfully");
-        }
+        dropPendingUpdates: true
       });
+
+      // Set connected status after successful launch
+      this._isConnected = true;
+      log("Telegram bot started and connected successfully");
 
       // Verify connection by getting bot info
       const botInfo = await this.bot.telegram.getMe();
       log(`Connected as @${botInfo.username}`);
 
     } catch (error) {
-      log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
+      log(`Error starting Telegram bot: ${error}`, "error");
       throw error;
     }
   }
@@ -556,6 +530,8 @@ export class TelegramBot {
       log("Stopping Telegram bot...");
       await this.bot.stop();
       this._isConnected = false;
+      // Add delay after stopping
+      await new Promise(resolve => setTimeout(resolve, 1000));
       log("Telegram bot stopped successfully");
     } catch (error) {
       log(`Error stopping Telegram bot: ${error}`, "error");
@@ -620,6 +596,33 @@ export class TelegramBot {
     } catch (error) {
       log(`Error sending Telegram photo: ${error}`, "error");
       throw error;
+    }
+  }
+
+  private async handleCategorySelection(ctx: Context, categoryId: number) {
+    const category = await storage.getCategory(categoryId);
+    if (!category) return;
+
+    const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
+    const name = escapeMarkdown(category.name);
+    const summary = escapeMarkdown(category.serviceSummary);
+
+    const messageText = `*${name}*\n\n${summary}`;
+
+    try {
+      await ctx.replyWithPhoto(
+        { url: photoUrl },
+        {
+          caption: messageText,
+          parse_mode: 'MarkdownV2'
+        }
+      );
+    } catch (error) {
+      log(`Error sending category photo: ${error}`, "error");
+      // Fallback to text-only message if photo fails
+      await ctx.reply(messageText, { 
+        parse_mode: 'MarkdownV2' 
+      });
     }
   }
 }

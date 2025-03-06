@@ -43,6 +43,8 @@ export class BridgeManager {
     try {
       if (!health.telegram) {
         log("Attempting to reconnect Telegram bot...");
+        // Add delay before reconnection
+        await new Promise(resolve => setTimeout(resolve, 2000));
         await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
       }
       if (!health.discord) {
@@ -108,6 +110,9 @@ export class BridgeManager {
         this.telegramBot.stop(),
         this.discordBot.stop()
       ]);
+
+      // Add delay before creating new instances
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Create new instances with updated tokens
       this.telegramBot = new TelegramBot(this);
