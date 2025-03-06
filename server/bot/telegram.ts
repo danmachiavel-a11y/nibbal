@@ -672,25 +672,56 @@ export class TelegramBot {
     if (!category) return;
 
     const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-    const name = escapeMarkdown(category.name);
-    const summary = escapeMarkdown(category.serviceSummary);
+    const name = category.name;
+    const summary = category.serviceSummary;
 
-    const messageText = `*${name}*\n\n${summary}`;
+    const messageText = `${name}\n\n${summary}`;
 
     try {
       await ctx.replyWithPhoto(
         { url: photoUrl },
         {
-          caption: messageText,
-          parse_mode: 'MarkdownV2'
+          caption: messageText
         }
       );
+
+      // Initialize questionnaire after sending intro message
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      // Check for active tickets before starting questionnaire
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const activeCategory = await storage.getCategory(activeTicket.categoryId!);
+          await ctx.reply(
+            `You already have an active ticket in ${activeCategory?.name || "Unknown"} category.\n\nPlease use /close to close your current ticket before starting a new one.`
+          );
+          return;
+        }
+      }
+
+      // Initialize questionnaire state
+      this.userStates.set(userId, {
+        categoryId,
+        currentQuestion: 0,
+        answers: []
+      });
+
+      // Start with first question after a small delay
+      if (category.questions && category.questions.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await ctx.reply(category.questions[0]);
+      } else {
+        // If no questions, create ticket directly
+        await this.createTicket(ctx);
+      }
+
     } catch (error) {
       log(`Error sending category photo: ${error}`, "error");
       // Fallback to text-only message if photo fails
-      await ctx.reply(messageText, { 
-        parse_mode: 'MarkdownV2' 
-      });
+      await ctx.reply(messageText);
     }
   }
 }
