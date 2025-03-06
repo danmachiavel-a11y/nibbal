@@ -5,18 +5,22 @@ interface RateLimitBucket {
   lastRefill: number;
   capacity: number;
   refillRate: number; // tokens per millisecond
+  queue: Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }>;
 }
 
 export class DiscordRateLimiter {
   private buckets: Map<string, RateLimitBucket> = new Map();
-  
-  // Rate limit configurations
+
+  // Adjusted rate limit configurations for scale
   private readonly LIMITS = {
-    global: { capacity: 50, refillTime: 1000 }, // 50 per second
-    webhook: { capacity: 5, refillTime: 5000 }, // 5 per 5 seconds
-    channelCreate: { capacity: 10, refillTime: 10000 }, // 10 per 10 seconds
-    channelEdit: { capacity: 5, refillTime: 10000 }, // 5 per 10 seconds
-    messagesFetch: { capacity: 50, refillTime: 1000 }, // 50 per second
+    global: { capacity: 45, refillTime: 1000 }, // 45 per second (leaving buffer)
+    webhook: { capacity: 4, refillTime: 5000 }, // 4 per 5 seconds
+    channelCreate: { capacity: 9, refillTime: 10000 }, // 9 per 10 seconds
+    channelEdit: { capacity: 4, refillTime: 10000 }, // 4 per 10 seconds
+    messagesFetch: { capacity: 45, refillTime: 1000 }, // 45 per second
   };
 
   private getBucket(key: string): RateLimitBucket {
@@ -26,7 +30,8 @@ export class DiscordRateLimiter {
         tokens: limit.capacity,
         lastRefill: Date.now(),
         capacity: limit.capacity,
-        refillRate: limit.capacity / limit.refillTime
+        refillRate: limit.capacity / limit.refillTime,
+        queue: []
       });
     }
     return this.buckets.get(key)!;
@@ -36,28 +41,47 @@ export class DiscordRateLimiter {
     const now = Date.now();
     const timePassed = now - bucket.lastRefill;
     const tokensToAdd = timePassed * bucket.refillRate;
-    
+
     bucket.tokens = Math.min(bucket.capacity, bucket.tokens + tokensToAdd);
     bucket.lastRefill = now;
   }
 
   async checkRateLimit(type: string, id: string = 'global'): Promise<void> {
-    const key = `${type}_${id}`;
-    const bucket = this.getBucket(type);
-    
-    this.refillBucket(bucket);
+    return new Promise((resolve, reject) => {
+      const bucket = this.getBucket(type);
+      this.refillBucket(bucket);
 
-    if (bucket.tokens < 1) {
-      const waitTime = (1 - bucket.tokens) / bucket.refillRate;
-      log(`Rate limit hit for ${type}, waiting ${Math.ceil(waitTime)}ms`, "warn");
-      await new Promise(resolve => setTimeout(resolve, Math.ceil(waitTime)));
-      return this.checkRateLimit(type, id);
-    }
+      if (bucket.tokens < 1) {
+        // Add to queue if no tokens available
+        bucket.queue.push({ resolve, reject });
 
-    bucket.tokens -= 1;
+        // Set timeout to prevent indefinite waiting
+        setTimeout(() => {
+          const index = bucket.queue.indexOf({ resolve, reject });
+          if (index > -1) {
+            bucket.queue.splice(index, 1);
+            reject(new Error("Rate limit wait timeout"));
+          }
+        }, 30000); // 30 second timeout
+
+        return;
+      }
+
+      bucket.tokens -= 1;
+      resolve();
+
+      // Process queue if possible
+      while (bucket.queue.length > 0 && bucket.tokens >= 1) {
+        const next = bucket.queue.shift();
+        if (next) {
+          bucket.tokens -= 1;
+          next.resolve();
+        }
+      }
+    });
   }
 
-  // Convenience methods for common rate limit checks
+  // Convenience methods remain unchanged
   async globalCheck(): Promise<void> {
     return this.checkRateLimit('global');
   }

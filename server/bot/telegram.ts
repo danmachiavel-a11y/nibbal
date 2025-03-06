@@ -3,38 +3,41 @@ import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 
+interface CommandCooldown {
+  lastUsed: number;
+  count: number;
+}
+
+interface UserState {
+  categoryId: number;
+  currentQuestion: number;
+  answers: string[];
+  inQuestionnaire: boolean;
+}
+
 function escapeMarkdown(text: string): string {
   if (!text) return '';
 
-  // Characters that need escaping in MarkdownV2
   const specialChars = ['[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
 
-  // Check for different formatting patterns
   const formatPatterns = [
-    { start: '**', end: '**', marker: '*' },  // Bold
-    { start: '__', end: '__', marker: '_' },  // Italic
-    { start: '```', end: '```', marker: '`' }, // Code block
-    { start: '`', end: '`', marker: '`' }     // Inline code
+    { start: '**', end: '**', marker: '*' },
+    { start: '__', end: '__', marker: '_' },
+    { start: '```', end: '```', marker: '`' },
+    { start: '`', end: '`', marker: '`' }
   ];
 
-  // Try to match any of the formatting patterns
   for (const pattern of formatPatterns) {
     if (text.startsWith(pattern.start) && text.endsWith(pattern.end)) {
-      // Remove formatting markers
       const content = text.slice(pattern.start.length, -pattern.end.length);
-
-      // Escape special characters in the content
       let escaped = content;
       for (const char of specialChars) {
         escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
       }
-
-      // Re-add the formatting marker (Telegram style)
       return `${pattern.marker}${escaped}${pattern.marker}`;
     }
   }
 
-  // Regular text without formatting
   let escaped = text;
   for (const char of [...specialChars, '*', '_', '`']) {
     escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
@@ -46,11 +49,6 @@ if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
 }
 
-interface UserState {
-  categoryId: number;
-  currentQuestion: number;
-  answers: string[];
-}
 
 export class TelegramBot {
   private bot: Telegraf | null = null;
@@ -63,8 +61,11 @@ export class TelegramBot {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
-  private readonly INITIAL_RECONNECT_DELAY = 2000; // 2 seconds
-  private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
+  private readonly INITIAL_RECONNECT_DELAY = 2000;
+  private readonly HEARTBEAT_INTERVAL = 30000;
+  private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
+  private readonly COOLDOWN_WINDOW = 60000; // 1 minute
+  private readonly MAX_COMMANDS = 5; // Max commands per minute
 
   constructor(bridge: BridgeManager) {
     try {
@@ -72,9 +73,7 @@ export class TelegramBot {
         throw new Error("Invalid Telegram bot token");
       }
 
-      // Ensure single instance
       if (TelegramBot.instance) {
-        // If instance exists, stop it before creating new one
         TelegramBot.instance.stop().catch(error => {
           log(`Error stopping existing instance: ${error}`, "error");
         });
@@ -92,13 +91,11 @@ export class TelegramBot {
   }
 
   private startHeartbeat() {
-    this.stopHeartbeat(); // Clear any existing heartbeat
+    this.stopHeartbeat();
 
     this.heartbeatInterval = setInterval(async () => {
       try {
         if (!this._isConnected || this.isStarting) return;
-
-        // Check connection by getting bot info
         await this.bot?.telegram.getMe();
       } catch (error) {
         log("Heartbeat check failed, connection may be lost", "warn");
@@ -115,33 +112,28 @@ export class TelegramBot {
   }
 
   private async handleDisconnect() {
-    // Don't handle disconnect if already starting or not connected
     if (this.isStarting || !this._isConnected) return;
 
     this._isConnected = false;
     log("Bot disconnected, attempting to reconnect...");
 
-    // Calculate delay with exponential backoff
     const delay = this.INITIAL_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts);
-
-    // Wait before attempting reconnect
     await new Promise(resolve => setTimeout(resolve, delay));
 
     try {
-      // Attempt reconnection
       log(`Attempting to reconnect Telegram bot (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
       await this.start();
-      this.reconnectAttempts = 0; // Reset attempts on successful reconnection
+      this.reconnectAttempts = 0;
       log("Reconnection successful");
     } catch (error) {
       this.reconnectAttempts++;
       log(`Reconnection attempt failed: ${error}`, "error");
 
       if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
-        await this.handleDisconnect(); // Try again
+        await this.handleDisconnect();
       } else {
         log("Max reconnection attempts reached, manual intervention required", "error");
-        this.reconnectAttempts = 0; // Reset for next time
+        this.reconnectAttempts = 0;
       }
     }
   }
@@ -185,23 +177,19 @@ export class TelegramBot {
     try {
       log("Starting Telegram bot...");
 
-      // Stop existing bot if running
       if (this._isConnected && this.bot) {
         await this.stop();
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      // Clear all states
       this._isConnected = false;
       this.userStates.clear();
       this.stopHeartbeat();
 
-      // Before starting, ensure no other instances are running
       if (this.bot) {
         log("Stopping existing Telegram bot instance before starting a new one", "warn");
         try {
           await this.bot.stopPolling();
-          // Wait for existing connections to fully close
           await new Promise(resolve => setTimeout(resolve, 5000));
         } catch (stopError) {
           log(`Error stopping existing bot: ${stopError}`, "warn");
@@ -211,10 +199,9 @@ export class TelegramBot {
 
       log("Creating new Telegram bot instance");
       this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-      
+
       await this.setupHandlers();
 
-      // Start the bot
       await this.bot.launch({
         dropPendingUpdates: true,
         polling: {
@@ -223,11 +210,9 @@ export class TelegramBot {
         }
       });
 
-      // Verify connection
       const botInfo = await this.bot.telegram.getMe();
       log(`Connected as @${botInfo.username}`);
 
-      // Start heartbeat only after successful connection
       this._isConnected = true;
       this.startHeartbeat();
 
@@ -235,10 +220,8 @@ export class TelegramBot {
     } catch (error) {
       log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
-      // Special handling for 409 conflicts
       if (error instanceof Error && error.message.includes("409: Conflict")) {
         log("409 Conflict detected - another bot instance is already running", "error");
-        // We'll handle this in the bridge reconnect logic
       }
       throw error;
     } finally {
@@ -257,7 +240,6 @@ export class TelegramBot {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      // Reset all states
       this._isConnected = false;
       this.isStarting = false;
       this.userStates.clear();
@@ -271,13 +253,55 @@ export class TelegramBot {
     }
   }
 
+  private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
+    if (!this.commandCooldowns.has(userId)) {
+      this.commandCooldowns.set(userId, new Map());
+    }
+
+    const userCooldowns = this.commandCooldowns.get(userId)!;
+    const now = Date.now();
+
+    if (!userCooldowns.has(command)) {
+      userCooldowns.set(command, { lastUsed: now, count: 1 });
+      return true;
+    }
+
+    const cooldown = userCooldowns.get(command)!;
+
+    if (now - cooldown.lastUsed > this.COOLDOWN_WINDOW) {
+      cooldown.count = 1;
+      cooldown.lastUsed = now;
+      return true;
+    }
+
+    if (cooldown.count >= this.MAX_COMMANDS) {
+      return false;
+    }
+
+    cooldown.count++;
+    cooldown.lastUsed = now;
+    return true;
+  }
+
   private setupHandlers() {
-    // Start command
     this.bot.command("start", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      // Check if user has any active tickets
+      if (!await this.checkCommandCooldown(userId, 'start')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+
+      const state = this.userStates.get(userId);
+      if (state?.inQuestionnaire) {
+        await ctx.reply(
+          "❌ You are currently answering questions for a ticket.\n" +
+          "Use /cancel to cancel the current process first."
+        );
+        return;
+      }
+
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
         const activeTicket = await storage.getActiveTicketByUserId(user.id);
@@ -296,15 +320,12 @@ export class TelegramBot {
       const botConfig = await storage.getBotConfig();
       const categories = await storage.getCategories();
 
-      // Organize categories and submenus
       const submenus = categories.filter(cat => cat.isSubmenu);
       const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
 
-      // Create keyboard with proper row layout
       const keyboard: { text: string; callback_data: string; }[][] = [];
       let currentRow: { text: string; callback_data: string; }[] = [];
 
-      // First add submenus
       for (const submenu of submenus) {
         const button = {
           text: submenu.name,
@@ -323,7 +344,6 @@ export class TelegramBot {
         }
       }
 
-      // Then add root categories
       for (const category of rootCategories) {
         const button = {
           text: category.name,
@@ -373,18 +393,29 @@ export class TelegramBot {
       }
     });
 
-    // Category/Submenu selection
+    this.bot.command("cancel", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      const state = this.userStates.get(userId);
+      if (!state?.inQuestionnaire) {
+        await ctx.reply("There's nothing to cancel.");
+        return;
+      }
+
+      this.userStates.delete(userId);
+      await ctx.reply("❌ Ticket creation cancelled. Use /start when you're ready to try again.");
+    });
+
     this.bot.on("callback_query", async (ctx) => {
       const data = ctx.callbackQuery?.data;
       if (!data) return;
 
       if (data.startsWith("submenu_")) {
-        // Handle submenu selection
         const submenuId = parseInt(data.split("_")[1]);
         const categories = await storage.getCategories();
         const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
 
-        // Create keyboard for submenu categories
         const keyboard = submenuCategories.map(category => [{
           text: category.name,
           callback_data: `category_${category.id}`
@@ -402,10 +433,8 @@ export class TelegramBot {
       const categoryId = parseInt(data.split("_")[1]);
       await this.handleCategorySelection(ctx, categoryId);
       await ctx.answerCbQuery();
-
     });
 
-    // Status command
     this.bot.command("status", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -432,7 +461,6 @@ export class TelegramBot {
       );
     });
 
-    // Close command
     this.bot.command("close", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -450,7 +478,6 @@ export class TelegramBot {
       }
 
       try {
-        // Get category for transcript category ID
         const category = await storage.getCategory(activeTicket.categoryId);
         if (!category?.transcriptCategoryId) {
           await ctx.reply(
@@ -460,10 +487,8 @@ export class TelegramBot {
           return;
         }
 
-        // Mark ticket as closed
         await storage.updateTicketStatus(activeTicket.id, "closed");
 
-        // Try to move Discord channel if it exists
         if (activeTicket.discordChannelId) {
           try {
             await this.bridge.moveToTranscripts(activeTicket.id);
@@ -492,7 +517,6 @@ export class TelegramBot {
       }
     });
 
-    // Handle all text messages
     this.bot.on("text", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -500,7 +524,6 @@ export class TelegramBot {
       const state = this.userStates.get(userId);
       console.log(`Received message from user ${userId}. Current state:`, state);
 
-      // Check if user has an active ticket first
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
         const activeTicket = await storage.getActiveTicketByUserId(user.id);
@@ -510,18 +533,15 @@ export class TelegramBot {
         }
       }
 
-      // If no active ticket, handle as part of questionnaire
       if (state) {
         await this.handleQuestionnaireResponse(ctx, state);
       }
     });
 
-    // Add handler for photos
     this.bot.on("photo", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      // Only handle photos for active tickets
       const user = await storage.getUserByTelegramId(userId.toString());
       if (!user) return;
 
@@ -532,13 +552,11 @@ export class TelegramBot {
       }
 
       try {
-        // Get the best quality photo
         const photos = ctx.message.photo;
         const bestPhoto = photos[photos.length - 1];
         const file = await ctx.telegram.getFile(bestPhoto.file_id);
         const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
 
-        // Get user's avatar URL if available
         let avatarUrl: string | undefined;
         try {
           const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
@@ -549,10 +567,8 @@ export class TelegramBot {
           }
         } catch (error) {
           log(`Error getting Telegram user avatar: ${error}`, "error");
-          // Continue without avatar if there's an error
         }
 
-        // Store message in database first
         await storage.createMessage({
           ticketId: activeTicket.id,
           content: ctx.message.caption || "Image sent",
@@ -561,21 +577,19 @@ export class TelegramBot {
           timestamp: new Date()
         });
 
-        // Forward to Discord with caption if present
         await this.bridge.forwardToDiscord(
           ctx.message.caption || "Sent an image:",
           activeTicket.id,
           ctx.from.first_name || ctx.from.username || "Telegram User",
-          avatarUrl // Use the user's profile photo as avatar
+          avatarUrl
         );
 
-        // Also forward the actual image
         await this.bridge.forwardToDiscord(
           "",
           activeTicket.id,
           ctx.from.first_name || ctx.from.username || "Telegram User",
-          avatarUrl, // Keep the same avatar
-          imageUrl // Send the actual image as attachment
+          avatarUrl,
+          imageUrl
         );
 
         log(`Successfully forwarded photo from Telegram to Discord for ticket ${activeTicket.id}`);
@@ -598,20 +612,16 @@ export class TelegramBot {
 
     console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
 
-    // Store the answer
+    state.inQuestionnaire = true;
+    this.userStates.set(userId, state);
+
     state.answers.push(ctx.message.text);
 
-    // Check if we have more questions
     if (state.currentQuestion < category.questions.length - 1) {
-      // Move to next question
       state.currentQuestion++;
-      this.userStates.set(userId, state); // Update state
-
-      console.log(`Moving to question ${state.currentQuestion + 1}`);
       await ctx.reply(category.questions[state.currentQuestion]);
     } else {
-      // All questions answered, create ticket
-      console.log('All questions answered, creating ticket');
+      state.inQuestionnaire = false;
       await this.createTicket(ctx);
     }
   }
@@ -620,7 +630,6 @@ export class TelegramBot {
     if (!ctx.message || !('text' in ctx.message)) return;
 
     try {
-      // Store message in database
       await storage.createMessage({
         ticketId: ticket.id,
         content: ctx.message.text,
@@ -629,7 +638,6 @@ export class TelegramBot {
         timestamp: new Date()
       });
 
-      // Get user's avatar URL if available
       let avatarUrl: string | undefined;
       try {
         const photos = await this.bot.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
@@ -640,10 +648,8 @@ export class TelegramBot {
         }
       } catch (error) {
         log(`Error getting Telegram user avatar: ${error}`, "error");
-        // Continue without avatar if there's an error
       }
 
-      // Forward message to Discord with avatar
       await this.bridge.forwardToDiscord(
         ctx.message.text,
         ticket.id,
@@ -665,7 +671,6 @@ export class TelegramBot {
     if (!state) return;
 
     try {
-      // Create or get user
       let user = await storage.getUserByTelegramId(userId.toString());
       if (!user) {
         user = await storage.createUser({
@@ -676,7 +681,6 @@ export class TelegramBot {
         });
       }
 
-      // Create ticket
       const ticket = await storage.createTicket({
         userId: user.id,
         categoryId: state.categoryId,
@@ -687,15 +691,12 @@ export class TelegramBot {
         answers: state.answers
       });
 
-      // Clear user state
       this.userStates.delete(userId);
 
       try {
-        // Try to create Discord channel
         await this.bridge.createTicketChannel(ticket);
         await ctx.reply("✅ Ticket created! Our support team will assist you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
       } catch (error) {
-        // If Discord channel creation fails, still create ticket but inform user
         await ctx.reply("✅ Ticket created! However, there might be a slight delay before our team can respond. Please be patient.");
         console.error("Discord channel creation error:", error);
       }
@@ -708,7 +709,6 @@ export class TelegramBot {
 
   getIsConnected(): boolean {
     try {
-      // Consider bot connected if we have the botInfo and _isConnected flag
       const connected = this._isConnected && this.bot?.botInfo !== undefined && !this.isStarting;
       if (!connected) {
         log("Telegram bot is not connected", "warn");
@@ -722,17 +722,14 @@ export class TelegramBot {
 
   async sendMessage(chatId: number, message: string) {
     try {
-      // Validate chat ID
       if (!Number.isInteger(chatId) || chatId <= 0) {
         throw new Error(`Invalid Telegram chat ID: ${chatId}`);
       }
 
-      // Validate message
       if (!message || typeof message !== 'string') {
         throw new Error('Invalid message content');
       }
 
-      // Trim message if it's too long (Telegram limit is 4096 characters)
       const trimmedMessage = message.slice(0, 4000);
 
       await this.bot?.telegram.sendMessage(chatId, trimmedMessage);
@@ -744,12 +741,10 @@ export class TelegramBot {
   }
   async sendPhoto(chatId: number, imageUrl: string, caption?: string) {
     try {
-      // Validate chat ID
       if (!Number.isInteger(chatId) || chatId <= 0) {
         throw new Error(`Invalid Telegram chat ID: ${chatId}`);
       }
 
-      // Validate URL
       if (!imageUrl || typeof imageUrl !== 'string') {
         throw new Error('Invalid image URL');
       }
@@ -772,10 +767,8 @@ export class TelegramBot {
 
     const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
     const name = escapeMarkdown(category.name);
-    // Escape the summary text while preserving bold formatting if present
     const summary = escapeMarkdown(category.serviceSummary);
 
-    // Format the message
     const messageText = `*${name}*\n\n${summary}`;
 
     try {
@@ -787,11 +780,9 @@ export class TelegramBot {
         }
       );
 
-      // Initialize questionnaire after sending intro message
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      // Check for active tickets before starting questionnaire
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
         const activeTicket = await storage.getActiveTicketByUserId(user.id);
@@ -805,25 +796,21 @@ export class TelegramBot {
         }
       }
 
-      // Initialize questionnaire state
       this.userStates.set(userId, {
         categoryId,
         currentQuestion: 0,
-        answers: []
+        answers: [],
+        inQuestionnaire: false
       });
 
-      // Start with first question after a small delay
       if (category.questions && category.questions.length > 0) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         await ctx.reply(category.questions[0]);
       } else {
-        // If no questions, create ticket directly
         await this.createTicket(ctx);
       }
-
     } catch (error) {
       log(`Error sending category photo: ${error}`, "error");
-      // Fallback to text-only message if photo fails
       await ctx.reply(messageText, {
         parse_mode: 'MarkdownV2'
       });
