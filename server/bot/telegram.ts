@@ -37,19 +37,110 @@ export class TelegramBot {
   private bridge: BridgeManager;
   private userStates: Map<number, UserState>;
   private _isConnected: boolean = false;
+  private static instance: TelegramBot | null = null;
+  private isStarting: boolean = false;
 
   constructor(bridge: BridgeManager) {
     try {
       if (!process.env.TELEGRAM_BOT_TOKEN?.trim()) {
         throw new Error("Invalid Telegram bot token");
       }
+
+      // Ensure single instance
+      if (TelegramBot.instance) {
+        throw new Error("TelegramBot instance already exists");
+      }
+
       this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
       this.bridge = bridge;
       this.userStates = new Map();
       this.setupHandlers();
+      TelegramBot.instance = this;
       log("Telegram bot instance created successfully");
     } catch (error) {
       log(`Error creating Telegram bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  private async cleanupBeforeStart() {
+    try {
+      if (this.isStarting) {
+        throw new Error("Bot is already starting");
+      }
+
+      this.isStarting = true;
+
+      // Stop existing instance if connected
+      if (this._isConnected) {
+        await this.stop();
+        // Add delay after stopping
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      // Reset state
+      this._isConnected = false;
+      this.userStates.clear();
+    } catch (error) {
+      log(`Error during cleanup: ${error}`, "error");
+      this.isStarting = false;
+      throw error;
+    }
+  }
+
+  async start() {
+    try {
+      log("Starting Telegram bot...");
+
+      // Cleanup before starting
+      await this.cleanupBeforeStart();
+
+      try {
+        await this.bot.launch({
+          dropPendingUpdates: true
+        });
+
+        // Add delay to ensure proper startup
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Verify connection by getting bot info
+        const botInfo = await this.bot.telegram.getMe();
+        log(`Connected as @${botInfo.username}`);
+
+        // Set connected status after successful launch and verification
+        this._isConnected = true;
+        log("Telegram bot started and connected successfully");
+      } catch (error) {
+        // Reset state on error
+        this._isConnected = false;
+        throw error;
+      } finally {
+        this.isStarting = false;
+      }
+    } catch (error) {
+      log(`Error starting Telegram bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async stop() {
+    try {
+      log("Stopping Telegram bot...");
+
+      // Only attempt to stop if connected
+      if (this._isConnected) {
+        await this.bot.stop();
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // Reset state
+      this._isConnected = false;
+      this.isStarting = false;
+      this.userStates.clear();
+
+      log("Telegram bot stopped successfully");
+    } catch (error) {
+      log(`Error stopping Telegram bot: ${error}`, "error");
       throw error;
     }
   }
@@ -486,58 +577,6 @@ export class TelegramBot {
     }
   }
 
-  private async cleanupBeforeStart() {
-    try {
-      // Try to stop any existing bot instance
-      if (this._isConnected) {
-        await this.stop();
-        // Add delay after stopping
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    } catch (error) {
-      log(`Error during cleanup: ${error}`, "error");
-    }
-  }
-
-  async start() {
-    try {
-      log("Starting Telegram bot...");
-
-      // Cleanup before starting
-      await this.cleanupBeforeStart();
-
-      await this.bot.launch({
-        dropPendingUpdates: true
-      });
-
-      // Set connected status after successful launch
-      this._isConnected = true;
-      log("Telegram bot started and connected successfully");
-
-      // Verify connection by getting bot info
-      const botInfo = await this.bot.telegram.getMe();
-      log(`Connected as @${botInfo.username}`);
-
-    } catch (error) {
-      this._isConnected = false;
-      log(`Error starting Telegram bot: ${error}`, "error");
-      throw error;
-    }
-  }
-
-  async stop() {
-    try {
-      log("Stopping Telegram bot...");
-      await this.bot.stop();
-      this._isConnected = false;
-      // Add delay after stopping
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      log("Telegram bot stopped successfully");
-    } catch (error) {
-      log(`Error stopping Telegram bot: ${error}`, "error");
-      throw error;
-    }
-  }
 
   getIsConnected(): boolean {
     try {

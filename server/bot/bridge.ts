@@ -81,17 +81,24 @@ export class BridgeManager {
   ): Promise<void> {
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
+        // Add delay between attempts
+        if (attempt > 1) {
+          await new Promise(resolve => setTimeout(resolve, this.retryTimeout));
+        }
+
+        log(`Starting ${botName} bot (attempt ${attempt}/${this.maxRetries})...`);
         await startFn();
+
         this.retryAttempts = 0; // Reset on success
         log(`${botName} bot started successfully`);
         return;
       } catch (error) {
         log(`${botName} bot start attempt ${attempt} failed: ${error}`, "error");
+
         if (attempt === this.maxRetries) {
           log(`${botName} bot failed to start after ${this.maxRetries} attempts`, "error");
           throw error;
         }
-        await new Promise(resolve => setTimeout(resolve, this.retryTimeout));
       }
     }
   }
@@ -111,8 +118,8 @@ export class BridgeManager {
         this.discordBot.stop()
       ]);
 
-      // Add delay before creating new instances
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Add longer delay before creating new instances
+      await new Promise(resolve => setTimeout(resolve, 5000));
 
       // Create new instances with updated tokens
       this.telegramBot = new TelegramBot(this);
