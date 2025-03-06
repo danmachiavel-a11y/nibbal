@@ -21,6 +21,11 @@ interface MessageRateLimit {
   blockedUntil?: number;
 }
 
+interface StateCleanup {
+  timeout: NodeJS.Timeout;
+  createdAt: number;
+}
+
 function escapeMarkdown(text: string): string {
   if (!text) return '';
 
@@ -60,6 +65,7 @@ export class TelegramBot {
   private bot: Telegraf | null = null;
   private bridge: BridgeManager;
   private userStates: Map<number, UserState>;
+  private stateCleanups: Map<number, StateCleanup> = new Map();
   private _isConnected: boolean = false;
   private static instance: TelegramBot | null = null;
   private isStarting: boolean = false;
@@ -69,13 +75,16 @@ export class TelegramBot {
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly INITIAL_RECONNECT_DELAY = 2000;
   private readonly HEARTBEAT_INTERVAL = 30000;
+  private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
-  private readonly COOLDOWN_WINDOW = 60000; // 1 minute
-  private readonly MAX_COMMANDS = 5; // Max commands per minute
+  private readonly COOLDOWN_WINDOW = 60000;
+  private readonly MAX_COMMANDS = 5;
   private messageRateLimits: Map<number, MessageRateLimit> = new Map();
-  private readonly MESSAGE_WINDOW = 2000; // 2 seconds
-  private readonly MAX_MESSAGES = 10; // Max messages per window
-  private readonly SPAM_BLOCK_DURATION = 300000; // 5 minutes in milliseconds
+  private readonly MESSAGE_WINDOW = 2000;
+  private readonly MAX_MESSAGES = 10;
+  private readonly SPAM_BLOCK_DURATION = 300000;
+  private readonly MAX_CONCURRENT_USERS = 500;
+  private activeUsers: Set<number> = new Set();
 
   constructor(bridge: BridgeManager) {
     try {
@@ -93,10 +102,130 @@ export class TelegramBot {
       this.userStates = new Map();
       TelegramBot.instance = this;
 
+      // Start cleanup interval for stale states
+      setInterval(() => this.cleanupStaleStates(), 60000);
+
       log("Telegram bot instance created successfully");
     } catch (error) {
       log(`Error creating Telegram bot: ${error}`, "error");
       throw error;
+    }
+  }
+
+  private cleanupStaleStates() {
+    const now = Date.now();
+    this.stateCleanups.forEach((cleanup, userId) => {
+      if (now - cleanup.createdAt > this.STATE_TIMEOUT) {
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+        log(`Cleaned up stale state for user ${userId}`);
+      }
+    });
+  }
+
+  private setState(userId: number, state: UserState) {
+    // Clear existing timeout if any
+    const existing = this.stateCleanups.get(userId);
+    if (existing?.timeout) {
+      clearTimeout(existing.timeout);
+    }
+
+    // Set new state with timeout
+    this.userStates.set(userId, state);
+    const timeout = setTimeout(() => {
+      this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
+      log(`State timeout for user ${userId}`);
+    }, this.STATE_TIMEOUT);
+
+    this.stateCleanups.set(userId, {
+      timeout,
+      createdAt: Date.now()
+    });
+  }
+
+  private async checkActiveUsers(userId: number): Promise<boolean> {
+    // Clean up disconnected users first
+    for (const activeId of this.activeUsers) {
+      try {
+        await this.bot?.telegram.getChat(activeId);
+      } catch (error) {
+        this.activeUsers.delete(activeId);
+        this.userStates.delete(activeId);
+        this.stateCleanups.delete(activeId);
+        log(`Removed inactive user ${activeId}`);
+      }
+    }
+
+    // Check if we can add new user
+    if (!this.activeUsers.has(userId)) {
+      if (this.activeUsers.size >= this.MAX_CONCURRENT_USERS) {
+        return false;
+      }
+      this.activeUsers.add(userId);
+    }
+    return true;
+  }
+
+  private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    try {
+      // Check active users limit
+      if (!await this.checkActiveUsers(userId)) {
+        await ctx.reply("⚠️ Server is currently at capacity. Please try again later.");
+        return;
+      }
+
+      // Check rate limit
+      if (!await this.checkMessageRateLimit(userId)) {
+        const remainingBlock = Math.ceil((this.messageRateLimits.get(userId)?.blockedUntil! - Date.now()) / 1000);
+        await ctx.reply(`⚠️ You are sending messages too quickly. Please wait ${remainingBlock} seconds before sending more messages.`);
+        return;
+      }
+
+      // Process message with error handling
+      try {
+        await storage.createMessage({
+          ticketId: ticket.id,
+          content: ctx.message.text,
+          authorId: user.id,
+          platform: "telegram",
+          timestamp: new Date()
+        });
+
+        let avatarUrl: string | undefined;
+        try {
+          const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+          if (photos && photos.total_count > 0) {
+            const fileId = photos.photos[0][0].file_id;
+            const file = await this.bot?.telegram.getFile(fileId);
+            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file?.file_path}`;
+          }
+        } catch (error) {
+          log(`Error getting Telegram user avatar: ${error}`, "error");
+        }
+
+        await this.bridge.forwardToDiscord(
+          ctx.message.text,
+          ticket.id,
+          ctx.from?.first_name || ctx.from?.username || "Telegram User",
+          avatarUrl
+        );
+
+        log(`Message processed successfully for ticket ${ticket.id}`);
+      } catch (error) {
+        log(`Error processing message: ${error}`, "error");
+        throw error;
+      }
+    } catch (error) {
+      log(`Error in handleTicketMessage: ${error}`, "error");
+      await ctx.reply("Sorry, there was an error processing your message. Please try again.");
     }
   }
 
@@ -195,6 +324,8 @@ export class TelegramBot {
       this._isConnected = false;
       this.userStates.clear();
       this.stopHeartbeat();
+      this.stateCleanups.clear();
+      this.activeUsers.clear();
 
       if (this.bot) {
         log("Stopping existing Telegram bot instance before starting a new one", "warn");
@@ -253,6 +384,8 @@ export class TelegramBot {
       this.isStarting = false;
       this.userStates.clear();
       this.reconnectAttempts = 0;
+      this.stateCleanups.clear();
+      this.activeUsers.clear();
       this.bot = null;
 
       log("Telegram bot stopped successfully");
@@ -452,6 +585,8 @@ export class TelegramBot {
 
       // Clear the state completely
       this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
       await ctx.reply("❌ Ticket creation cancelled. Use /start when you're ready to try again.");
     });
 
@@ -669,7 +804,7 @@ export class TelegramBot {
       state.currentQuestion++;
 
       // Update state before sending next question
-      this.userStates.set(userId, {
+      this.setState(userId, {
         ...state,
         currentQuestion: state.currentQuestion,
         inQuestionnaire: true
@@ -683,56 +818,12 @@ export class TelegramBot {
     } else {
       // All questions answered, create ticket
       this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
       await this.createTicket(ctx);
     }
   }
 
-  private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
-    if (!ctx.message || !('text' in ctx.message)) return;
-
-    const userId = ctx.from?.id;
-    if (!userId) return;
-
-    // Check rate limit before processing message
-    if (!await this.checkMessageRateLimit(userId)) {
-      const remainingBlock = Math.ceil((this.messageRateLimits.get(userId)?.blockedUntil! - Date.now()) / 1000);
-      await ctx.reply(`⚠️ You are sending messages too quickly. Please wait ${remainingBlock} seconds before sending more messages.`);
-      return;
-    }
-
-    try {
-      await storage.createMessage({
-        ticketId: ticket.id,
-        content: ctx.message.text,
-        authorId: user.id,
-        platform: "telegram",
-        timestamp: new Date()
-      });
-
-      let avatarUrl: string | undefined;
-      try {
-        const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
-        if (photos && photos.total_count > 0) {
-          const fileId = photos.photos[0][0].file_id;
-          const file = await this.bot?.telegram.getFile(fileId);
-          avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-        }
-      } catch (error) {
-        log(`Error getting Telegram user avatar: ${error}`, "error");
-      }
-
-      await this.bridge.forwardToDiscord(
-        ctx.message.text,
-        ticket.id,
-        ctx.from?.first_name || ctx.from?.username || "Telegram User",
-        avatarUrl
-      );
-      log(`Message forwarded to Discord for ticket ${ticket.id}`);
-    } catch (error) {
-      console.error("Error handling ticket message:", error);
-      await ctx.reply("Sorry, there was an error sending your message. Please try again.");
-    }
-  }
 
   private async createTicket(ctx: Context) {
     const userId = ctx.from?.id;
@@ -763,6 +854,8 @@ export class TelegramBot {
       });
 
       this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
 
       try {
         await this.bridge.createTicketChannel(ticket);
@@ -865,7 +958,7 @@ export class TelegramBot {
 
     try {
       // Initialize questionnaire state before sending anything
-      this.userStates.set(userId, {
+      this.setState(userId, {
         categoryId,
         currentQuestion: 0,
         answers: [],
@@ -900,6 +993,8 @@ export class TelegramBot {
       );
       // Clean up state on error
       this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
     }
   }
 }

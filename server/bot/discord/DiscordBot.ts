@@ -1,4 +1,4 @@
-import { Client, TextChannel } from 'discord.js';
+import { Client, TextChannel, WebhookClient } from 'discord.js';
 import { log } from "../../vite";
 import { rateLimiter } from './RateLimiter';
 
@@ -7,46 +7,96 @@ interface WorkerCooldown {
   commands: Map<string, number>;
 }
 
+interface WebhookPool {
+  webhook: WebhookClient;
+  lastUsed: number;
+  failures: number;
+}
+
 export class DiscordBot {
   private client: Client;
-  private webhooks: Map<string, string> = new Map();
+  private webhookPool: Map<string, WebhookPool[]> = new Map();
   private workerCooldowns: Map<string, WorkerCooldown> = new Map();
   private readonly PAID_COOLDOWN = 300000; // 5 minutes
+  private readonly MAX_WEBHOOK_FAILURES = 3;
+  private readonly WEBHOOK_TIMEOUT = 300000; // 5 minutes
+  private readonly MAX_WEBHOOKS_PER_CHANNEL = 5;
+  private readonly WEBHOOK_ROTATION_INTERVAL = 60000; // 1 minute
 
-  private async checkWorkerCooldown(workerId: string, command: string): Promise<boolean> {
-    if (!this.workerCooldowns.has(workerId)) {
-      this.workerCooldowns.set(workerId, {
-        lastUsed: Date.now(),
-        commands: new Map()
-      });
-    }
-
-    const cooldown = this.workerCooldowns.get(workerId)!;
-    const now = Date.now();
-
-    // Check command-specific cooldown
-    if (command === 'paid') {
-      const lastPaid = cooldown.commands.get('paid') || 0;
-      if (now - lastPaid < this.PAID_COOLDOWN) {
-        return false;
+  constructor() {
+    this.client = new Client({
+      intents: ['Guilds', 'GuildMessages', 'MessageContent'],
+      failIfNotExists: false,
+      rest: {
+        timeout: 15000,
+        retries: 3
       }
-      cooldown.commands.set('paid', now);
-    }
+    });
 
-    return true;
+    // Start webhook cleanup interval
+    setInterval(() => this.cleanupWebhooks(), 300000);
   }
 
-  // Add this to your existing command handling logic:
-  async handlePaidCommand(message: any, workerId: string): Promise<void> {
+  private async cleanupWebhooks() {
+    for (const [channelId, webhooks] of this.webhookPool.entries()) {
+      const now = Date.now();
+      const activeWebhooks = webhooks.filter(pool => {
+        const isActive = now - pool.lastUsed < this.WEBHOOK_TIMEOUT && pool.failures < this.MAX_WEBHOOK_FAILURES;
+        if (!isActive) {
+          pool.webhook.destroy();
+        }
+        return isActive;
+      });
+
+      if (activeWebhooks.length === 0) {
+        this.webhookPool.delete(channelId);
+      } else {
+        this.webhookPool.set(channelId, activeWebhooks);
+      }
+    }
+  }
+
+  private async getWebhookForChannel(channelId: string): Promise<WebhookClient | null> {
     try {
-      if (!await this.checkWorkerCooldown(workerId, 'paid')) {
-        await message.reply("⚠️ Please wait 5 minutes between /paid commands.");
-        return;
+      let webhooks = this.webhookPool.get(channelId) || [];
+
+      // Filter out failed webhooks
+      webhooks = webhooks.filter(w => w.failures < this.MAX_WEBHOOK_FAILURES);
+
+      // If we have working webhooks, use the least recently used one
+      if (webhooks.length > 0) {
+        const webhook = webhooks.reduce((prev, curr) => 
+          prev.lastUsed < curr.lastUsed ? prev : curr
+        );
+        webhook.lastUsed = Date.now();
+        return webhook.webhook;
       }
 
-      // Existing paid command logic...
+      // Create new webhook if needed
+      if (webhooks.length < this.MAX_WEBHOOKS_PER_CHANNEL) {
+        const channel = await this.client.channels.fetch(channelId) as TextChannel;
+        if (!channel?.isTextBased()) return null;
+
+        const webhook = await channel.createWebhook({
+          name: 'Bridge Bot Webhook',
+          reason: 'Created for message bridging'
+        });
+
+        const webhookClient = new WebhookClient({ url: webhook.url });
+        webhooks.push({
+          webhook: webhookClient,
+          lastUsed: Date.now(),
+          failures: 0
+        });
+
+        this.webhookPool.set(channelId, webhooks);
+        return webhookClient;
+      }
+
+      return null;
     } catch (error) {
-      log(`Error handling paid command: ${error}`, "error");
+      log(`Error getting webhook: ${error}`, "error");
+      return null;
     }
   }
 
@@ -75,20 +125,74 @@ export class DiscordBot {
     try {
       // Check webhook rate limit
       await rateLimiter.webhookCheck(channelId);
-      
+
       // Global rate limit check
       await rateLimiter.globalCheck();
 
-      // Get or create webhook
-      const webhookId = await this.getWebhookForChannel(channelId);
-      if (!webhookId) throw new Error("Failed to get webhook");
+      const webhookClient = await this.getWebhookForChannel(channelId);
+      if (!webhookClient) throw new Error("Failed to get webhook");
 
-      // Send message
-      await this.client.fetchWebhook(webhookId).then(webhook => 
-        webhook.send(message)
-      );
+      try {
+        await webhookClient.send(message);
+
+        // Reset failure count on success
+        const webhooks = this.webhookPool.get(channelId) || [];
+        const webhook = webhooks.find(w => w.webhook === webhookClient);
+        if (webhook) {
+          webhook.failures = 0;
+          webhook.lastUsed = Date.now();
+        }
+      } catch (error) {
+        // Increment failure count
+        const webhooks = this.webhookPool.get(channelId) || [];
+        const webhook = webhooks.find(w => w.webhook === webhookClient);
+        if (webhook) {
+          webhook.failures++;
+          if (webhook.failures >= this.MAX_WEBHOOK_FAILURES) {
+            webhook.webhook.destroy();
+          }
+        }
+        throw error;
+      }
     } catch (error) {
       log(`Error sending webhook message: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async checkWorkerCooldown(workerId: string, command: string): Promise<boolean> {
+    if (!this.workerCooldowns.has(workerId)) {
+      this.workerCooldowns.set(workerId, {
+        lastUsed: Date.now(),
+        commands: new Map()
+      });
+    }
+
+    const cooldown = this.workerCooldowns.get(workerId)!;
+    const now = Date.now();
+
+    // Check command-specific cooldown
+    if (command === 'paid') {
+      const lastPaid = cooldown.commands.get('paid') || 0;
+      if (now - lastPaid < this.PAID_COOLDOWN) {
+        return false;
+      }
+      cooldown.commands.set('paid', now);
+    }
+
+    return true;
+  }
+
+  async handlePaidCommand(message: any, workerId: string): Promise<void> {
+    try {
+      if (!await this.checkWorkerCooldown(workerId, 'paid')) {
+        await message.reply("⚠️ Please wait 5 minutes between /paid commands.");
+        return;
+      }
+
+      // Existing paid command logic...
+    } catch (error) {
+      log(`Error handling paid command: ${error}`, "error");
     }
   }
 
@@ -99,7 +203,7 @@ export class DiscordBot {
       
       // Global rate limit check
       await rateLimiter.globalCheck();
-
+      
       const channel = await this.client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
         await channel.edit(options);
@@ -116,7 +220,7 @@ export class DiscordBot {
       
       // Global rate limit check
       await rateLimiter.globalCheck();
-
+      
       const channel = await this.client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
         const messages = await (channel as TextChannel).messages.fetch({ limit });
@@ -129,8 +233,5 @@ export class DiscordBot {
     }
   }
   // ... other methods ...
-  private getWebhookForChannel(channelId: string): Promise<string | null> {
-    throw new Error("Method not implemented.");
-  }
 
 }
