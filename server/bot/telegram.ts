@@ -167,27 +167,21 @@ export class TelegramBot {
 
       // Display category info and start questionnaire
       const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-      const summary = `*${category.name} Service*\n\n` +
-        `${category.serviceSummary}\n\n` +
-        `*How it works:*\n` +
-        `1. Answer our questions\n` +
-        `2. A ticket will be created\n` +
-        `3. Our team will assist you promptly\n\n` +
-        `Let's begin with some questions:`;
+      const summary = `*${category.name}*\n\n${category.serviceSummary}`;
 
       try {
         await ctx.replyWithPhoto(
           { url: photoUrl },
           {
             caption: summary,
-            parse_mode: 'Markdown'
+            parse_mode: 'MarkdownV2'
           }
         );
       } catch (error) {
-        await ctx.reply(summary, { parse_mode: 'Markdown' });
+        await ctx.reply(summary, { parse_mode: 'MarkdownV2' });
       }
 
-      // Initialize user state
+      // Initialize user state for questionnaire
       const userId = ctx.from?.id;
       if (!userId) return;
 
@@ -610,7 +604,7 @@ export class TelegramBot {
 
       await this.bot.telegram.sendPhoto(chatId, imageUrl, {
         caption: caption,
-        parse_mode: 'Markdown'
+        parse_mode: 'MarkdownV2'
       });
 
       log(`Successfully sent photo to Telegram chat: ${chatId}`);
