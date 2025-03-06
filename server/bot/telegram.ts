@@ -7,25 +7,36 @@ function escapeMarkdown(text: string): string {
   if (!text) return '';
 
   // Characters that need escaping in MarkdownV2
-  const specialChars = ['_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+  const specialChars = ['[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
 
-  // If text is meant to be bold (wrapped in **)
-  if (text.startsWith('**') && text.endsWith('**')) {
-    const content = text.slice(2, -2); // Remove ** from start and end
+  // Check for different formatting patterns
+  const formatPatterns = [
+    { start: '**', end: '**', marker: '*' },  // Bold
+    { start: '__', end: '__', marker: '_' },  // Italic
+    { start: '```', end: '```', marker: '`' }, // Code block
+    { start: '`', end: '`', marker: '`' }     // Inline code
+  ];
 
-    // Escape special characters in the content
-    let escaped = content;
-    for (const char of specialChars) {
-      escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+  // Try to match any of the formatting patterns
+  for (const pattern of formatPatterns) {
+    if (text.startsWith(pattern.start) && text.endsWith(pattern.end)) {
+      // Remove formatting markers
+      const content = text.slice(pattern.start.length, -pattern.end.length);
+
+      // Escape special characters in the content
+      let escaped = content;
+      for (const char of specialChars) {
+        escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+      }
+
+      // Re-add the formatting marker (Telegram style)
+      return `${pattern.marker}${escaped}${pattern.marker}`;
     }
-
-    // Add bold markers back
-    return `*${escaped}*`;  // Telegram uses single * for bold in MarkdownV2
   }
 
-  // Regular text without bold formatting
+  // Regular text without formatting
   let escaped = text;
-  for (const char of [...specialChars, '*']) {
+  for (const char of [...specialChars, '*', '_', '`']) {
     escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
   }
   return escaped;
@@ -708,7 +719,7 @@ export class TelegramBot {
         if (activeTicket) {
           const activeCategory = await storage.getCategory(activeTicket.categoryId!);
           await ctx.reply(
-            `You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category\\.\n\nPlease use /close to close your current ticket before starting a new one\\.`,
+            `You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\nPlease use /close to close your current ticket before starting a new one.`,
             { parse_mode: 'MarkdownV2' }
           );
           return;
