@@ -15,6 +15,12 @@ interface UserState {
   inQuestionnaire: boolean;
 }
 
+interface MessageRateLimit {
+  messages: number;
+  windowStart: number;
+  blockedUntil?: number;
+}
+
 function escapeMarkdown(text: string): string {
   if (!text) return '';
 
@@ -66,6 +72,10 @@ export class TelegramBot {
   private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
   private readonly COOLDOWN_WINDOW = 60000; // 1 minute
   private readonly MAX_COMMANDS = 5; // Max commands per minute
+  private messageRateLimits: Map<number, MessageRateLimit> = new Map();
+  private readonly MESSAGE_WINDOW = 2000; // 2 seconds
+  private readonly MAX_MESSAGES = 10; // Max messages per window
+  private readonly SPAM_BLOCK_DURATION = 300000; // 5 minutes in milliseconds
 
   constructor(bridge: BridgeManager) {
     try {
@@ -281,6 +291,44 @@ export class TelegramBot {
     cooldown.lastUsed = now;
     return true;
   }
+
+  private async checkMessageRateLimit(userId: number): Promise<boolean> {
+    const now = Date.now();
+    if (!this.messageRateLimits.has(userId)) {
+      this.messageRateLimits.set(userId, {
+        messages: 1,
+        windowStart: now
+      });
+      return true;
+    }
+
+    const limit = this.messageRateLimits.get(userId)!;
+
+    // Check if user is currently blocked
+    if (limit.blockedUntil && now < limit.blockedUntil) {
+      return false;
+    }
+
+    // Reset window if it's expired
+    if (now - limit.windowStart > this.MESSAGE_WINDOW) {
+      limit.messages = 1;
+      limit.windowStart = now;
+      limit.blockedUntil = undefined;
+      return true;
+    }
+
+    // Increment message count
+    limit.messages++;
+
+    // Check if user exceeded limit
+    if (limit.messages > this.MAX_MESSAGES) {
+      limit.blockedUntil = now + this.SPAM_BLOCK_DURATION;
+      return false;
+    }
+
+    return true;
+  }
+
 
   private setupHandlers() {
     this.bot.command("start", async (ctx) => {
@@ -628,6 +676,16 @@ export class TelegramBot {
   private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
     if (!ctx.message || !('text' in ctx.message)) return;
 
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    // Check rate limit before processing message
+    if (!await this.checkMessageRateLimit(userId)) {
+      const remainingBlock = Math.ceil((this.messageRateLimits.get(userId)?.blockedUntil! - Date.now()) / 1000);
+      await ctx.reply(`⚠️ You are sending messages too quickly. Please wait ${remainingBlock} seconds before sending more messages.`);
+      return;
+    }
+
     try {
       await storage.createMessage({
         ticketId: ticket.id,
@@ -639,10 +697,10 @@ export class TelegramBot {
 
       let avatarUrl: string | undefined;
       try {
-        const photos = await this.bot.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+        const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
         if (photos && photos.total_count > 0) {
           const fileId = photos.photos[0][0].file_id;
-          const file = await this.bot.telegram.getFile(fileId);
+          const file = await this.bot?.telegram.getFile(fileId);
           avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
         }
       } catch (error) {
