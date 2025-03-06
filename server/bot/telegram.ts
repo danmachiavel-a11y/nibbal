@@ -207,11 +207,10 @@ export class TelegramBot {
         if (activeTicket) {
           const category = await storage.getCategory(activeTicket.categoryId);
           await ctx.reply(
-            "❌ You already have an active ticket in " +
-              `*${category?.name || "Unknown"}* category.\n\n` +
+            `❌ You already have an active ticket in *${escapeMarkdown(category?.name || "Unknown")}* category.\n\n` +
               "Please use /close to close your current ticket before starting a new one, " +
               "or continue chatting here to update your existing ticket.",
-            { parse_mode: "Markdown" }
+            { parse_mode: "MarkdownV2" }
           );
           return;
         }
@@ -270,7 +269,7 @@ export class TelegramBot {
         keyboard.push(currentRow);
       }
 
-      const welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
+      const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
 
       if (botConfig?.welcomeImageUrl) {
         try {
@@ -278,17 +277,20 @@ export class TelegramBot {
             botConfig.welcomeImageUrl,
             {
               caption: welcomeMessage,
+              parse_mode: "MarkdownV2",
               reply_markup: { inline_keyboard: keyboard }
             }
           );
         } catch (error) {
           console.error("Failed to send welcome image:", error);
           await ctx.reply(welcomeMessage, {
+            parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
         }
       } else {
         await ctx.reply(welcomeMessage, {
+          parse_mode: "MarkdownV2",
           reply_markup: { inline_keyboard: keyboard }
         });
       }
