@@ -59,10 +59,12 @@ export class TelegramBot {
   private _isConnected: boolean = false;
   private static instance: TelegramBot | null = null;
   private isStarting: boolean = false;
+  private startLock: Promise<void> | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly INITIAL_RECONNECT_DELAY = 2000; // 2 seconds
+  private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
 
   constructor(bridge: BridgeManager) {
     try {
@@ -84,9 +86,6 @@ export class TelegramBot {
       this.setupHandlers();
       TelegramBot.instance = this;
 
-      // Setup heartbeat check
-      this.startHeartbeat();
-
       log("Telegram bot instance created successfully");
     } catch (error) {
       log(`Error creating Telegram bot: ${error}`, "error");
@@ -95,27 +94,33 @@ export class TelegramBot {
   }
 
   private startHeartbeat() {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-    }
+    this.stopHeartbeat(); // Clear any existing heartbeat
 
     this.heartbeatInterval = setInterval(async () => {
       try {
-        if (this._isConnected && !this.isStarting) {
-          // Check connection by getting bot info
-          await this.bot.telegram.getMe();
-        }
+        if (!this._isConnected || this.isStarting) return;
+
+        // Check connection by getting bot info
+        await this.bot.telegram.getMe();
       } catch (error) {
         log("Heartbeat check failed, connection may be lost", "warn");
-        this._isConnected = false;
         await this.handleDisconnect();
       }
-    }, 30000); // Check every 30 seconds
+    }, this.HEARTBEAT_INTERVAL);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
   }
 
   private async handleDisconnect() {
-    if (this.isStarting) return; // Don't handle disconnect if already reconnecting
+    // Don't handle disconnect if already starting or not connected
+    if (this.isStarting || !this._isConnected) return;
 
+    this._isConnected = false;
     log("Bot disconnected, attempting to reconnect...");
 
     // Calculate delay with exponential backoff
@@ -125,114 +130,94 @@ export class TelegramBot {
     await new Promise(resolve => setTimeout(resolve, delay));
 
     try {
+      // Attempt reconnection
+      log(`Attempting to reconnect Telegram bot (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
       await this.start();
       this.reconnectAttempts = 0; // Reset attempts on successful reconnection
+      log("Reconnection successful");
     } catch (error) {
       this.reconnectAttempts++;
-      log(`Reconnection attempt ${this.reconnectAttempts} failed: ${error}`, "error");
+      log(`Reconnection attempt failed: ${error}`, "error");
 
       if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
         await this.handleDisconnect(); // Try again
       } else {
         log("Max reconnection attempts reached, manual intervention required", "error");
+        this.reconnectAttempts = 0; // Reset for next time
       }
     }
   }
 
-  private async cleanupBeforeStart() {
-    try {
-      // Clear any existing timers
-      if (this.heartbeatInterval) {
-        clearInterval(this.heartbeatInterval);
-        this.heartbeatInterval = null;
+  private async acquireStartLock(): Promise<boolean> {
+    if (this.startLock) {
+      try {
+        await Promise.race([
+          this.startLock,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Start lock timeout")), 5000))
+        ]);
+      } catch (error) {
+        log("Start lock acquisition timed out", "warn");
+        this.startLock = null;
+        this.isStarting = false;
+        return false;
       }
-
-      // Add retry mechanism for waiting when bot is already starting
-      if (this.isStarting) {
-        log("Bot is already starting, waiting for current start to complete...");
-        let retries = 0;
-        const maxRetries = 3;
-        const retryDelay = 2000; // 2 seconds
-
-        while (this.isStarting && retries < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-          retries++;
-          log(`Waiting for existing startup to complete (attempt ${retries}/${maxRetries})...`);
-        }
-
-        if (this.isStarting) {
-          this.isStarting = false; // Force reset if stuck
-          log("Timed out waiting for existing startup");
-          return false;
-        }
-      }
-
-      this.isStarting = true;
-
-      // Stop existing instance if connected
-      if (this._isConnected) {
-        try {
-          await this.bot.stop();
-          // Add delay after stopping
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } catch (error) {
-          log(`Error stopping bot during cleanup: ${error}`, "error");
-        }
-      }
-
-      // Reset state
-      this._isConnected = false;
-      this.userStates.clear();
-
-      return true;
-    } catch (error) {
-      log(`Error during cleanup: ${error}`, "error");
-      this.isStarting = false;
-      return false;
     }
+
+    let resolveLock: () => void;
+    this.startLock = new Promise(resolve => {
+      resolveLock = resolve;
+    });
+    this.isStarting = true;
+    resolveLock();
+    return true;
+  }
+
+  private releaseStartLock() {
+    if (this.startLock) {
+      this.startLock = null;
+    }
+    this.isStarting = false;
   }
 
   async start() {
+    if (!await this.acquireStartLock()) {
+      throw new Error("Could not acquire start lock");
+    }
+
     try {
       log("Starting Telegram bot...");
 
-      // Cleanup before starting
-      const canStart = await this.cleanupBeforeStart();
-      if (!canStart) {
-        log("Cannot start bot at this time - cleanup failed or bot is already starting");
-        return;
+      // Stop existing bot if running
+      if (this._isConnected) {
+        await this.stop();
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      try {
-        await this.bot.launch({
-          dropPendingUpdates: true
-        });
+      // Clear all states
+      this._isConnected = false;
+      this.userStates.clear();
+      this.stopHeartbeat();
 
-        // Add delay to ensure proper startup
-        await new Promise(resolve => setTimeout(resolve, 3000));
+      // Start the bot
+      await this.bot.launch({
+        dropPendingUpdates: true
+      });
 
-        // Verify connection by getting bot info
-        const botInfo = await this.bot.telegram.getMe();
-        log(`Connected as @${botInfo.username}`);
+      // Verify connection
+      const botInfo = await this.bot.telegram.getMe();
+      log(`Connected as @${botInfo.username}`);
 
-        // Set connected status after successful launch and verification
-        this._isConnected = true;
+      // Start heartbeat only after successful connection
+      this._isConnected = true;
+      this.startHeartbeat();
 
-        // Start heartbeat monitoring
-        this.startHeartbeat();
-
-        log("Telegram bot started and connected successfully");
-      } catch (error) {
-        // Reset state on error
-        this._isConnected = false;
-        throw error;
-      } finally {
-        this.isStarting = false;
-      }
+      log("Telegram bot started successfully");
     } catch (error) {
-      this.isStarting = false;
       log(`Error starting Telegram bot: ${error}`, "error");
+      this._isConnected = false;
       throw error;
+    } finally {
+      this.releaseStartLock();
     }
   }
 
@@ -240,20 +225,14 @@ export class TelegramBot {
     try {
       log("Stopping Telegram bot...");
 
-      // Clear heartbeat interval
-      if (this.heartbeatInterval) {
-        clearInterval(this.heartbeatInterval);
-        this.heartbeatInterval = null;
-      }
+      this.stopHeartbeat();
 
-      // Only attempt to stop if connected
       if (this._isConnected) {
         await this.bot.stop();
-        // Add delay after stopping
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      // Reset state
+      // Reset all states
       this._isConnected = false;
       this.isStarting = false;
       this.userStates.clear();
