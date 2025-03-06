@@ -517,9 +517,7 @@ function CategoryEditor({ category, categories }: { category: Category; categori
         )}
 
         <div className="flex justify-end space-x-2">
-          <Button type="submit" size="sm">
-            Save Changes
-          </Button>
+          <Button type="submit">Save Changes</Button>
         </div>
       </form>
     </Form>
@@ -554,7 +552,9 @@ function SettingsPage() {
   const botConfigForm = useForm({
     defaultValues: {
       telegramToken: "",
-      discordToken: ""
+      discordToken: "",
+      welcomeMessage: "",
+      welcomeImageUrl: ""
     }
   });
 
@@ -931,6 +931,42 @@ function SettingsPage() {
                     <form onSubmit={botConfigForm.handleSubmit(onBotConfigSubmit)} className="space-y-4">
                       <FormField
                         control={botConfigForm.control}
+                        name="welcomeMessage"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Welcome Message</FormLabel>
+                            <FormDescription>
+                              Enter the welcome message shown when users start the bot.
+                              You can use Markdown formatting:
+                              - **text** for bold
+                              - __text__ for italic
+                              - ```text``` for code blocks
+                            </FormDescription>
+                            <FormControl>
+                              <Textarea {...field} rows={3} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={botConfigForm.control}
+                        name="welcomeImageUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Welcome Image URL</FormLabel>
+                            <FormDescription>
+                              Optional: URL of an image to show with the welcome message
+                            </FormDescription>
+                            <FormControl>
+                              <Input {...field} value={field.value || ''} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={botConfigForm.control}
                         name="telegramToken"
                         render={({ field }) => (
                           <FormItem>
@@ -969,7 +1005,7 @@ function SettingsPage() {
                                       description: status.connected
                                         ? "Connected and ready"
                                         : "Not connected - This is normal during testing. The bot will work in production.",
-                                      variant: status.connected ? "default" : "secondary"
+                                      variant: status.connected ? "default" : "destructive"
                                     });
                                   } catch (error) {
                                     toast({
@@ -1010,7 +1046,8 @@ function SettingsPage() {
                                     const status = await res.json();
                                     toast({
                                       title: "Discord Bot Status",
-                                      description: status.connected ? "Connected" : "Not Connected",                                      variant: status.connected ? "default" : "destructive"
+                                      description: status.connected ? "Connected" : "Not Connected",
+                                      variant: status.connected ? "default" : "destructive"
                                     });
                                   } catch (error) {
                                     toast({
