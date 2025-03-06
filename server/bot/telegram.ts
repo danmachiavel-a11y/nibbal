@@ -450,6 +450,7 @@ export class TelegramBot {
         return;
       }
 
+      // Clear the state completely
       this.userStates.delete(userId);
       await ctx.reply("❌ Ticket creation cancelled. Use /start when you're ready to try again.");
     });
@@ -667,14 +668,21 @@ export class TelegramBot {
       // Move to next question
       state.currentQuestion++;
 
+      // Update state before sending next question
+      this.userStates.set(userId, {
+        ...state,
+        currentQuestion: state.currentQuestion,
+        inQuestionnaire: true
+      });
+
       // Add delay before next question
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Send next question
       await ctx.reply(category.questions[state.currentQuestion]);
     } else {
       // All questions answered, create ticket
-      state.inQuestionnaire = false;
+      this.userStates.delete(userId);
       await this.createTicket(ctx);
     }
   }
@@ -856,7 +864,15 @@ export class TelegramBot {
     }
 
     try {
-      // Send category info first
+      // Initialize questionnaire state before sending anything
+      this.userStates.set(userId, {
+        categoryId,
+        currentQuestion: 0,
+        answers: [],
+        inQuestionnaire: true
+      });
+
+      // Send category info
       const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
       const name = escapeMarkdown(category.name);
       const summary = escapeMarkdown(category.serviceSummary || '');
@@ -869,14 +885,6 @@ export class TelegramBot {
           parse_mode: 'MarkdownV2'
         }
       );
-
-      // Set questionnaire state and wait before starting questions
-      this.userStates.set(userId, {
-        categoryId,
-        currentQuestion: 0,
-        answers: [],
-        inQuestionnaire: true
-      });
 
       if (category.questions && category.questions.length > 0) {
         // Add delay before first question
