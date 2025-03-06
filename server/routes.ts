@@ -64,24 +64,56 @@ export async function registerRoutes(app: Express) {
 
   // Bot Config Routes
   app.get("/api/bot-config", async (req, res) => {
-    const config = await storage.getBotConfig();
-    res.json(config);
+    try {
+      const config = await storage.getBotConfig();
+      res.json(config);
+    } catch (error) {
+      log(`Error getting bot config: ${error}`, "error");
+      res.status(500).json({ message: "Failed to get bot configuration" });
+    }
   });
 
   app.patch("/api/bot-config", async (req, res) => {
-    const schema = z.object({
-      welcomeMessage: z.string().optional(),
-      welcomeImageUrl: z.string().nullable().optional(),
-    });
+    try {
+      const schema = z.object({
+        welcomeMessage: z.string().optional(),
+        welcomeImageUrl: z.string().nullable().optional(),
+        telegramToken: z.string().optional(),
+        discordToken: z.string().optional(),
+      });
 
-    const result = schema.safeParse(req.body);
-    if (!result.success) {
-      return res.status(400).json({ message: "Invalid request body" });
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid request body" });
+      }
+
+      // Store tokens in environment variables if provided
+      if (result.data.telegramToken) {
+        process.env.TELEGRAM_BOT_TOKEN = result.data.telegramToken;
+      }
+      if (result.data.discordToken) {
+        process.env.DISCORD_BOT_TOKEN = result.data.discordToken;
+      }
+
+      // Update bot config in storage
+      const config = await storage.updateBotConfig(result.data);
+
+      // If tokens were updated, restart the bridge
+      if (result.data.telegramToken || result.data.discordToken) {
+        if (bridge) {
+          log("Restarting bots with new configuration...");
+          await bridge.restart();
+          log("Bots restarted successfully");
+        }
+      }
+
+      res.json(config);
+    } catch (error) {
+      log(`Error updating bot config: ${error}`, "error");
+      res.status(500).json({ message: "Failed to update bot configuration" });
     }
-
-    const config = await storage.updateBotConfig(result.data);
-    res.json(config);
   });
+
 
   // Bot token configuration and status endpoints
   app.get("/api/bot/telegram/status", async (req, res) => {
@@ -114,48 +146,6 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-  // Update bot tokens
-  app.patch("/api/bot/config", async (req, res) => {
-    try {
-      const schema = z.object({
-        telegramToken: z.string().optional(),
-        discordToken: z.string().optional(),
-      });
-
-      const result = schema.safeParse(req.body);
-      if (!result.success) {
-        return res.status(400).json({ message: "Invalid request body" });
-      }
-
-      // Store tokens in environment variables
-      if (result.data.telegramToken) {
-        process.env.TELEGRAM_BOT_TOKEN = result.data.telegramToken;
-        log("Updated Telegram bot token");
-      }
-      if (result.data.discordToken) {
-        process.env.DISCORD_BOT_TOKEN = result.data.discordToken;
-        log("Updated Discord bot token");
-      }
-
-      // Restart the bridge with new tokens
-      if (bridge) {
-        log("Restarting bots with new configuration...");
-        await bridge.restart();
-        log("Bots restarted successfully");
-      } else {
-        // If bridge doesn't exist, create and start it
-        log("Creating new bot bridge...");
-        bridge = new BridgeManager();
-        await bridge.start();
-        log("New bot bridge started successfully");
-      }
-
-      res.json({ message: "Bot configuration updated successfully" });
-    } catch (error) {
-      log(`Error updating bot configuration: ${error}`, "error");
-      res.status(500).json({ message: "Failed to update bot configuration" });
-    }
-  });
 
   // Add new route to fetch Discord categories
   app.get("/api/discord/categories", async (req, res) => {

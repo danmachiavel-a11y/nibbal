@@ -561,7 +561,7 @@ function SettingsPage() {
   useEffect(() => {
     const loadBotConfig = async () => {
       try {
-        const res = await apiRequest("GET", "/api/bot/config");
+        const res = await apiRequest("GET", "/api/bot-config");
         if (!res.ok) throw new Error("Failed to fetch bot configuration");
         const config = await res.json();
 
@@ -584,7 +584,7 @@ function SettingsPage() {
   const onBotConfigSubmit = async (data: any) => {
     try {
       // Send all bot configuration fields
-      const res = await apiRequest("PATCH", "/api/bot/config", {
+      const res = await apiRequest("PATCH", "/api/bot-config", {
         telegramToken: data.telegramToken,
         discordToken: data.discordToken,
         welcomeMessage: data.welcomeMessage,
@@ -597,9 +597,6 @@ function SettingsPage() {
         title: "Success", 
         description: "Bot configuration saved successfully!" 
       });
-
-      // Refresh the bots to apply new configuration
-      await apiRequest("POST", "/api/bot/restart");
     } catch (error) {
       toast({ 
         title: "Error", 
@@ -1029,7 +1026,7 @@ function SettingsPage() {
                             </div>
                             <FormDescription>
                               Enter your Telegram bot token. You can get this from @BotFather on Telegram.
-                            </FormDescription>
+                                                        </FormDescription>
                             <div className="flex space-x-2">
                               <FormControl>
                                 <Input type="password" {...field} />
