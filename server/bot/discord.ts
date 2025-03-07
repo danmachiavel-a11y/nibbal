@@ -568,7 +568,7 @@ export class DiscordBot {
   }
 
   // Update sendMessage to use the new helper
-  async sendMessage(channelId: string, content: string, username: string, avatarUrl?: string, imageUrl?: string): Promise<void> {
+  async sendMessage(channelId: string, content: any, username: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 
@@ -578,24 +578,15 @@ export class DiscordBot {
       }
 
       // Get or create webhook with proper caching
-      const webhook = await this.getOrCreateWebhook(channel, avatarUrl);
+      const webhook = await this.getOrCreateWebhook(channel);
 
-      // Prepare webhook message
-      const messageOptions: any = {
-        content: content || undefined,
-        username,
-        avatarURL: avatarUrl
-      };
+      // Send message via webhook
+      const message = await webhook.send(content);
 
-      // If imageUrl is provided, add it as an attachment
-      if (imageUrl) {
-        messageOptions.files = [{
-          attachment: imageUrl
-        }];
+      // Pin if it's a ticket message
+      if (content.embeds?.[0]?.title?.includes('New Ticket')) {
+        await message.pin();
       }
-
-      // Send regular message via webhook
-      await webhook.send(messageOptions);
 
       log(`Successfully sent message to Discord channel ${channelId}`);
     } catch (error) {

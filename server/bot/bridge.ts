@@ -251,12 +251,14 @@ export class BridgeManager {
 
       // Create embed for Q&A
       const embed = {
+        username: "Ticket Bot",
         embeds: [{
-          title: '🎫 New Ticket Questions',
+          title: "🎫 New Ticket",
+          description: "A new support ticket has been created",
           color: 0x5865F2,
           fields: category.questions.map((question, index) => ({
             name: question,
-            value: `\`\`\`${ticket.answers?.[index] || 'No answer provided'}\`\`\``,
+            value: `\`${ticket.answers?.[index] || 'No answer provided'}\``,
             inline: false
           }))
         }]
