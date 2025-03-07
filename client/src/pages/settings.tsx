@@ -1,10 +1,5 @@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-} from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
   Form,
   FormField,
@@ -24,15 +19,40 @@ import type { Category } from "@shared/schema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useState, useEffect } from 'react';
-import { Folder, FolderOpen, Tag, Info } from 'lucide-react';
+import { Folder, FolderOpen, Tag, Info, Trash2 } from 'lucide-react';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { CategoryGrid } from "@/components/CategoryGrid";
 
 function CategoryList({ categories }: { categories: Category[] }) {
   const submenus = categories.filter(cat => cat.isSubmenu);
   const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const handleDeleteCategory = async (id: number) => {
+    try {
+      const res = await fetch(`/api/categories/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) throw new Error('Failed to delete category');
+
+      toast({
+        title: "Success",
+        description: "Category deleted successfully",
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete category",
+        variant: "destructive"
+      });
+    }
+  };
 
   const toggleAccordion = (value: string) => {
     setExpandedItems(current =>
@@ -66,9 +86,41 @@ function CategoryList({ categories }: { categories: Category[] }) {
               className="border rounded-lg shadow-sm bg-card"
             >
               <AccordionTrigger className="px-4 hover:no-underline">
-                <div className="flex items-center gap-3">
-                  <Tag className="h-4 w-4 text-muted-foreground" />
-                  <span>{category.name}</span>
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-3">
+                    <Tag className="h-4 w-4 text-muted-foreground" />
+                    <span>{category.name}</span>
+                  </div>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="flex items-center gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Category</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to delete "{category.name}"? This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => handleDeleteCategory(category.id)}
+                          className="bg-red-600 hover:bg-red-700 text-white"
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               </AccordionTrigger>
               <AccordionContent className="px-4 pb-3">
@@ -103,15 +155,47 @@ function CategoryList({ categories }: { categories: Category[] }) {
               className="border rounded-lg shadow-sm bg-card"
             >
               <AccordionTrigger className="px-4 hover:no-underline">
-                <div className="flex items-center gap-3">
-                  {expandedItems.includes(submenu.id.toString())
-                    ? <FolderOpen className="h-4 w-4 text-muted-foreground" />
-                    : <Folder className="h-4 w-4 text-muted-foreground" />
-                  }
-                  <span>{submenu.name}</span>
-                  <span className="text-sm text-muted-foreground ml-2">
-                    ({categories.filter(cat => cat.parentId === submenu.id).length} categories)
-                  </span>
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-3">
+                    {expandedItems.includes(submenu.id.toString())
+                      ? <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                      : <Folder className="h-4 w-4 text-muted-foreground" />
+                    }
+                    <span>{submenu.name}</span>
+                    <span className="text-sm text-muted-foreground ml-2">
+                      ({categories.filter(cat => cat.parentId === submenu.id).length} categories)
+                    </span>
+                  </div>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="flex items-center gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Submenu</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to delete "{submenu.name}"? This will also delete all categories within this submenu. This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => handleDeleteCategory(submenu.id)}
+                          className="bg-red-600 hover:bg-red-700 text-white"
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               </AccordionTrigger>
               <AccordionContent className="border-l-2 ml-6 pl-4">
@@ -137,9 +221,41 @@ function CategoryList({ categories }: { categories: Category[] }) {
                           className="border rounded-lg shadow-sm bg-card"
                         >
                           <AccordionTrigger className="px-4 hover:no-underline">
-                            <div className="flex items-center gap-3">
-                              <Tag className="h-4 w-4 text-muted-foreground" />
-                              <span>{category.name}</span>
+                            <div className="flex items-center justify-between w-full">
+                              <div className="flex items-center gap-3">
+                                <Tag className="h-4 w-4 text-muted-foreground" />
+                                <span>{category.name}</span>
+                              </div>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    className="flex items-center gap-2"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                    Delete
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Category</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Are you sure you want to delete "{category.name}"? This action cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteCategory(category.id)}
+                                      className="bg-red-600 hover:bg-red-700 text-white"
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
                             </div>
                           </AccordionTrigger>
                           <AccordionContent className="px-4 pb-3">
@@ -594,15 +710,15 @@ function SettingsPage() {
 
       if (!res.ok) throw new Error("Failed to update bot configuration");
 
-      toast({ 
-        title: "Success", 
-        description: "Bot configuration saved successfully!" 
+      toast({
+        title: "Success",
+        description: "Bot configuration saved successfully!"
       });
     } catch (error) {
-      toast({ 
-        title: "Error", 
-        description: "Failed to save bot configuration", 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: "Failed to save bot configuration",
+        variant: "destructive"
       });
     }
   };
@@ -690,12 +806,7 @@ function SettingsPage() {
 
             <TabsContent value="existing">
               {categories ? (
-                <CategoryGrid 
-                  categories={categories} 
-                  onReorder={(updatedCategories) => {
-                    queryClient.setQueryData(["/api/categories"], updatedCategories);
-                  }} 
-                />
+                <CategoryList categories={categories} />
               ) : (
                 <div>Loading categories...</div>
               )}
@@ -883,38 +994,6 @@ function SettingsPage() {
 
                           <FormField
                             control={categoryForm.control}
-                            name="transcriptCategoryId"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Discord Transcript Category</FormLabel>
-                                <FormDescription>
-                                  The category where closed tickets will be moved
-                                </FormDescription>
-                                <div className="flex space-x-2">
-                                  <FormControl>
-                                    <select
-                                      className="w-full rounded-md border border-input bg-background px-3 py-2"
-                                      value={field.value || ''}
-                                      onChange={(e) => field.onChange(e.target.value)}
-                                    >
-                                      <option value="">Select a category</option>
-                                      {categoryForm.watch("discordCategories")?.map((category: any) => (
-                                        <option
-                                          key={category.id}
-                                          value={category.id}
-                                        >
-                                          {category.name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </FormControl>
-                                </div>
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={categoryForm.control}
                             name="questions"
                             render={({ field }) => (
                               <FormItem>
@@ -939,8 +1018,7 @@ function SettingsPage() {
                                   Description of this service shown when users select it.
                                   Use new lines to format your message.
                                 </FormDescription>
-                                <FormControl>
-                                  <Textarea {...field} rows={5} />
+                                <FormControl><Textarea {...field} rows={5} />
                                 </FormControl>
                               </FormItem>
                             )}
@@ -1029,7 +1107,7 @@ function SettingsPage() {
                                   <TooltipContent>
                                     <p>During development/testing, the bot may show as "not connected"</p>
                                     <p>because Telegram only allows one active connection per token.</p>
-                                    <p>This is normal and the bot will still work inproduction.</p>
+                                    <p>This is normal and the bot will still work in production.</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
