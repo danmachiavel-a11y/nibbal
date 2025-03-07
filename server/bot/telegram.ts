@@ -72,8 +72,10 @@ export class TelegramBot {
   private startLock: Promise<void> | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
-  private readonly MAX_RECONNECT_ATTEMPTS = 10; // Increase max attempts
-  private readonly INITIAL_RECONNECT_DELAY = 5000; // Increase initial delay
+  private readonly MAX_RECONNECT_ATTEMPTS = 3;
+  private readonly INITIAL_RECONNECT_DELAY = 10000; // Increased to 10 seconds
+  private readonly STOP_TIMEOUT = 8000; // 8 seconds timeout for stop operations
+  private readonly CLEANUP_DELAY = 5000; // 5 seconds delay after cleanup
   private readonly HEARTBEAT_INTERVAL = 120000; // Increase to 2 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
@@ -92,7 +94,9 @@ export class TelegramBot {
         throw new Error("Invalid Telegram bot token");
       }
 
+      // Force cleanup of existing instance
       if (TelegramBot.instance) {
+        log("Cleaning up existing Telegram bot instance");
         TelegramBot.instance.stop().catch(error => {
           log(`Error stopping existing instance: ${error}`, "error");
         });
@@ -324,35 +328,24 @@ export class TelegramBot {
     try {
       log("Starting Telegram bot...");
 
-      if (this._isConnected && this.bot) {
+      // Ensure proper cleanup first
+      if (this._isConnected || this.bot) {
         await this.stop();
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY));
       }
 
       this._isConnected = false;
-      this.userStates.clear();
       this.stopHeartbeat();
-      this.stateCleanups.clear();
-      this.activeUsers.clear();
-
-      if (this.bot) {
-        log("Stopping existing Telegram bot instance before starting a new one", "warn");
-        try {
-          await this.bot.stop();
-          await new Promise(resolve => setTimeout(resolve, 5000));
-        } catch (stopError) {
-          log(`Error stopping existing bot: ${stopError}`, "warn");
-        }
-        this.bot = null;
-      }
 
       log("Creating new Telegram bot instance");
       this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
       await this.setupHandlers();
 
+      // Use more conservative launch options
       await this.bot.launch({
         dropPendingUpdates: true,
+        allowed_updates: ["message", "callback_query"],
         polling: {
           timeout: 30,
           limit: 100
@@ -369,8 +362,12 @@ export class TelegramBot {
     } catch (error) {
       log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
+
       if (error instanceof Error && error.message.includes("409: Conflict")) {
         log("409 Conflict detected - another bot instance is already running", "error");
+        // Force cleanup and wait longer
+        await this.stop();
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 2));
       }
       throw error;
     } finally {
@@ -384,8 +381,23 @@ export class TelegramBot {
       this.stopHeartbeat();
 
       if (this._isConnected && this.bot) {
-        await this.bot.stop();
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        try {
+          // Set a timeout for the stop operation
+          const stopPromise = this.bot.stop();
+          await Promise.race([
+            stopPromise,
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Stop timeout")), this.STOP_TIMEOUT)
+            )
+          ]);
+        } catch (error) {
+          log(`Error during bot stop: ${error}`, "warn");
+          // Force cleanup even if stop fails
+          this.bot = null;
+        }
+
+        // Add delay after stopping
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY));
       }
 
       this._isConnected = false;
@@ -652,9 +664,9 @@ export class TelegramBot {
       const category = await storage.getCategory(activeTicket.categoryId);
       await ctx.reply(
         `Your active ticket:\n\n` +
-          `Category: *${category?.name || "Unknown"}*\n` +
-          `Status: *${activeTicket.status}*\n` +
-          `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
+        `Category: *${category?.name || "Unknown"}*\n` +
+        `Status: *${activeTicket.status}*\n` +
+        `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
         { parse_mode: "Markdown" }
       );
     });
@@ -680,7 +692,7 @@ export class TelegramBot {
         if (!category?.transcriptCategoryId) {
           await ctx.reply(
             "❌ Cannot close ticket: No transcript category set for this service. " +
-              "Please contact an administrator."
+            "Please contact an administrator."
           );
           return;
         }
@@ -692,19 +704,19 @@ export class TelegramBot {
             await this.bridge.moveToTranscripts(activeTicket.id);
             await ctx.reply(
               "✅ Your ticket has been closed and moved to transcripts.\n" +
-                "Use /start to create a new ticket if needed."
+              "Use /start to create a new ticket if needed."
             );
           } catch (error) {
             console.error("Error moving to transcripts:", error);
             await ctx.reply(
               "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
-                "An administrator will handle this. You can use /start to create a new ticket if needed."
+              "An administrator will handle this. You can use /start to create a new ticket if needed."
             );
           }
         } else {
           await ctx.reply(
             "✅ Your ticket has been closed.\n" +
-              "Use /start to create a new ticket if needed."
+            "Use /start to create a new ticket if needed."
           );
         }
       } catch (error) {
@@ -974,7 +986,7 @@ export class TelegramBot {
       return;
     }
 
-    const user= await storage.getUserByTelegramId(userId.toString());
+    const user = await storage.getUserByTelegramId(userId.toString());
     if (user) {
       const activeTicket = await storage.getActiveTicketByUserId(user.id);
       if (activeTicket) {
@@ -982,7 +994,7 @@ export class TelegramBot {
         await ctx.reply(
           `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\n` +
           "Please use`/close to close your current ticket before starting a new one.",
-          { parse_mode: 'MarkdownV2'}
+          { parse_mode: 'MarkdownV2' }
         );
         return;
       }
