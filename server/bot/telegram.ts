@@ -72,9 +72,9 @@ export class TelegramBot {
   private startLock: Promise<void> | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
-  private readonly MAX_RECONNECT_ATTEMPTS = 5;
-  private readonly INITIAL_RECONNECT_DELAY = 2000;
-  private readonly HEARTBEAT_INTERVAL = 30000;
+  private readonly MAX_RECONNECT_ATTEMPTS = 10; // Increase max attempts
+  private readonly INITIAL_RECONNECT_DELAY = 5000; // Increase initial delay
+  private readonly HEARTBEAT_INTERVAL = 120000; // Increase to 2 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
   private readonly COOLDOWN_WINDOW = 60000;
@@ -176,53 +176,42 @@ export class TelegramBot {
     if (!userId) return;
 
     try {
-      // Check active users limit
-      if (!await this.checkActiveUsers(userId)) {
-        await ctx.reply("⚠️ Server is currently at capacity. Please try again later.");
+      // Check if user still has an active ticket
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket || activeTicket.id !== ticket.id) {
+        await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
         return;
       }
 
-      // Check rate limit
-      if (!await this.checkMessageRateLimit(userId)) {
-        const remainingBlock = Math.ceil((this.messageRateLimits.get(userId)?.blockedUntil! - Date.now()) / 1000);
-        await ctx.reply(`⚠️ You are sending messages too quickly. Please wait ${remainingBlock} seconds before sending more messages.`);
-        return;
-      }
+      // Process message
+      await storage.createMessage({
+        ticketId: ticket.id,
+        content: ctx.message.text,
+        authorId: user.id,
+        platform: "telegram",
+        timestamp: new Date()
+      });
 
-      // Process message with error handling
+      let avatarUrl: string | undefined;
       try {
-        await storage.createMessage({
-          ticketId: ticket.id,
-          content: ctx.message.text,
-          authorId: user.id,
-          platform: "telegram",
-          timestamp: new Date()
-        });
-
-        let avatarUrl: string | undefined;
-        try {
-          const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
-          if (photos && photos.total_count > 0) {
-            const fileId = photos.photos[0][0].file_id;
-            const file = await this.bot?.telegram.getFile(fileId);
-            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file?.file_path}`;
-          }
-        } catch (error) {
-          log(`Error getting Telegram user avatar: ${error}`, "error");
+        const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+        if (photos && photos.total_count > 0) {
+          const fileId = photos.photos[0][0].file_id;
+          const file = await this.bot?.telegram.getFile(fileId);
+          avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file?.file_path}`;
         }
-
-        await this.bridge.forwardToDiscord(
-          ctx.message.text,
-          ticket.id,
-          ctx.from?.first_name || ctx.from?.username || "Telegram User",
-          avatarUrl
-        );
-
-        log(`Message processed successfully for ticket ${ticket.id}`);
       } catch (error) {
-        log(`Error processing message: ${error}`, "error");
-        throw error;
+        log(`Error getting Telegram user avatar: ${error}`, "error");
       }
+
+      await this.bridge.forwardToDiscord(
+        ctx.message.text,
+        ticket.id,
+        ctx.from?.first_name || ctx.from?.username || "Telegram User",
+        avatarUrl
+      );
+
+      log(`Message processed successfully for ticket ${ticket.id}`);
     } catch (error) {
       log(`Error in handleTicketMessage: ${error}`, "error");
       await ctx.reply("Sorry, there was an error processing your message. Please try again.");
@@ -235,9 +224,17 @@ export class TelegramBot {
     this.heartbeatInterval = setInterval(async () => {
       try {
         if (!this._isConnected || this.isStarting) return;
-        await this.bot?.telegram.getMe();
+
+        // Add more robust connection check
+        const me = await this.bot?.telegram.getMe();
+        if (!me) {
+          throw new Error("Bot getMe() returned null");
+        }
+
+        this._isConnected = true;
       } catch (error) {
-        log("Heartbeat check failed, connection may be lost", "warn");
+        log("Heartbeat check failed, attempting to recover", "warn");
+        this._isConnected = false;
         await this.handleDisconnect();
       }
     }, this.HEARTBEAT_INTERVAL);
@@ -251,16 +248,27 @@ export class TelegramBot {
   }
 
   private async handleDisconnect() {
-    if (this.isStarting || !this._isConnected) return;
+    if (this.isStarting) return;
 
-    this._isConnected = false;
     log("Bot disconnected, attempting to reconnect...");
 
+    // Add exponential backoff
     const delay = this.INITIAL_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts);
     await new Promise(resolve => setTimeout(resolve, delay));
 
     try {
-      log(`Attempting to reconnect Telegram bot (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
+      log(`Attempting to reconnect (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
+
+      // Stop existing bot first
+      if (this.bot) {
+        try {
+          await this.bot.stop();
+        } catch (error) {
+          log(`Error stopping bot: ${error}`, "warn");
+        }
+      }
+
+      // Create new bot instance
       await this.start();
       this.reconnectAttempts = 0;
       log("Reconnection successful");
@@ -271,7 +279,7 @@ export class TelegramBot {
       if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
         await this.handleDisconnect();
       } else {
-        log("Max reconnection attempts reached, manual intervention required", "error");
+        log("Max reconnection attempts reached", "error");
         this.reconnectAttempts = 0;
       }
     }
@@ -482,8 +490,7 @@ export class TelegramBot {
           await ctx.reply(
             `❌ You already have an active ticket in *${escapeMarkdown(category?.name || "Unknown")}* category.\n\n` +
             "You cannot create a new ticket while you have an active one.\n" +
-            "Please use /close to close your current ticket before starting a new one, " +
-            "or continue chatting here to update your existing ticket.",
+            "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.",
             { parse_mode: "MarkdownV2" }
           );
           return;
