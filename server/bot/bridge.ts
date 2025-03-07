@@ -329,26 +329,23 @@ export class BridgeManager {
         return;
       }
 
-      // Create an embed for the forwarded message
-      const embed = {
+      // For regular messages, use simple webhook message format
+      const messageContent = {
+        content: content,
         username: username,
-        embeds: [{
-          description: content,
-          color: 0x5865F2,
-          author: {
-            name: username,
-            icon_url: avatarUrl
-          },
-          timestamp: new Date().toISOString()
-        }]
+        avatarURL: avatarUrl
       };
 
-      // If there's an image, add it to the embed
       if (imageUrl) {
-        embed.embeds[0].image = { url: imageUrl };
+        messageContent.content = `${content}\n${imageUrl}`;
       }
 
-      await this.discordBot.sendMessage(ticket.discordChannelId, embed, username);
+      await this.discordBot.sendMessage(
+        ticket.discordChannelId,
+        messageContent,
+        username
+      );
+
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
       log(`Error forwarding to Discord: ${error instanceof Error ? error.message : String(error)}`, "error");

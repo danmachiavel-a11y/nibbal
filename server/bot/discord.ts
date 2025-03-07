@@ -580,8 +580,30 @@ export class DiscordBot {
       // Get or create webhook with proper caching
       const webhook = await this.getOrCreateWebhook(channel);
 
+      // Prepare webhook message
+      const messageOptions: any = {
+        username,
+      };
+
+      // Handle different types of content
+      if (content && typeof content === 'object') {
+        if (content.embeds) {
+          // This is an embed message (for ticket creation)
+          messageOptions.embeds = content.embeds;
+        } else {
+          // This is a forwarded message
+          messageOptions.content = content.content || content;
+          if (content.avatarURL) {
+            messageOptions.avatarURL = content.avatarURL;
+          }
+        }
+      } else {
+        // Regular text message
+        messageOptions.content = content;
+      }
+
       // Send message via webhook
-      const message = await webhook.send(content);
+      const message = await webhook.send(messageOptions);
 
       // Pin if it's a ticket message
       if (content.embeds?.[0]?.title?.includes('New Ticket')) {
