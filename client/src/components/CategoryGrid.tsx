@@ -45,21 +45,20 @@ function SortableItem({ id, category, onNewRowToggle, onDeleteCategory }: Sortab
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
       className="p-2 w-full sm:w-1/2"
     >
       <Card className="relative bg-white hover:bg-gray-50 transition-colors">
         <CardHeader className="p-3">
           <div className="flex justify-between items-center">
-            <CardTitle className="text-sm font-medium cursor-grab" {...listeners}>
+            <CardTitle className="text-sm font-medium cursor-grab" {...listeners} {...attributes}>
               {category.name}
             </CardTitle>
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button 
                   variant="ghost" 
-                  size="icon" 
-                  className="h-8 w-8 hover:bg-red-100 hover:text-red-600"
+                  size="icon"
+                  className="h-8 w-8 hover:bg-red-100 hover:text-red-600 transition-colors"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
