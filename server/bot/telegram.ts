@@ -473,15 +473,7 @@ export class TelegramBot {
         return;
       }
 
-      const state = this.userStates.get(userId);
-      if (state?.inQuestionnaire) {
-        await ctx.reply(
-          "❌ You are currently answering questions for a ticket.\n" +
-          "Use /cancel to cancel the current process first."
-        );
-        return;
-      }
-
+      // Check for existing active ticket first
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
         const activeTicket = await storage.getActiveTicketByUserId(user.id);
@@ -489,12 +481,22 @@ export class TelegramBot {
           const category = await storage.getCategory(activeTicket.categoryId);
           await ctx.reply(
             `❌ You already have an active ticket in *${escapeMarkdown(category?.name || "Unknown")}* category.\n\n` +
-              "Please use /close to close your current ticket before starting a new one, " +
-              "or continue chatting here to update your existing ticket.",
+            "You cannot create a new ticket while you have an active one.\n" +
+            "Please use /close to close your current ticket before starting a new one, " +
+            "or continue chatting here to update your existing ticket.",
             { parse_mode: "MarkdownV2" }
           );
           return;
         }
+      }
+
+      const state = this.userStates.get(userId);
+      if (state?.inQuestionnaire) {
+        await ctx.reply(
+          "❌ You are currently answering questions for a ticket.\n" +
+          "Use /cancel to cancel the current process first."
+        );
+        return;
       }
 
       const botConfig = await storage.getBotConfig();
@@ -956,7 +958,7 @@ export class TelegramBot {
         const activeCategory = await storage.getCategory(activeTicket.categoryId);
         await ctx.reply(
           `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\n` +
-          "Please use /close to close your current ticket before starting a new one.",
+          "Please use`/close to close your current ticket before starting a new one.",
           { parse_mode: 'MarkdownV2'}
         );
         return;
