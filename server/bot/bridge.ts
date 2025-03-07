@@ -329,7 +329,26 @@ export class BridgeManager {
         return;
       }
 
-      await this.discordBot.sendMessage(ticket.discordChannelId, content, username, avatarUrl, imageUrl);
+      // Create an embed for the forwarded message
+      const embed = {
+        username: username,
+        embeds: [{
+          description: content,
+          color: 0x5865F2,
+          author: {
+            name: username,
+            icon_url: avatarUrl
+          },
+          timestamp: new Date().toISOString()
+        }]
+      };
+
+      // If there's an image, add it to the embed
+      if (imageUrl) {
+        embed.embeds[0].image = { url: imageUrl };
+      }
+
+      await this.discordBot.sendMessage(ticket.discordChannelId, embed, username);
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
       log(`Error forwarding to Discord: ${error instanceof Error ? error.message : String(error)}`, "error");
