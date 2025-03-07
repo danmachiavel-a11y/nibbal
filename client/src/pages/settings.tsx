@@ -27,6 +27,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { useState, useEffect } from 'react';
 import { Folder, FolderOpen, Tag, Info } from 'lucide-react';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { CategoryGrid } from "@/components/CategoryGrid";
 
 function CategoryList({ categories }: { categories: Category[] }) {
   const submenus = categories.filter(cat => cat.isSubmenu);
@@ -688,7 +689,16 @@ function SettingsPage() {
             </TabsList>
 
             <TabsContent value="existing">
-              {categories && <CategoryList categories={categories} />}
+              {categories ? (
+                <CategoryGrid 
+                  categories={categories} 
+                  onReorder={(updatedCategories) => {
+                    queryClient.setQueryData(["/api/categories"], updatedCategories);
+                  }} 
+                />
+              ) : (
+                <div>Loading categories...</div>
+              )}
             </TabsContent>
 
             <TabsContent value="new">
@@ -1019,14 +1029,14 @@ function SettingsPage() {
                                   <TooltipContent>
                                     <p>During development/testing, the bot may show as "not connected"</p>
                                     <p>because Telegram only allows one active connection per token.</p>
-                                    <p>This is normal and the bot will still work in production.</p>
+                                    <p>This is normal and the bot will still work inproduction.</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
                             </div>
                             <FormDescription>
                               Enter your Telegram bot token. You can get this from @BotFather on Telegram.
-                                                        </FormDescription>
+                            </FormDescription>
                             <div className="flex space-x-2">
                               <FormControl>
                                 <Input type="password" {...field} />

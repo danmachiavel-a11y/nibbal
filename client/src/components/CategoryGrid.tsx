@@ -12,10 +12,12 @@ interface CategoryGridProps {
 }
 
 export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
+  console.log("CategoryGrid rendering with categories:", categories); // Debug log
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const handleDeleteCategory = async (id: number) => {
+    console.log("Attempting to delete category:", id); // Debug log
     try {
       const res = await fetch(`/api/categories/${id}`, {
         method: 'DELETE',
@@ -44,42 +46,45 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
   return (
     <div className="p-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {categories.map(category => (
-          <Card key={category.id} className="p-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-medium">{category.name}</h3>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button 
-                    variant="destructive"
-                    size="sm"
-                    className="flex items-center gap-2"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Delete
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete Category</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Are you sure you want to delete "{category.name}"? This action cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction 
-                      onClick={() => handleDeleteCategory(category.id)}
-                      className="bg-red-600 hover:bg-red-700 text-white"
+        {categories.map(category => {
+          console.log("Rendering category:", category); // Debug log
+          return (
+            <Card key={category.id} className="p-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-medium">{category.name}</h3>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button 
+                      variant="destructive"
+                      size="sm"
+                      className="flex items-center gap-2"
                     >
+                      <Trash2 className="h-4 w-4" />
                       Delete
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          </Card>
-        ))}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete Category</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Are you sure you want to delete "{category.name}"? This action cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction 
+                        onClick={() => handleDeleteCategory(category.id)}
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                      >
+                        Delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
