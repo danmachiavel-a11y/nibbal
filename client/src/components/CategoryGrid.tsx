@@ -1,8 +1,13 @@
-import { useSortable } from "@dnd-kit/sortable";
+import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { DndContext, DragEndEvent, MouseSensor, TouchSensor, useSensor, useSensors, pointerWithin } from "@dnd-kit/core";
+import { restrictToParentElement } from "@dnd-kit/modifiers";
+import type { Category } from "@shared/schema";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { Trash2, GripVertical } from "lucide-react";
 
 interface SortableItemProps {
@@ -92,27 +97,6 @@ function SortableItem({ id, category, onNewRowToggle, onDeleteCategory }: Sortab
   );
 }
 
-import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { Card, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { 
-  DndContext, 
-  DragEndEvent, 
-  MouseSensor, 
-  TouchSensor, 
-  useSensor, 
-  useSensors,
-  pointerWithin,
-} from "@dnd-kit/core";
-import { restrictToParentElement } from "@dnd-kit/modifiers";
-import type { Category } from "@shared/schema";
-import { useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@/hooks/use-toast";
-import { Trash2 } from "lucide-react";
-
-
 interface CategoryGridProps {
   categories: Category[];
   onReorder: (categories: Category[]) => void;
@@ -128,19 +112,16 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
-
     if (!over || active.id === over.id) return;
 
     const oldIndex = categories.findIndex(cat => cat.id === active.id);
     const newIndex = categories.findIndex(cat => cat.id === over.id);
 
-    // Create new array with updated order
     const newCategories = [...categories];
     const [moved] = newCategories.splice(oldIndex, 1);
     newCategories.splice(newIndex, 0, moved);
 
     try {
-      // Update display orders
       const updatePromises = newCategories.map((category, index) => 
         fetch(`/api/categories/${category.id}`, {
           method: 'PATCH',
@@ -234,8 +215,6 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
       });
     }
   };
-
-  console.log("CategoryGrid rendered:", categories); 
 
   return (
     <div className="border rounded-lg p-4 bg-gray-50">
