@@ -481,104 +481,110 @@ export class TelegramBot {
         return;
       }
 
-      // Check for existing active ticket first
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (activeTicket) {
-          const category = await storage.getCategory(activeTicket.categoryId);
+      try {
+        // Check for existing active ticket first
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (user) {
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          if (activeTicket) {
+            const category = await storage.getCategory(activeTicket.categoryId);
+            const categoryName = escapeMarkdown(category?.name || "Unknown");
+            await ctx.reply(
+              `❌ You already have an active ticket in *${categoryName}* category\\.\n\n` +
+              "You cannot create a new ticket while you have an active one\\.\n" +
+              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket\\.",
+              { parse_mode: "MarkdownV2" }
+            );
+            return;
+          }
+        }
+
+        const state = this.userStates.get(userId);
+        if (state?.inQuestionnaire) {
           await ctx.reply(
-            `❌ You already have an active ticket in *${escapeMarkdown(category?.name || "Unknown")}* category.\n\n` +
-            "You cannot create a new ticket while you have an active one.\n" +
-            "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.",
-            { parse_mode: "MarkdownV2" }
+            "❌ You are currently answering questions for a ticket.\n" +
+            "Use /cancel to cancel the current process first."
           );
           return;
         }
-      }
 
-      const state = this.userStates.get(userId);
-      if (state?.inQuestionnaire) {
-        await ctx.reply(
-          "❌ You are currently answering questions for a ticket.\n" +
-          "Use /cancel to cancel the current process first."
-        );
-        return;
-      }
+        const botConfig = await storage.getBotConfig();
+        const categories = await storage.getCategories();
 
-      const botConfig = await storage.getBotConfig();
-      const categories = await storage.getCategories();
+        const submenus = categories.filter(cat => cat.isSubmenu);
+        const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
 
-      const submenus = categories.filter(cat => cat.isSubmenu);
-      const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
+        const keyboard: { text: string; callback_data: string; }[][] = [];
+        let currentRow: { text: string; callback_data: string; }[] = [];
 
-      const keyboard: { text: string; callback_data: string; }[][] = [];
-      let currentRow: { text: string; callback_data: string; }[] = [];
+        for (const submenu of submenus) {
+          const button = {
+            text: submenu.name,
+            callback_data: `submenu_${submenu.id}`
+          };
 
-      for (const submenu of submenus) {
-        const button = {
-          text: submenu.name,
-          callback_data: `submenu_${submenu.id}`
-        };
-
-        if (submenu.newRow && currentRow.length > 0) {
-          keyboard.push([...currentRow]);
-          currentRow = [button];
-        } else {
-          currentRow.push(button);
-          if (currentRow.length >= 2) {
+          if (submenu.newRow && currentRow.length > 0) {
             keyboard.push([...currentRow]);
-            currentRow = [];
+            currentRow = [button];
+          } else {
+            currentRow.push(button);
+            if (currentRow.length >= 2) {
+              keyboard.push([...currentRow]);
+              currentRow = [];
+            }
           }
         }
-      }
 
-      for (const category of rootCategories) {
-        const button = {
-          text: category.name,
-          callback_data: `category_${category.id}`
-        };
+        for (const category of rootCategories) {
+          const button = {
+            text: category.name,
+            callback_data: `category_${category.id}`
+          };
 
-        if (category.newRow && currentRow.length > 0) {
-          keyboard.push([...currentRow]);
-          currentRow = [button];
-        } else {
-          currentRow.push(button);
-          if (currentRow.length >= 2) {
+          if (category.newRow && currentRow.length > 0) {
             keyboard.push([...currentRow]);
-            currentRow = [];
+            currentRow = [button];
+          } else {
+            currentRow.push(button);
+            if (currentRow.length >= 2) {
+              keyboard.push([...currentRow]);
+              currentRow = [];
+            }
           }
         }
-      }
 
-      if (currentRow.length > 0) {
-        keyboard.push(currentRow);
-      }
+        if (currentRow.length > 0) {
+          keyboard.push(currentRow);
+        }
 
-      const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
+        const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
 
-      if (botConfig?.welcomeImageUrl) {
-        try {
-          await ctx.replyWithPhoto(
-            botConfig.welcomeImageUrl,
-            {
-              caption: welcomeMessage,
+        if (botConfig?.welcomeImageUrl) {
+          try {
+            await ctx.replyWithPhoto(
+              botConfig.welcomeImageUrl,
+              {
+                caption: welcomeMessage,
+                parse_mode: "MarkdownV2",
+                reply_markup: { inline_keyboard: keyboard }
+              }
+            );
+          } catch (error) {
+            console.error("Failed to send welcome image:", error);
+            await ctx.reply(welcomeMessage, {
               parse_mode: "MarkdownV2",
               reply_markup: { inline_keyboard: keyboard }
-            }
-          );
-        } catch (error) {
-          console.error("Failed to send welcome image:", error);
+            });
+          }
+        } else {
           await ctx.reply(welcomeMessage, {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
         }
-      } else {
-        await ctx.reply(welcomeMessage, {
-          parse_mode: "MarkdownV2",
-          reply_markup: { inline_keyboard: keyboard }
-        });
+      } catch (error) {
+        log(`Error in start command: ${error}`, "error");
+        await ctx.reply("❌ There was an error processing your request. Please try again in a moment.");
       }
     });
 
@@ -958,7 +964,7 @@ export class TelegramBot {
       return;
     }
 
-    const user = await storage.getUserByTelegramId(userId.toString());
+    const user= await storage.getUserByTelegramId(userId.toString());
     if (user) {
       const activeTicket = await storage.getActiveTicketByUserId(user.id);
       if (activeTicket) {
