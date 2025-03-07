@@ -273,6 +273,17 @@ export class BridgeManager {
       log(`Ticket channel created: ${channelName}`);
     } catch (error) {
       log(`Error creating Discord channel: ${error}`, "error");
+
+      // Check if error is due to channel limit
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('Maximum number of channels in category') || 
+          errorMessage.includes('channel limit')) {
+        // Update ticket status to pending
+        await storage.updateTicketStatus(ticket.id, "pending");
+        throw new Error("Category is at maximum channel limit. Please try again later or contact an administrator.");
+      }
+
+      // For other errors, mark ticket as open but without channel
       await storage.updateTicketStatus(ticket.id, "open");
       throw error;
     }

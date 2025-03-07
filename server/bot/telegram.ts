@@ -879,8 +879,18 @@ export class TelegramBot {
         await this.bridge.createTicketChannel(ticket);
         await ctx.reply("✅ Ticket created! Our support team will assist you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
       } catch (error) {
-        log(`Discord channel creation error: ${error}`, "error");
-        await ctx.reply("✅ Ticket created! However, there might be a slight delay before our team can respond. Please be patient.");
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        if (errorMessage.includes('maximum channel limit')) {
+          await ctx.reply(
+            "❌ Sorry, our support channels are currently at maximum capacity.\n" +
+            "Your ticket has been created but is in a pending state.\n" +
+            "Please try again in a few minutes, or contact an administrator for immediate assistance."
+          );
+        } else {
+          log(`Discord channel creation error: ${error}`, "error");
+          await ctx.reply("✅ Ticket created! However, there might be a slight delay before our team can respond. Please be patient.");
+        }
       }
 
       // Only clean up state after successful ticket creation
