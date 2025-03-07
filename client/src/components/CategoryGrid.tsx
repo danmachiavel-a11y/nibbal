@@ -124,14 +124,13 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
     newCategories.splice(newIndex, 0, moved);
 
     try {
-      // Update display orders in the database
+      // Update display orders
       const updatePromises = newCategories.map((category, index) => 
         fetch(`/api/categories/${category.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             displayOrder: index,
-            // Include all existing properties to prevent overwriting
             name: category.name,
             discordRoleId: category.discordRoleId,
             discordCategoryId: category.discordCategoryId,
@@ -143,27 +142,15 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
         })
       );
 
-      // Wait for all updates to complete
-      const results = await Promise.all(updatePromises);
-
-      // Check if any update failed
-      if (results.some(res => !res.ok)) {
-        throw new Error('Failed to update some categories');
-      }
-
-      // Update local state
+      await Promise.all(updatePromises);
       onReorder(newCategories);
-
-      // Invalidate cache to trigger a refetch
       await queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-
     } catch (error) {
       toast({
         title: "Error",
         description: "Failed to update category order",
         variant: "destructive"
       });
-      // Reset to original order
       onReorder(categories);
     }
   };
@@ -180,7 +167,6 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           newRow,
-          // Include all existing properties
           name: category.name,
           discordRoleId: category.discordRoleId,
           discordCategoryId: category.discordCategoryId,
@@ -193,13 +179,10 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
 
       if (!res.ok) throw new Error('Failed to update category');
 
-      // Update local state
       const updatedCategories = categories.map(cat => 
         cat.id === id ? { ...cat, newRow } : cat
       );
       onReorder(updatedCategories);
-
-      // Force refresh the categories
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
     } catch (error) {
       toast({
@@ -218,17 +201,14 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
 
       if (!res.ok) throw new Error('Failed to delete category');
 
-      // Update local state
       const updatedCategories = categories.filter(cat => cat.id !== id);
       onReorder(updatedCategories);
 
-      // Show success message
       toast({
         title: "Success",
         description: "Category deleted successfully",
       });
 
-      // Force refresh the categories
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
     } catch (error) {
       toast({
@@ -239,26 +219,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
     }
   };
 
-  // Group categories into rows based on newRow property
-  const rows: Category[][] = [];
-  let currentRow: Category[] = [];
-
-  for (const category of categories) {
-    if (category.newRow && currentRow.length > 0) {
-      rows.push([...currentRow]);
-      currentRow = [category];
-    } else {
-      currentRow.push(category);
-      if (currentRow.length === 2) {
-        rows.push([...currentRow]);
-        currentRow = [];
-      }
-    }
-  }
-
-  if (currentRow.length > 0) {
-    rows.push([...currentRow]);
-  }
+  console.log("CategoryGrid rendered:", categories); // Added debug logging
 
   return (
     <div className="border rounded-lg p-4 bg-gray-50">
@@ -275,36 +236,32 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
         modifiers={[restrictToParentElement]}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex flex-col gap-4">
-          <SortableContext
-            items={categories.map(cat => cat.id)}
-            strategy={rectSortingStrategy}
-          >
-            <div className="flex flex-wrap gap-4 min-h-[100px] bg-white p-4 rounded-lg border-2 border-dashed border-gray-200">
-              {categories.map(category => (
-                <SortableItem
-                  key={category.id}
-                  id={category.id}
-                  category={category}
-                  onNewRowToggle={handleNewRowToggle}
-                  onDeleteCategory={handleDeleteCategory}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </div>
+        <SortableContext
+          items={categories.map(cat => cat.id)}
+          strategy={rectSortingStrategy}
+        >
+          <div className="flex flex-wrap gap-4 min-h-[100px] bg-white p-4 rounded-lg border-2 border-dashed border-gray-200">
+            {categories.map(category => (
+              <SortableItem
+                key={category.id}
+                id={category.id}
+                category={category}
+                onNewRowToggle={handleNewRowToggle}
+                onDeleteCategory={handleDeleteCategory}
+              />
+            ))}
+          </div>
+        </SortableContext>
       </DndContext>
 
       <div className="mt-8 p-4 border rounded bg-white">
         <h4 className="text-sm font-medium mb-4">Telegram Preview</h4>
         <div className="space-y-2">
-          {rows.map((row, rowIndex) => (
-            <div key={rowIndex} className="flex gap-2">
-              {row.map((category, index) => (
-                <button key={index} className="flex-1 px-4 py-2 text-sm bg-blue-100 rounded text-center">
-                  {category.name}
-                </button>
-              ))}
+          {categories.map((category, index) => (
+            <div key={index} className="flex gap-2">
+              <button className="flex-1 px-4 py-2 text-sm bg-blue-100 rounded text-center">
+                {category.name}
+              </button>
             </div>
           ))}
         </div>
