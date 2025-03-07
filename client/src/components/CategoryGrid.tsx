@@ -2,6 +2,7 @@ import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sort
 import { CSS } from "@dnd-kit/utilities";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { 
   DndContext, 
   DragEndEvent, 
@@ -15,14 +16,16 @@ import { restrictToParentElement } from "@dnd-kit/modifiers";
 import type { Category } from "@shared/schema";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { Trash2 } from "lucide-react";
 
 interface SortableItemProps {
   id: number;
   category: Category;
   onNewRowToggle: (id: number) => void;
+  onDeleteCategory: (id: number) => void;
 }
 
-function SortableItem({ id, category, onNewRowToggle }: SortableItemProps) {
+function SortableItem({ id, category, onNewRowToggle, onDeleteCategory }: SortableItemProps) {
   const {
     attributes,
     listeners,
@@ -47,7 +50,30 @@ function SortableItem({ id, category, onNewRowToggle }: SortableItemProps) {
     >
       <Card className="bg-white hover:bg-gray-50 transition-colors">
         <CardHeader className="p-3" {...listeners}>
-          <CardTitle className="text-sm font-medium cursor-grab">{category.name}</CardTitle>
+          <div className="flex justify-between items-center">
+            <CardTitle className="text-sm font-medium cursor-grab">{category.name}</CardTitle>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete Category</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete the "{category.name}" category? This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => onDeleteCategory(id)} className="bg-red-600 hover:bg-red-700">
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </CardHeader>
         <CardContent>
           <Button 
@@ -176,6 +202,35 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
     }
   };
 
+  const handleDeleteCategory = async (id: number) => {
+    try {
+      const res = await fetch(`/api/categories/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) throw new Error('Failed to delete category');
+
+      // Update local state
+      const updatedCategories = categories.filter(cat => cat.id !== id);
+      onReorder(updatedCategories);
+
+      // Show success message
+      toast({
+        title: "Success",
+        description: "Category deleted successfully",
+      });
+
+      // Force refresh the categories
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete category",
+        variant: "destructive"
+      });
+    }
+  };
+
   // Group categories into rows based on newRow property
   const rows: Category[][] = [];
   let currentRow: Category[] = [];
@@ -203,6 +258,8 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
         • Drag category names to reorder them
         <br />
         • Toggle "Start New Row" to control button layout
+        <br />
+        • Click the trash icon to delete a category
       </h3>
       <DndContext
         sensors={sensors}
@@ -222,6 +279,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
                   id={category.id}
                   category={category}
                   onNewRowToggle={handleNewRowToggle}
+                  onDeleteCategory={handleDeleteCategory}
                 />
               ))}
             </div>
