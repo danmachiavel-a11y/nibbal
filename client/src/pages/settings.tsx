@@ -290,6 +290,7 @@ function CategoryEditor({ category, categories }: { category: Category; categori
       serviceImageUrl: category.serviceImageUrl || "",
       displayOrder: category.displayOrder || 0,
       newRow: category.newRow || false,
+      isClosed: category.isClosed || false,
       discordCategories: [],
       discordRoles: []
     }
@@ -338,7 +339,8 @@ function CategoryEditor({ category, categories }: { category: Category; categori
         parentId: data.parentId,
         isSubmenu: data.isSubmenu,
         displayOrder: data.displayOrder,
-        newRow: data.newRow
+        newRow: data.newRow,
+        isClosed: data.isClosed
       };
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
@@ -396,6 +398,36 @@ function CategoryEditor({ category, categories }: { category: Category; categori
                   />
                 </FormControl>
                 <FormLabel className="m-0">Start New Row</FormLabel>
+              </FormItem>
+            )}
+          />
+
+          {/* Add new isClosed toggle */}
+          <FormField
+            control={form.control}
+            name="isClosed"
+            render={({ field }) => (
+              <FormItem className="flex items-center space-x-2">
+                <FormControl>
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={field.onChange}
+                    className="h-4 w-4"
+                  />
+                </FormControl>
+                <FormLabel className="m-0">Service Closed</FormLabel>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Info className="h-4 w-4 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>When closed, users will see a message saying</p>
+                      <p>"This service is currently closed. Try again later."</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </FormItem>
             )}
           />
@@ -974,239 +1006,4 @@ function SettingsPage() {
                                       try {
                                         const res = await apiRequest("GET", "/api/discord/categories");
                                         if (!res.ok) throw new Error("Failed to fetch Discord categories");
-                                        const categories = await res.json();
-                                        categoryForm.setValue("discordCategories", categories);
-                                      } catch (error) {
-                                        toast({
-                                          title: "Error",
-                                          description: "Failed to load Discord categories",
-                                          variant: "destructive"
-                                        });
-                                      }
-                                    }}
-                                  >
-                                    Refresh Categories
-                                  </Button>
-                                </div>
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={categoryForm.control}
-                            name="questions"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Questions</FormLabel>
-                                <FormDescription>
-                                  Enter each question on a new line
-                                </FormDescription>
-                                <FormControl>
-                                  <Textarea {...field} rows={5} />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={categoryForm.control}
-                            name="serviceSummary"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Service Summary</FormLabel>
-                                <FormDescription>
-                                  Description of this service shown when users select it.
-                                  Use new lines to format your message.
-                                </FormDescription>
-                                <FormControl><Textarea {...field} rows={5} />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={categoryForm.control}
-                            name="serviceImageUrl"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Service Image URL</FormLabel>
-                                <FormDescription>
-                                  Optional: URL of an image to show with the service description
-                                </FormDescription>
-                                <FormControl>
-                                  <Input {...field} value={field.value || ''} />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
-                        </>
-                      )}
-
-                      <Button type="submit">Create {categoryForm.watch("isSubmenu") ? "Submenu" : "Category"}</Button>
-                    </form>
-                  </Form>
-                </CardContent>
-              </Card>
-            </TabsContent>
-            <TabsContent value="bot-config">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Bot Configuration</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Form {...botConfigForm}>
-                    <form onSubmit={botConfigForm.handleSubmit(onBotConfigSubmit)} className="space-y-4">
-                      <FormField
-                        control={botConfigForm.control}
-                        name="welcomeMessage"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Welcome Message</FormLabel>
-                            <FormDescription>
-                              Enter the welcome message shown when users start the bot.
-                              You can use Markdown formatting:
-                              - **text** for bold
-                              - __text__ for italic
-                              - ```text``` for code blocks
-                            </FormDescription>
-                            <FormControl>
-                              <Textarea {...field} rows={3} />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={botConfigForm.control}
-                        name="welcomeImageUrl"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Welcome Image URL</FormLabel>
-                            <FormDescription>
-                              Optional: URL of an image to show with the welcome message
-                            </FormDescription>
-                            <FormControl>
-                              <Input {...field} value={field.value || ''} />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={botConfigForm.control}
-                        name="telegramToken"
-                        render={({ field }) => (
-                          <FormItem>
-                            <div className="flex items-center gap-2">
-                              <FormLabel>Telegram Bot Token</FormLabel>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger>
-                                    <Info className="h-4 w-4 text-muted-foreground" />
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>During development/testing, the bot may show as "not connected"</p>
-                                    <p>because Telegram only allows one active connection per token.</p>
-                                    <p>This is normal and the bot will still work in production.</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            <FormDescription>
-                              Enter your Telegram bot token. You can get this from @BotFather on Telegram.
-                            </FormDescription>
-                            <div className="flex space-x-2">
-                              <FormControl>
-                                <Input type="password" {...field} />
-                              </FormControl>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={async () => {
-                                  try {
-                                    const res = await apiRequest("GET", "/api/bot/telegram/status");
-                                    if (!res.ok) throw new Error("Failed to check Telegram bot status");
-                                    const status = await res.json();
-                                    toast({
-                                      title: "Telegram Bot Status",
-                                      description: status.connected
-                                        ? "Connected and ready"
-                                        : "Not connected - This is normal during testing. The bot will work in production.",
-                                      variant: status.connected ? "default" : "destructive"
-                                    });
-                                  } catch (error) {
-                                    toast({
-                                      title: "Error",
-                                      description: "Failed to check Telegram bot status",
-                                      variant: "destructive"
-                                    });
-                                  }
-                                }}
-                              >
-                                Check Status
-                              </Button>
-                            </div>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={botConfigForm.control}
-                        name="discordToken"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Discord Bot Token</FormLabel>
-                            <FormDescription>
-                              Enter your Discord bot token. You can get this from the Discord Developer Portal.
-                            </FormDescription>
-                            <div className="flex space-x-2">
-                              <FormControl>
-                                <Input type="password" {...field} />
-                              </FormControl>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={async () => {
-                                  try {
-                                    const res = await apiRequest("GET", "/api/bot/discord/status");
-                                    if (!res.ok) throw new Error("Failed to check Discord bot status");
-                                    const status = await res.json();
-                                    toast({
-                                      title: "Discord Bot Status",
-                                      description: status.connected ? "Connected" : "Not Connected",
-                                      variant: status.connected ? "default" : "destructive"
-                                    });
-                                  } catch (error) {
-                                    toast({
-                                      title: "Error",
-                                      description: "Failed to check Discord bot status",
-                                      variant: "destructive"
-                                    });
-                                  }
-                                }}
-                              >
-                                Check Status
-                              </Button>
-                            </div>
-                          </FormItem>
-                        )}
-                      />
-
-                      <div className="flex justify-end space-x-2">
-                        <Button type="submit" size="sm">
-                          Save Bot Configuration
-                        </Button>
-                      </div>
-                    </form>
-                  </Form>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-export default SettingsPage;
+                                        const categories =text

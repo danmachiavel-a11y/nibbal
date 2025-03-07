@@ -32,6 +32,7 @@ const categoriesConfig = {
   newRow: boolean("new_row").default(false),
   parentId: integer("parent_id"),
   isSubmenu: boolean("is_submenu").default(false),
+  isClosed: boolean("is_closed").default(false), // Added isClosed field
 };
 
 export const categories = pgTable("categories", categoriesConfig);

@@ -146,7 +146,6 @@ export async function registerRoutes(app: Express) {
     }
   });
 
-
   // Add new route to fetch Discord categories
   app.get("/api/discord/categories", async (req, res) => {
     try {
@@ -250,6 +249,7 @@ export async function registerRoutes(app: Express) {
       newRow: z.boolean().optional(),
       parentId: z.number().nullable().optional(),
       isSubmenu: z.boolean().optional(),
+      isClosed: z.boolean().optional(), // Add isClosed to the schema
     });
 
     const result = schema.safeParse(req.body);

@@ -976,32 +976,41 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId) return;
 
-    // Check for existing questionnaire or active ticket first
-    const state = this.userStates.get(userId);
-    if (state?.inQuestionnaire) {
-      await ctx.reply(
-        "❌ You are currently answering questions for a ticket.\n" +
-        "Use /cancel to cancel the current process first."
-      );
-      return;
-    }
-
-    const user = await storage.getUserByTelegramId(userId.toString());
-    if (user) {
-      const activeTicket = await storage.getActiveTicketByUserId(user.id);
-      if (activeTicket) {
-        const activeCategory = await storage.getCategory(activeTicket.categoryId);
+    try {
+      // First check if the category is closed
+      if (category.isClosed) {
         await ctx.reply(
-          `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category.\n\n` +
-          "Please use`/close to close your current ticket before starting a new one.",
+          "❌ This service is currently closed\\. Please try again later\\.",
           { parse_mode: 'MarkdownV2' }
         );
         return;
       }
-    }
 
-    try {
-      // Initialize questionnaire state before sending anything
+      // Check for existing questionnaire or active ticket first
+      const state = this.userStates.get(userId);
+      if (state?.inQuestionnaire) {
+        await ctx.reply(
+          "❌ You are currently answering questions for a ticket.\n" +
+          "Use /cancel to cancel the current process first."
+        );
+        return;
+      }
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const activeCategory = await storage.getCategory(activeTicket.categoryId);
+          await ctx.reply(
+            `❌ You already have an active ticket in *${escapeMarkdown(activeCategory?.name || "Unknown")}* category\\.\n\n` +
+            "Please use /close to close your current ticket before starting a new one\\.",
+            { parse_mode: 'MarkdownV2' }
+          );
+          return;
+        }
+      }
+
+      // Initialize questionnaire state
       this.setState(userId, {
         categoryId,
         currentQuestion: 0,
@@ -1009,26 +1018,45 @@ export class TelegramBot {
         inQuestionnaire: true
       });
 
-      // Send category info
-      const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
-      const name = escapeMarkdown(category.name);
-      const summary = escapeMarkdown(category.serviceSummary || '');
-      const messageText = `*${name}*\n\n${summary}`;
+      // Send category info with image if available
+      try {
+        const photoUrl = category.serviceImageUrl || `https://picsum.photos/seed/${category.name.toLowerCase()}/800/400`;
+        const name = escapeMarkdown(category.name);
+        const summary = escapeMarkdown(category.serviceSummary || '');
+        const messageText = `*${name}*\n\n${summary}`;
 
-      await ctx.replyWithPhoto(
-        { url: photoUrl },
-        {
-          caption: messageText,
-          parse_mode: 'MarkdownV2'
-        }
-      );
+        await ctx.replyWithPhoto(
+          { url: photoUrl },
+          {
+            caption: messageText,
+            parse_mode: 'MarkdownV2'
+          }
+        );
 
-      if (category.questions && category.questions.length > 0) {
         // Add delay before first question
         await new Promise(resolve => setTimeout(resolve, 2000));
-        await ctx.reply(category.questions[0]);
-      } else {
-        await this.createTicket(ctx);
+
+        if (category.questions && category.questions.length > 0) {
+          await ctx.reply(category.questions[0]);
+        } else {
+          // If no questions, create ticket immediately
+          await this.createTicket(ctx);
+        }
+      } catch (error) {
+        log(`Error sending category info: ${error}`, "error");
+        // If image fails, send text only
+        const name = escapeMarkdown(category.name);
+        const summary = escapeMarkdown(category.serviceSummary || '');
+        await ctx.reply(
+          `*${name}*\n\n${summary}`,
+          { parse_mode: 'MarkdownV2' }
+        );
+
+        if (category.questions && category.questions.length > 0) {
+          await ctx.reply(category.questions[0]);
+        } else {
+          await this.createTicket(ctx);
+        }
       }
     } catch (error) {
       log(`Error handling category selection: ${error}`, "error");
