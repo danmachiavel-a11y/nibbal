@@ -1,22 +1,9 @@
-import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { 
-  DndContext, 
-  DragEndEvent, 
-  MouseSensor, 
-  TouchSensor, 
-  useSensor, 
-  useSensors,
-  pointerWithin,
-} from "@dnd-kit/core";
-import { restrictToParentElement } from "@dnd-kit/modifiers";
-import type { Category } from "@shared/schema";
-import { useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@/hooks/use-toast";
-import { Trash2 } from "lucide-react";
+import { Trash2, GripVertical } from "lucide-react";
 
 interface SortableItemProps {
   id: number;
@@ -45,20 +32,28 @@ function SortableItem({ id, category, onNewRowToggle, onDeleteCategory }: Sortab
     <div
       ref={setNodeRef}
       style={style}
-      className="p-2 w-full sm:w-1/2"
+      className="w-full sm:w-1/2 p-2"
     >
-      <Card className="relative bg-white hover:bg-gray-50 transition-colors">
-        <CardHeader className="p-3">
-          <div className="flex justify-between items-center">
-            <CardTitle className="text-sm font-medium cursor-grab" {...listeners} {...attributes}>
-              {category.name}
-            </CardTitle>
+      <Card className="relative bg-white hover:bg-gray-50">
+        <div className="p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="ghost" 
+                className="p-0 h-8 w-8 cursor-grab" 
+                {...listeners} 
+                {...attributes}
+              >
+                <GripVertical className="h-4 w-4" />
+              </Button>
+              <span className="font-medium">{category.name}</span>
+            </div>
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button 
-                  variant="ghost" 
+                  variant="ghost"
                   size="icon"
-                  className="h-8 w-8 hover:bg-red-100 hover:text-red-600 transition-colors"
+                  className="h-8 w-8 hover:bg-red-100 hover:text-red-600"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -67,7 +62,7 @@ function SortableItem({ id, category, onNewRowToggle, onDeleteCategory }: Sortab
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete Category</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Are you sure you want to delete the "{category.name}" category? This action cannot be undone.
+                    Are you sure you want to delete "{category.name}"? This action cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -82,20 +77,41 @@ function SortableItem({ id, category, onNewRowToggle, onDeleteCategory }: Sortab
               </AlertDialogContent>
             </AlertDialog>
           </div>
-        </CardHeader>
-        <CardContent>
-          <Button 
-            variant={category.newRow ? "default" : "outline"}
-            onClick={() => onNewRowToggle(id)}
-            className="w-full"
-          >
-            Start New Row: {category.newRow ? "ON" : "OFF"}
-          </Button>
-        </CardContent>
+          <div className="mt-4">
+            <Button 
+              variant={category.newRow ? "default" : "outline"}
+              onClick={() => onNewRowToggle(id)}
+              className="w-full"
+            >
+              Start New Row: {category.newRow ? "ON" : "OFF"}
+            </Button>
+          </div>
+        </div>
       </Card>
     </div>
   );
 }
+
+import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { 
+  DndContext, 
+  DragEndEvent, 
+  MouseSensor, 
+  TouchSensor, 
+  useSensor, 
+  useSensors,
+  pointerWithin,
+} from "@dnd-kit/core";
+import { restrictToParentElement } from "@dnd-kit/modifiers";
+import type { Category } from "@shared/schema";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { Trash2 } from "lucide-react";
+
 
 interface CategoryGridProps {
   categories: Category[];
@@ -219,7 +235,7 @@ export function CategoryGrid({ categories, onReorder }: CategoryGridProps) {
     }
   };
 
-  console.log("CategoryGrid rendered:", categories); // Added debug logging
+  console.log("CategoryGrid rendered:", categories); 
 
   return (
     <div className="border rounded-lg p-4 bg-gray-50">
