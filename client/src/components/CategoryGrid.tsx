@@ -2,7 +2,7 @@ import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sort
 import { CSS } from "@dnd-kit/utilities";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { 
   DndContext, 
   DragEndEvent, 
@@ -48,13 +48,19 @@ function SortableItem({ id, category, onNewRowToggle, onDeleteCategory }: Sortab
       {...attributes}
       className="p-2 w-full sm:w-1/2"
     >
-      <Card className="bg-white hover:bg-gray-50 transition-colors">
-        <CardHeader className="p-3" {...listeners}>
+      <Card className="relative bg-white hover:bg-gray-50 transition-colors">
+        <CardHeader className="p-3">
           <div className="flex justify-between items-center">
-            <CardTitle className="text-sm font-medium cursor-grab">{category.name}</CardTitle>
+            <CardTitle className="text-sm font-medium cursor-grab" {...listeners}>
+              {category.name}
+            </CardTitle>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-8 w-8 hover:bg-red-100 hover:text-red-600"
+                >
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </AlertDialogTrigger>
@@ -67,7 +73,10 @@ function SortableItem({ id, category, onNewRowToggle, onDeleteCategory }: Sortab
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => onDeleteCategory(id)} className="bg-red-600 hover:bg-red-700">
+                  <AlertDialogAction 
+                    onClick={() => onDeleteCategory(id)}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
                     Delete
                   </AlertDialogAction>
                 </AlertDialogFooter>
