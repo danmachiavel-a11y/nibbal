@@ -290,7 +290,7 @@ export class BridgeManager {
     }
   }
 
-  async forwardToTelegram(content: string, ticketId: number, username: string) {
+  async forwardToTelegram(content: string, ticketId: number, username: string, attachments?: any[]) {
     try {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Telegram - Ticket: ${JSON.stringify(ticket)}`);
@@ -311,6 +311,35 @@ export class BridgeManager {
       // Add safety check for valid Telegram ID
       if (!user.telegramId.match(/^\d+$/)) {
         log(`Invalid Telegram ID format for user: ${user.id}`, "error");
+        return;
+      }
+
+      // First, handle any attachments if present
+      if (attachments && attachments.length > 0) {
+        // Store message with attachment indication
+        await storage.createMessage({
+          ticketId,
+          content: content || "Image sent",
+          authorId: user.id,
+          platform: "discord",
+          timestamp: new Date()
+        });
+
+        // Send text content if any
+        if (content?.trim()) {
+          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
+        }
+
+        // Send each attachment
+        for (const attachment of attachments) {
+          if (attachment.url) {
+            await this.telegramBot.sendPhoto(
+              parseInt(user.telegramId),
+              attachment.url,
+              `Image from ${username}`
+            );
+          }
+        }
         return;
       }
 

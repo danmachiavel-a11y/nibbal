@@ -472,7 +472,7 @@ export class DiscordBot {
         if (discordUser) {
           await storage.createMessage({
             ticketId: ticket.id,
-            content: message.content,
+            content: message.content || "Sent an attachment",
             authorId: discordUser.id,
             platform: "discord",
             timestamp: new Date()
@@ -480,45 +480,21 @@ export class DiscordBot {
           log(`Stored Discord message in database for ticket ${ticket.id}`);
         }
 
-        // Forward text content to Telegram if present
-        if (message.content) {
-          try {
-            await this.bridge.forwardToTelegram(
-              message.content,
-              ticket.id,
-              message.member?.displayName || message.author.username || "Unknown Discord User"
-            );
-            log(`Successfully forwarded text message to Telegram for ticket ${ticket.id}`);
-          } catch (error) {
-            log(`Failed to forward text message to Telegram for ticket ${ticket.id}: ${error}`, "error");
-          }
-        }
+        // Get image attachments
+        const imageAttachments = message.attachments.filter(attachment =>
+          attachment.contentType?.startsWith('image/') ||
+          /\.(jpg|jpeg|png|gif|webp)$/i.test(attachment.name || '')
+        );
 
-        // Handle image attachments
-        if (message.attachments.size > 0) {
-          const imageAttachments = message.attachments.filter(attachment => 
-            attachment.contentType?.startsWith('image/') || 
-            /\.(jpg|jpeg|png|gif|webp)$/i.test(attachment.name || '')
-          );
+        // Forward content to Telegram
+        await this.bridge.forwardToTelegram(
+          message.content,
+          ticket.id,
+          message.member?.displayName || message.author.username || "Unknown Discord User",
+          imageAttachments.size > 0 ? Array.from(imageAttachments.values()) : undefined
+        );
 
-          if (imageAttachments.size > 0) {
-            log(`Found ${imageAttachments.size} image attachments in message`);
-
-            for (const [_, attachment] of imageAttachments) {
-              try {
-                await this.bridge.forwardImageToTelegram(
-                  attachment.url,
-                  ticket.id,
-                  message.member?.displayName || message.author.username || "Unknown Discord User"
-                );
-                log(`Successfully forwarded image ${attachment.url} to Telegram`);
-              } catch (error) {
-                log(`Failed to forward image to Telegram: ${error}`, "error");
-              }
-            }
-          }
-        }
-
+        log(`Successfully forwarded message to Telegram for ticket ${ticket.id}`);
       } catch (error) {
         log(`Error handling Discord message: ${error}`, "error");
       }
