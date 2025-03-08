@@ -65,6 +65,40 @@ function CategoryList({ categories }: { categories: Category[] }) {
     );
   };
 
+  const DeleteButton = ({ category, message }: { category: Category, message: string }) => (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <div onClick={(e) => e.stopPropagation()}>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="flex items-center gap-2"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </Button>
+        </div>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {category.isSubmenu ? "Submenu" : "Category"}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {message}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => handleDeleteCategory(category.id)}
+            className="bg-red-600 hover:bg-red-700 text-white"
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
   return (
     <div className="space-y-6">
       {/* Root Categories Section */}
@@ -94,36 +128,10 @@ function CategoryList({ categories }: { categories: Category[] }) {
                     <Tag className="h-4 w-4 text-muted-foreground" />
                     <span>{category.name}</span>
                   </div>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="flex items-center gap-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete Category</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Are you sure you want to delete "{category.name}"? This action cannot be undone.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={() => handleDeleteCategory(category.id)}
-                          className="bg-red-600 hover:bg-red-700 text-white"
-                        >
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  <DeleteButton
+                    category={category}
+                    message={`Are you sure you want to delete "${category.name}"? This action cannot be undone.`}
+                  />
                 </div>
               </AccordionTrigger>
               <AccordionContent className="px-4 pb-3">
@@ -169,36 +177,10 @@ function CategoryList({ categories }: { categories: Category[] }) {
                       ({categories.filter(cat => cat.parentId === submenu.id).length} categories)
                     </span>
                   </div>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="flex items-center gap-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete Submenu</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Are you sure you want to delete "{submenu.name}"? This will also delete all categories within this submenu. This action cannot be undone.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={() => handleDeleteCategory(submenu.id)}
-                          className="bg-red-600 hover:bg-red-700 text-white"
-                        >
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  <DeleteButton
+                    category={submenu}
+                    message={`Are you sure you want to delete "${submenu.name}"? This will also delete all categories within this submenu. This action cannot be undone.`}
+                  />
                 </div>
               </AccordionTrigger>
               <AccordionContent className="border-l-2 ml-6 pl-4">
@@ -229,36 +211,10 @@ function CategoryList({ categories }: { categories: Category[] }) {
                                 <Tag className="h-4 w-4 text-muted-foreground" />
                                 <span>{category.name}</span>
                               </div>
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    className="flex items-center gap-2"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                    Delete
-                                  </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Delete Category</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                      Are you sure you want to delete "{category.name}"? This action cannot be undone.
-                                    </AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction
-                                      onClick={() => handleDeleteCategory(category.id)}
-                                      className="bg-red-600 hover:bg-red-700 text-white"
-                                    >
-                                      Delete
-                                    </AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
+                              <DeleteButton
+                                category={category}
+                                message={`Are you sure you want to delete "${category.name}"? This action cannot be undone.`}
+                              />
                             </div>
                           </AccordionTrigger>
                           <AccordionContent className="px-4 pb-3">
@@ -369,6 +325,42 @@ function CategoryEditor({ category, categories }: { category: Category; categori
       toast({
         title: "Error",
         description: `Failed to update category: ${error.message}`,
+        variant: "destructive"
+      });
+    }
+  };
+
+  const refreshRoles = async () => {
+    try {
+      const res = await apiRequest("GET", "/api/discord/roles");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(`Failed to fetch Discord roles: ${errorData.message || res.statusText}`);
+      }
+      const roles = await res.json();
+      form.setValue("discordRoles", roles);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: `Failed to load Discord roles: ${error.message}`,
+        variant: "destructive"
+      });
+    }
+  };
+
+  const refreshCategories = async () => {
+    try {
+      const res = await apiRequest("GET", "/api/discord/categories");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(`Failed to fetch Discord categories: ${errorData.message || res.statusText}`);
+      }
+      const categories = await res.json();
+      form.setValue("discordCategories", categories);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: `Failed to load Discord categories: ${error.message}`,
         variant: "destructive"
       });
     }
@@ -520,23 +512,7 @@ function CategoryEditor({ category, categories }: { category: Category; categori
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={async () => {
-                        try {
-                          const res = await apiRequest("GET", "/api/discord/roles");
-                          if (!res.ok) {
-                            const errorData = await res.json();
-                            throw new Error(`Failed to fetch Discord roles: ${errorData.message || res.statusText}`);
-                          }
-                          const roles = await res.json();
-                          form.setValue("discordRoles", roles);
-                        } catch (error: any) {
-                          toast({
-                            title: "Error",
-                            description: `Failed to load Discord roles: ${error.message}`,
-                            variant: "destructive"
-                          });
-                        }
-                      }}
+                      onClick={refreshRoles}
                     >
                       Refresh Roles
                     </Button>
@@ -575,23 +551,7 @@ function CategoryEditor({ category, categories }: { category: Category; categori
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={async () => {
-                        try {
-                          const res = await apiRequest("GET", "/api/discord/categories");
-                          if (!res.ok) {
-                            const errorData = await res.json();
-                            throw new Error(`Failed to fetch Discord categories: ${errorData.message || res.statusText}`);
-                          }
-                          const categories = await res.json();
-                          form.setValue("discordCategories", categories);
-                        } catch (error: any) {
-                          toast({
-                            title: "Error",
-                            description: `Failed to load Discord categories: ${error.message}`,
-                            variant: "destructive"
-                          });
-                        }
-                      }}
+                      onClick={refreshCategories}
                     >
                       Refresh Categories
                     </Button>
@@ -983,23 +943,7 @@ function SettingsPage() {
                                   <Button
                                     type="button"
                                     variant="outline"
-                                    onClick={async () => {
-                                      try {
-                                        const res = await apiRequest("GET", "/api/discord/roles");
-                                        if (!res.ok) {
-                                          const errorData = await res.json();
-                                          throw new Error(`Failed to fetch Discord roles: ${errorData.message || res.statusText}`);
-                                        }
-                                        const roles = await res.json();
-                                        categoryForm.setValue("discordRoles", roles);
-                                      } catch (error: any) {
-                                        toast({
-                                          title: "Error",
-                                          description: `Failed to load Discord roles: ${error.message}`,
-                                          variant: "destructive"
-                                        });
-                                      }
-                                    }}
+                                    onClick={refreshRoles}
                                   >
                                     Refresh Roles
                                   </Button>
@@ -1038,23 +982,7 @@ function SettingsPage() {
                                   <Button
                                     type="button"
                                     variant="outline"
-                                    onClick={async () => {
-                                      try {
-                                        const res = await apiRequest("GET", "/api/discord/categories");
-                                        if (!res.ok) {
-                                          const errorData = await res.json();
-                                          throw new Error(`Failed to fetch Discord categories: ${errorData.message || res.statusText}`);
-                                        }
-                                        const categories = await res.json();
-                                        categoryForm.setValue("discordCategories", categories);
-                                      } catch (error: any) {
-                                        toast({
-                                          title: "Error",
-                                          description: `Failed to load Discord categories: ${error.message}`,
-                                          variant: "destructive"
-                                        });
-                                      }
-                                    }}
+                                    onClick={refreshCategories}
                                   >
                                     Refresh Categories
                                   </Button>
@@ -1146,12 +1074,15 @@ function SettingsPage() {
                         </>
                       )}
 
-                      <Button type="submit">Create {categoryForm.watch("isSubmenu") ? "Submenu" : "Category"}</Button>
+                      <div className="flex justify-end space-x-2">
+                        <Button type="submit">Create</Button>
+                      </div>
                     </form>
                   </Form>
                 </CardContent>
               </Card>
             </TabsContent>
+
             <TabsContent value="bot-config">
               <Card>
                 <CardHeader>
@@ -1162,144 +1093,54 @@ function SettingsPage() {
                     <form onSubmit={botConfigForm.handleSubmit(onBotConfigSubmit)} className="space-y-4">
                       <FormField
                         control={botConfigForm.control}
-                        name="welcomeMessage"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Welcome Message</FormLabel>
-                            <FormDescription>
-                              Enter the welcome message shown when users start the bot.
-                              You can use Markdown formatting:
-                              - **text** for bold
-                              - __text__ for italic
-                              - ```text``` for code blocks
-                            </FormDescription>
-                            <FormControl>
-                              <Textarea {...field} rows={3} />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={botConfigForm.control}
-                        name="welcomeImageUrl"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Welcome Image URL</FormLabel>
-                            <FormDescription>
-                              Optional: URL of an image to show with the welcome message
-                            </FormDescription>
-                            <FormControl>
-                              <Input {...field} value={field.value || ''} />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={botConfigForm.control}
                         name="telegramToken"
                         render={({ field }) => (
                           <FormItem>
-                            <div className="flex items-center gap-2">
-                              <FormLabel>Telegram Bot Token</FormLabel>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger>
-                                    <Info className="h-4 w-4 text-muted-foreground" />
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>During development/testing, the bot may show as "not connected"</p>
-                                    <p>because Telegram only allows one active connection per token.</p>
-                                    <p>This is normal and the bot will still work in production.</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            <FormDescription>
-                              Enter your Telegram bot token. You can get this from @BotFather on Telegram.
-                            </FormDescription>
-                            <div className="flex space-x-2">
-                              <FormControl>
-                                <Input type="password" {...field} />
-                              </FormControl>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={async () => {
-                                  try {
-                                    const res = await apiRequest("GET", "/api/bot/telegram/status");
-                                    if (!res.ok) throw new Error("Failed to check Telegram bot status");
-                                    const status = await res.json();
-                                    toast({
-                                      title: "Telegram Bot Status",
-                                      description: status.connected
-                                        ? "Connected and ready"
-                                        : "Not connected - This is normal during testing. The bot will work in production.",
-                                      variant: status.connected ? "default" : "destructive"
-                                    });
-                                  } catch (error) {
-                                    toast({
-                                      title: "Error",
-                                      description: "Failed to check Telegram bot status",
-                                      variant: "destructive"
-                                    });
-                                  }
-                                }}
-                              >
-                                Check Status
-                              </Button>
-                            </div>
+                            <FormLabel>Telegram Bot Token</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
                           </FormItem>
                         )}
                       />
-
                       <FormField
                         control={botConfigForm.control}
                         name="discordToken"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Discord Bot Token</FormLabel>
-                            <FormDescription>
-                              Enter your Discord bot token. You can get this from the Discord Developer Portal.
-                            </FormDescription>
-                            <div className="flex space-x-2">
-                              <FormControl>
-                                <Input type="password" {...field} />
-                              </FormControl>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={async () => {
-                                  try {
-                                    const res = await apiRequest("GET", "/api/bot/discord/status");
-                                    if (!res.ok) throw new Error("Failed to check Discord bot status");
-                                    const status = await res.json();
-                                    toast({
-                                      title: "Discord Bot Status",
-                                      description: status.connected ? "Connected" : "Not Connected",
-                                      variant: status.connected ? "default" : "destructive"
-                                    });
-                                  } catch (error) {
-                                    toast({
-                                      title: "Error",
-                                      description: "Failed to check Discord bot status",
-                                      variant: "destructive"
-                                    });
-                                  }
-                                }}
-                              >
-                                Check Status
-                              </Button>
-                            </div>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
                           </FormItem>
                         )}
                       />
-
+                      <FormField
+                        control={botConfigForm.control}
+                        name="welcomeMessage"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Welcome Message</FormLabel>
+                            <FormControl>
+                              <Textarea {...field} rows={3} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={botConfigForm.control}
+                        name="welcomeImageUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Welcome Image URL</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
                       <div className="flex justify-end space-x-2">
-                        <Button type="submit" size="sm">
-                          Save Bot Configuration
-                        </Button>
+                        <Button type="submit">Save Changes</Button>
                       </div>
                     </form>
                   </Form>
