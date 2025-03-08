@@ -531,7 +531,7 @@ export class TelegramBot {
 
         for (const submenu of submenus) {
           const button = {
-            text: submenu.name,
+            text: submenu.isClosed ? `🔴 ${submenu.name}` : submenu.name,
             callback_data: `submenu_${submenu.id}`
           };
 
@@ -549,7 +549,7 @@ export class TelegramBot {
 
         for (const category of rootCategories) {
           const button = {
-            text: category.name,
+            text: category.isClosed ? `🔴 ${category.name}` : category.name,
             callback_data: `category_${category.id}`
           };
 
@@ -627,7 +627,7 @@ export class TelegramBot {
         const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
 
         const keyboard = submenuCategories.map(category => [{
-          text: category.name,
+          text: category.isClosed ? `🔴 ${category.name}` : category.name,
           callback_data: `category_${category.id}`
         }]);
 

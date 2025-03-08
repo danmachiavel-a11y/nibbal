@@ -229,7 +229,8 @@ export class MemStorage implements IStorage {
       displayOrder: updateData.displayOrder ?? category.displayOrder,
       newRow: updateData.newRow ?? category.newRow,
       parentId: updateData.parentId === undefined ? category.parentId : updateData.parentId,
-      isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu
+      isSubmenu: updateData.isSubmenu === undefined ? category.isSubmenu : updateData.isSubmenu,
+      isClosed: updateData.isClosed === undefined ? category.isClosed : updateData.isClosed // Fixed: Include isClosed in updates
     };
 
     // Log the final updated category

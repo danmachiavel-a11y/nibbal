@@ -249,18 +249,23 @@ export async function registerRoutes(app: Express) {
       newRow: z.boolean().optional(),
       parentId: z.number().nullable().optional(),
       isSubmenu: z.boolean().optional(),
-      isClosed: z.boolean().optional(), // Add isClosed to the schema
+      isClosed: z.boolean().optional(), // Ensure isClosed is in the schema
+      transcriptCategoryId: z.string().nullable().optional()
     });
 
     const result = schema.safeParse(req.body);
     if (!result.success) {
-      return res.status(400).json({ message: "Invalid request body" });
+      return res.status(400).json({ message: "Invalid request body", errors: result.error.errors });
     }
+
+    console.log(`Updating category ${id} with data:`, JSON.stringify(result.data, null, 2));
 
     const category = await storage.updateCategory(id, result.data);
     if (!category) {
       return res.status(404).json({ message: "Category not found" });
     }
+
+    console.log(`Updated category ${id}:`, JSON.stringify(category, null, 2));
     res.json(category);
   });
 
