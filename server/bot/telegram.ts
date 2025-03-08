@@ -677,7 +677,7 @@ export class TelegramBot {
           keyboard.push(currentRow);
         }
 
-        await ctx.reply("Please select a category:", {
+        await ctx.reply("Please select a service from the options below. Our team will be ready to assist you with your chosen service:", {
           reply_markup: { inline_keyboard: keyboard }
         });
         await ctx.answerCbQuery();
@@ -951,7 +951,7 @@ export class TelegramBot {
         }
       }
 
-      // Only clean up state after successful ticket creation
+      //      // Only clean up state after successful ticket creation
       this.userStates.delete(userId);
       this.stateCleanups.delete(userId);
       this.activeUsers.delete(userId);
