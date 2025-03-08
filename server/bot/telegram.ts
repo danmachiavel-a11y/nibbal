@@ -483,6 +483,65 @@ export class TelegramBot {
   }
 
 
+  private async handleCategoryMenu(ctx: Context) {
+    const botConfig = await storage.getBotConfig();
+    const categories = await storage.getCategories();
+
+    const submenus = categories.filter(cat => cat.isSubmenu);
+    const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
+
+    const keyboard: { text: string; callback_data: string; }[][] = [];
+    let currentRow: { text: string; callback_data: string; }[] = [];
+
+    for (const submenu of submenus) {
+      const button = {
+        text: submenu.isClosed ? `🔴 ${submenu.name}` : submenu.name,
+        callback_data: `submenu_${submenu.id}`
+      };
+
+      if (submenu.newRow && currentRow.length > 0) {
+        keyboard.push([...currentRow]);
+        currentRow = [button];
+      } else {
+        currentRow.push(button);
+        if (currentRow.length >= 2) {
+          keyboard.push([...currentRow]);
+          currentRow = [];
+        }
+      }
+    }
+
+    for (const category of rootCategories) {
+      const button = {
+        text: category.isClosed ? `🔴 ${category.name}` : category.name,
+        callback_data: `category_${category.id}`
+      };
+
+      if (category.newRow && currentRow.length > 0) {
+        keyboard.push([...currentRow]);
+        currentRow = [button];
+      } else {
+        currentRow.push(button);
+        if (currentRow.length >= 2) {
+          keyboard.push([...currentRow]);
+          currentRow = [];
+        }
+      }
+    }
+
+    if (currentRow.length > 0) {
+      keyboard.push(currentRow);
+    }
+
+    const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
+
+    await ctx.editMessageText(welcomeMessage, {
+      parse_mode: "MarkdownV2",
+      reply_markup: { inline_keyboard: keyboard }
+    });
+    await ctx.answerCbQuery();
+  }
+
   private setupHandlers() {
     this.bot.command("start", async (ctx) => {
       const userId = ctx.from?.id;
@@ -677,10 +736,27 @@ export class TelegramBot {
           keyboard.push(currentRow);
         }
 
-        await ctx.reply("Please select a service from the options below. Our team will be ready to assist you with your chosen service:", {
-          reply_markup: { inline_keyboard: keyboard }
-        });
+        // Add "Back to Menu" button in a new row
+        keyboard.push([{
+          text: "↩️ Back to Menu",
+          callback_data: "back_to_menu"
+        }]);
+
+        // Edit the existing message instead of sending a new one
+        await ctx.editMessageText(
+          "Please select a service from the options below. Our team will be ready to assist you with your chosen service:",
+          {
+            reply_markup: { inline_keyboard: keyboard },
+            parse_mode: "MarkdownV2"
+          }
+        );
         await ctx.answerCbQuery();
+        return;
+      }
+
+      // Handle back to menu button
+      if (data === "back_to_menu") {
+        await this.handleCategoryMenu(ctx);
         return;
       }
 
@@ -1115,39 +1191,4 @@ export class TelegramBot {
       this.activeUsers.delete(userId);
     }
   }
-}
-async function handleCategorySelection(ctx: Context, submenuId: number) {
-  const categories = await storage.getCategories();
-  const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
-
-  // Build keyboard with proper row handling
-  const keyboard: { text: string; callback_data: string; }[][] = [];
-  let currentRow: { text: string; callback_data: string; }[] = [];
-
-  for (const category of submenuCategories) {
-    const button = {
-      text: category.isClosed ? `🔴 ${category.name}` : category.name,
-      callback_data: `category_${category.id}`
-    };
-
-    if (category.newRow && currentRow.length > 0) {
-      keyboard.push([...currentRow]);
-      currentRow = [button];
-    } else {
-      currentRow.push(button);
-      if (currentRow.length >= 2) {
-        keyboard.push([...currentRow]);
-        currentRow = [];
-      }
-    }
-  }
-
-  if (currentRow.length > 0) {
-    keyboard.push(currentRow);
-  }
-
-  await ctx.reply("Please select a category:", {
-    reply_markup: { inline_keyboard: keyboard }
-  });
-  await ctx.answerCbQuery();
 }
