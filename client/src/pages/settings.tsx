@@ -233,9 +233,46 @@ function CategoryList({ categories }: { categories: Category[] }) {
   );
 }
 
+async function refreshRoles(form: any, toast: any) {
+  try {
+    const res = await apiRequest("GET", "/api/discord/roles");
+    if (!res.ok) {
+      const errorData = await res.json();
+      throw new Error(`Failed to fetch Discord roles: ${errorData.message || res.statusText}`);
+    }
+    const roles = await res.json();
+    form.setValue("discordRoles", roles);
+  } catch (error: any) {
+    toast({
+      title: "Error",
+      description: `Failed to load Discord roles: ${error.message}`,
+      variant: "destructive"
+    });
+  }
+}
+
+async function refreshCategories(form: any, toast: any) {
+  try {
+    const res = await apiRequest("GET", "/api/discord/categories");
+    if (!res.ok) {
+      const errorData = await res.json();
+      throw new Error(`Failed to fetch Discord categories: ${errorData.message || res.statusText}`);
+    }
+    const categories = await res.json();
+    form.setValue("discordCategories", categories);
+  } catch (error: any) {
+    toast({
+      title: "Error",
+      description: `Failed to load Discord categories: ${error.message}`,
+      variant: "destructive"
+    });
+  }
+}
+
 function CategoryEditor({ category, categories }: { category: Category; categories: Category[] }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
   const form = useForm({
     defaultValues: {
       name: category.name,
@@ -257,31 +294,10 @@ function CategoryEditor({ category, categories }: { category: Category; categori
 
   useEffect(() => {
     const loadDiscordData = async () => {
-      try {
-        // Load categories
-        const categoriesRes = await apiRequest("GET", "/api/discord/categories");
-        if (!categoriesRes.ok) {
-          const errorData = await categoriesRes.json();
-          throw new Error(`Failed to fetch Discord categories: ${errorData.message || categoriesRes.statusText}`);
-        }
-        const categories = await categoriesRes.json();
-        form.setValue("discordCategories", categories);
-
-        // Load roles
-        const rolesRes = await apiRequest("GET", "/api/discord/roles");
-        if (!rolesRes.ok) {
-          const errorData = await rolesRes.json();
-          throw new Error(`Failed to fetch Discord roles: ${errorData.message || rolesRes.statusText}`);
-        }
-        const roles = await rolesRes.json();
-        form.setValue("discordRoles", roles);
-      } catch (error: any) {
-        toast({
-          title: "Error",
-          description: `Failed to load Discord data: ${error.message}`,
-          variant: "destructive"
-        });
-      }
+      await Promise.all([
+        refreshRoles(form, toast),
+        refreshCategories(form, toast)
+      ]);
     };
     loadDiscordData();
   }, []);
@@ -325,42 +341,6 @@ function CategoryEditor({ category, categories }: { category: Category; categori
       toast({
         title: "Error",
         description: `Failed to update category: ${error.message}`,
-        variant: "destructive"
-      });
-    }
-  };
-
-  const refreshRoles = async () => {
-    try {
-      const res = await apiRequest("GET", "/api/discord/roles");
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(`Failed to fetch Discord roles: ${errorData.message || res.statusText}`);
-      }
-      const roles = await res.json();
-      form.setValue("discordRoles", roles);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: `Failed to load Discord roles: ${error.message}`,
-        variant: "destructive"
-      });
-    }
-  };
-
-  const refreshCategories = async () => {
-    try {
-      const res = await apiRequest("GET", "/api/discord/categories");
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(`Failed to fetch Discord categories: ${errorData.message || res.statusText}`);
-      }
-      const categories = await res.json();
-      form.setValue("discordCategories", categories);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: `Failed to load Discord categories: ${error.message}`,
         variant: "destructive"
       });
     }
@@ -512,7 +492,7 @@ function CategoryEditor({ category, categories }: { category: Category; categori
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={refreshRoles}
+                      onClick={() => refreshRoles(form, toast)}
                     >
                       Refresh Roles
                     </Button>
@@ -551,7 +531,7 @@ function CategoryEditor({ category, categories }: { category: Category; categori
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={refreshCategories}
+                      onClick={() => refreshCategories(form, toast)}
                     >
                       Refresh Categories
                     </Button>
@@ -671,6 +651,9 @@ function SettingsPage() {
       questions: "",
       serviceSummary: "",
       serviceImageUrl: "",
+      displayOrder: 0,
+      newRow: false,
+      isClosed: false,
       discordCategories: [],
       discordRoles: []
     }
@@ -743,23 +726,10 @@ function SettingsPage() {
   useEffect(() => {
     const loadDiscordData = async () => {
       try {
-        // Load categories
-        const categoriesRes = await apiRequest("GET", "/api/discord/categories");
-        if (!categoriesRes.ok) {
-          const errorData = await categoriesRes.json();
-          throw new Error(`Failed to fetch Discord categories: ${errorData.message || categoriesRes.statusText}`);
-        }
-        const categories = await categoriesRes.json();
-        categoryForm.setValue("discordCategories", categories);
-
-        // Load roles
-        const rolesRes = await apiRequest("GET", "/api/discord/roles");
-        if (!rolesRes.ok) {
-          const errorData = await rolesRes.json();
-          throw new Error(`Failed to fetch Discord roles: ${errorData.message || rolesRes.statusText}`);
-        }
-        const roles = await rolesRes.json();
-        categoryForm.setValue("discordRoles", roles);
+        await Promise.all([
+          refreshRoles(categoryForm, toast),
+          refreshCategories(categoryForm, toast)
+        ]);
       } catch (error: any) {
         toast({
           title: "Error",
@@ -787,7 +757,10 @@ function SettingsPage() {
         questions,
         serviceSummary: data.serviceSummary,
         serviceImageUrl: data.serviceImageUrl,
-        parentId: data.parentId
+        parentId: data.parentId,
+        displayOrder: data.displayOrder,
+        newRow: data.newRow,
+        isClosed: data.isClosed
       };
 
       const res = await apiRequest("POST", "/api/categories", submitData);
@@ -943,7 +916,7 @@ function SettingsPage() {
                                   <Button
                                     type="button"
                                     variant="outline"
-                                    onClick={refreshRoles}
+                                    onClick={() => refreshRoles(categoryForm, toast)}
                                   >
                                     Refresh Roles
                                   </Button>
@@ -982,7 +955,7 @@ function SettingsPage() {
                                   <Button
                                     type="button"
                                     variant="outline"
-                                    onClick={refreshCategories}
+                                    onClick={() => refreshCategories(categoryForm, toast)}
                                   >
                                     Refresh Categories
                                   </Button>
@@ -1052,6 +1025,34 @@ function SettingsPage() {
                                 <FormControl>
                                   <Textarea {...field} rows={5} />
                                 </FormControl>
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={categoryForm.control}
+                            name="isClosed"
+                            render={({ field }) => (
+                              <FormItem className="flex items-center space-x-2">
+                                <FormControl>
+                                  <input
+                                    type="checkbox"
+                                    checked={field.value}
+                                    onChange={field.onChange}
+                                    className="h-4 w-4"
+                                  />
+                                </FormControl>
+                                <FormLabel className="m-0">Service Closed</FormLabel>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      <Info className="h-4 w-4 text-muted-foreground" />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>When closed, users will see a message saying</p>
+                                      <p>"This service is currently closed. Try again later."</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
                               </FormItem>
                             )}
                           />
