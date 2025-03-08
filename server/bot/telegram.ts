@@ -623,7 +623,37 @@ export class TelegramBot {
 
       if (data.startsWith("submenu_")) {
         const submenuId = parseInt(data.split("_")[1]);
-        await this.handleCategorySelection(ctx, submenuId); // Modified line
+        const categories = await storage.getCategories();
+        const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
+
+        const keyboard: { text: string; callback_data: string; }[][] = [];
+        let currentRow: { text: string; callback_data: string; }[] = [];
+
+        for (const category of submenuCategories) {
+          const button = {
+            text: category.isClosed ? `🔴 ${category.name}` : category.name,
+            callback_data: `category_${category.id}`
+          };
+
+          if (category.newRow && currentRow.length > 0) {
+            keyboard.push([...currentRow]);
+            currentRow = [button];
+          } else {
+            currentRow.push(button);
+            if (currentRow.length >= 2) {
+              keyboard.push([...currentRow]);
+              currentRow = [];
+            }
+          }
+        }
+
+        if (currentRow.length > 0) {
+          keyboard.push(currentRow);
+        }
+
+        await ctx.reply("Please select a category:", {
+          reply_markup: { inline_keyboard: keyboard }
+        });
         await ctx.answerCbQuery();
         return;
       }
