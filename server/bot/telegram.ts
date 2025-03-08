@@ -711,6 +711,8 @@ export class TelegramBot {
         const categories = await storage.getCategories();
         const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
 
+        log(`Processing submenu ${submenuId} with ${submenuCategories.length} categories`);
+
         const keyboard: { text: string; callback_data: string; }[][] = [];
         let currentRow: { text: string; callback_data: string; }[] = [];
 
@@ -742,14 +744,26 @@ export class TelegramBot {
           callback_data: "back_to_menu"
         }]);
 
-        // Edit the existing message instead of sending a new one
-        await ctx.editMessageText(
-          "Please select a service from the options below. Our team will be ready to assist you with your chosen service:",
-          {
-            reply_markup: { inline_keyboard: keyboard },
-            parse_mode: "MarkdownV2"
-          }
-        );
+        try {
+          await ctx.editMessageText(
+            escapeMarkdown("Please select a service from the options below. Our team will be ready to assist you with your chosen service:"),
+            {
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            }
+          );
+          log(`Successfully displayed submenu options for submenu ${submenuId}`);
+        } catch (error) {
+          log(`Error updating submenu message: ${error}`, "error");
+          // If edit fails, try sending a new message as fallback
+          await ctx.reply(
+            "Please select a service from the options below. Our team will be ready to assist you with your chosen service:",
+            {
+              reply_markup: { inline_keyboard: keyboard }
+            }
+          );
+        }
+
         await ctx.answerCbQuery();
         return;
       }
@@ -942,12 +956,12 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId || !ctx.message || !('text' in ctx.message)) return;
 
-    console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
+    console.log(`Processing question ${state.currentQuestion+ 1}/${category.questions.length}`);
 
-    // Store the answer
+        // Store the answer
     state.answers.push(ctx.message.text);
 
-    // Check if we have more questions
+    //    // Check if we have more questions
     if (state.currentQuestion < category.questions.length - 1) {
       // Move to next question
       state.currentQuestion++;
@@ -971,6 +985,7 @@ export class TelegramBot {
       } catch (error) {
         log(`Error creating ticket: ${error}`, "error");
         await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
+
         // Clean up state on error
         this.userStates.delete(userId);
         this.stateCleanups.delete(userId);
