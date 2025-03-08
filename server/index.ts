@@ -69,11 +69,12 @@ app.use((req, res, next) => {
     });
   });
 
-  // Create default test category after server is up
+  // Only create default test category if no categories exist
   try {
-    log("Creating default test category...");
+    log("Checking for existing categories...");
     const existingCategories = await storage.getCategories();
     if (existingCategories.length === 0) {
+      log("No categories found. Creating default test category...");
       const testCategory = {
         name: 'Test Service',
         discordRoleId: '1346324056244490363',
@@ -88,10 +89,12 @@ app.use((req, res, next) => {
         serviceImageUrl: null
       };
       await storage.createCategory(testCategory);
-      log("Default test category created with data:", JSON.stringify(testCategory, null, 2));
+      log("Default test category created successfully");
+    } else {
+      log(`Found ${existingCategories.length} existing categories, skipping default category creation`);
     }
   } catch (error) {
-    log(`Error setting up default category: ${error}`, "error");
+    log(`Error checking/creating default category: ${error}`, "error");
     // Don't throw error here, let the server continue running
   }
 
