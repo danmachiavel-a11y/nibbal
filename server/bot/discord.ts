@@ -103,6 +103,11 @@ export class DiscordBot {
               required: true
             }
           ]
+        },
+        {
+          name: 'nickname',
+          description: 'Get Telegram username of ticket creator (Owner only)',
+          type: ApplicationCommandType.ChatInput
         }
       ];
 
@@ -380,14 +385,67 @@ export class DiscordBot {
           // Send final status
           await interaction.followUp({
             content: `✅ Processed ${channels.size} tickets:\n` +
-                    `• ${moveCount} tickets moved to transcripts\n` +
-                    `• ${errorCount} errors encountered`,
+                      `• ${moveCount} tickets moved to transcripts\n` +
+                      `• ${errorCount} errors encountered`,
             ephemeral: true
           });
         } catch (error) {
           log(`Error in closeall command: ${error}`, "error");
           await interaction.followUp({
             content: "An error occurred while closing tickets. Some tickets may not have been processed.",
+            ephemeral: true
+          });
+        }
+      }
+
+      if (interaction.commandName === 'nickname') {
+        // Check if it's a ticket channel
+        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+
+        if (!ticket) {
+          await interaction.reply({
+            content: "This command can only be used in ticket channels!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        // Check if user is guild owner
+        const guild = interaction.guild;
+        if (!guild || interaction.user.id !== guild.ownerId) {
+          await interaction.reply({
+            content: "This command can only be used by the server owner!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Get ticket creator's info
+          const user = await storage.getUser(ticket.userId!);
+          if (!user || !user.telegramId) {
+            await interaction.reply({
+              content: "Could not find Telegram information for this ticket's creator.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          // Send the username as an embed for better formatting
+          const embed = new EmbedBuilder()
+            .setColor(0x0099FF)
+            .setTitle('Ticket Creator Info')
+            .addFields(
+              { name: 'Telegram Username', value: user.username || 'Not set', inline: true },
+              { name: 'Telegram ID', value: user.telegramId, inline: true }
+            )
+            .setTimestamp();
+
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+        } catch (error) {
+          log(`Error getting ticket creator info: ${error}`, "error");
+          await interaction.reply({
+            content: "An error occurred while fetching user information.",
             ephemeral: true
           });
         }
