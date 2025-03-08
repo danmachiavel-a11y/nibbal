@@ -623,17 +623,7 @@ export class TelegramBot {
 
       if (data.startsWith("submenu_")) {
         const submenuId = parseInt(data.split("_")[1]);
-        const categories = await storage.getCategories();
-        const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
-
-        const keyboard = submenuCategories.map(category => [{
-          text: category.isClosed ? `🔴 ${category.name}` : category.name,
-          callback_data: `category_${category.id}`
-        }]);
-
-        await ctx.reply("Please select a category:", {
-          reply_markup: { inline_keyboard: keyboard }
-        });
+        await this.handleCategorySelection(ctx, submenuId); // Modified line
         await ctx.answerCbQuery();
         return;
       }
@@ -969,8 +959,8 @@ export class TelegramBot {
     }
   }
 
-  private async handleCategorySelection(ctx: Context, categoryId: number) {
-    const category = await storage.getCategory(categoryId);
+  private async handleCategorySelection(ctx: Context, submenuIdOrCategoryId: number) {
+    const category = await storage.getCategory(submenuIdOrCategoryId);
     if (!category) return;
 
     const userId = ctx.from?.id;
@@ -1012,7 +1002,7 @@ export class TelegramBot {
 
       // Initialize questionnaire state
       this.setState(userId, {
-        categoryId,
+        categoryId: submenuIdOrCategoryId,
         currentQuestion: 0,
         answers: [],
         inQuestionnaire: true
@@ -1069,4 +1059,39 @@ export class TelegramBot {
       this.activeUsers.delete(userId);
     }
   }
+}
+async function handleCategorySelection(ctx: Context, submenuId: number) {
+  const categories = await storage.getCategories();
+  const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
+
+  // Build keyboard with proper row handling
+  const keyboard: { text: string; callback_data: string; }[][] = [];
+  let currentRow: { text: string; callback_data: string; }[] = [];
+
+  for (const category of submenuCategories) {
+    const button = {
+      text: category.isClosed ? `🔴 ${category.name}` : category.name,
+      callback_data: `category_${category.id}`
+    };
+
+    if (category.newRow && currentRow.length > 0) {
+      keyboard.push([...currentRow]);
+      currentRow = [button];
+    } else {
+      currentRow.push(button);
+      if (currentRow.length >= 2) {
+        keyboard.push([...currentRow]);
+        currentRow = [];
+      }
+    }
+  }
+
+  if (currentRow.length > 0) {
+    keyboard.push(currentRow);
+  }
+
+  await ctx.reply("Please select a category:", {
+    reply_markup: { inline_keyboard: keyboard }
+  });
+  await ctx.answerCbQuery();
 }
