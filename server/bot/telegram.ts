@@ -956,9 +956,9 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId || !ctx.message || !('text' in ctx.message)) return;
 
-    console.log(`Processing question ${state.currentQuestion+ 1}/${category.questions.length}`);
+    console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
 
-    // Store the answer
+    // Store// Store the answer
     state.answers.push(ctx.message.text);
 
     // Check if we have more questions
@@ -1077,43 +1077,51 @@ export class TelegramBot {
     }
   }
 
-  async sendMessage(chatId: number, message: string) {
+  async sendMessage(chatId: number, text: string) {
     try {
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
+      }
+
       if (!Number.isInteger(chatId) || chatId <= 0) {
         throw new Error(`Invalid Telegram chat ID: ${chatId}`);
       }
 
-      if (!message || typeof message !== 'string') {
-        throw new Error('Invalid message content');
-      }
+      await this.bot.telegram.sendMessage(chatId, escapeMarkdown(text), {
+        parse_mode: "MarkdownV2"
+      });
 
-      const trimmedMessage = message.slice(0, 4000);
-
-      await this.bot?.telegram.sendMessage(chatId, trimmedMessage);
-      log(`Successfully sent message to Telegram chat: ${chatId}`);
+      log(`Successfully sent message to chat ${chatId}`);
     } catch (error) {
-      log(`Error sending Telegram message: ${error}`, "error");
+      log(`Error sending message: ${error}`, "error");
       throw error;
     }
   }
-  async sendPhoto(chatId: number, imageUrl: string, caption?: string) {
+  async sendPhoto(chatId: number, photo: string, caption?: string) {
     try {
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
+      }
+
       if (!Number.isInteger(chatId) || chatId <= 0) {
         throw new Error(`Invalid Telegram chat ID: ${chatId}`);
       }
 
-      if (!imageUrl || typeof imageUrl !== 'string') {
-        throw new Error('Invalid image URL');
+      if (!photo || typeof photo !== 'string') {
+        throw new Error('Invalid photo source');
       }
 
-      await this.bot?.telegram.sendPhoto(chatId, imageUrl, {
+      log(`Attempting to send photo to chat ${chatId}`);
+      log(`Photo source: ${photo}`);
+
+      await this.bot.telegram.sendPhoto(chatId, photo, {
         caption: caption ? escapeMarkdown(caption) : undefined,
-        parse_mode: 'MarkdownV2'
+        parse_mode: "MarkdownV2"
       });
 
-      log(`Successfully sent phototo Telegram chat: ${chatId}`);
+      log(`Successfully sent photo to chat ${chatId}`);
     } catch (error) {
-      log(`Error sending Telegram photo: ${error}`, "error");
+      log(`Error sending photo: ${error}`, "error");
       throw error;
     }
   }
