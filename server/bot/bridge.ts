@@ -252,6 +252,7 @@ export class BridgeManager {
       // Create embed for Q&A
       const embed = {
         username: "Ticket Bot",
+        content: category.roleId ? `<@&${category.roleId}>` : "", // Add role ping if roleId exists
         embeds: [{
           title: "🎫 New Ticket",
           description: "A new support ticket has been created",
@@ -276,7 +277,7 @@ export class BridgeManager {
 
       // Check if error is due to channel limit
       const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes('Maximum number of channels in category') || 
+      if (errorMessage.includes('Maximum number of channels in category') ||
           errorMessage.includes('channel limit')) {
         // Update ticket status to pending
         await storage.updateTicketStatus(ticket.id, "pending");
@@ -313,17 +314,46 @@ export class BridgeManager {
         return;
       }
 
-      // Store the message first
-      await storage.createMessage({
-        ticketId,
-        content,
-        authorId: user.id,
-        platform: "discord",
-        timestamp: new Date()
-      });
+      // Check if content contains an image URL
+      const imageUrlMatch = content.match(/(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif))/i);
+      if (imageUrlMatch) {
+        const imageUrl = imageUrlMatch[0];
+        const textContent = content.replace(imageUrl, '').trim();
 
-      // Send to Telegram
-      await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
+        // Store the message first
+        await storage.createMessage({
+          ticketId,
+          content: textContent || "Image sent",
+          authorId: user.id,
+          platform: "discord",
+          timestamp: new Date()
+        });
+
+        // Send text message if there's content besides the image
+        if (textContent) {
+          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${textContent}`);
+        }
+
+        // Send the image
+        await this.telegramBot.sendPhoto(
+          parseInt(user.telegramId),
+          imageUrl,
+          `Image from ${username}`
+        );
+      } else {
+        // Store the message first
+        await storage.createMessage({
+          ticketId,
+          content,
+          authorId: user.id,
+          platform: "discord",
+          timestamp: new Date()
+        });
+
+        // Send to Telegram
+        await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
+      }
+
       log(`Successfully sent message to Telegram user: ${user.username}`);
     } catch (error) {
       log(`Error forwarding to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
