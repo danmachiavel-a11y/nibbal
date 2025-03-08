@@ -286,7 +286,7 @@ function CategoryEditor({ category, categories }: { category: Category; categori
       serviceImageUrl: category.serviceImageUrl || "",
       displayOrder: category.displayOrder || 0,
       newRow: category.newRow || false,
-      isClosed: category.isClosed || false,
+      isClosed: category.isClosed || false, // Ensure isClosed is properly initialized
       discordCategories: [],
       discordRoles: []
     }
@@ -321,8 +321,10 @@ function CategoryEditor({ category, categories }: { category: Category; categori
         isSubmenu: data.isSubmenu,
         displayOrder: data.displayOrder,
         newRow: data.newRow,
-        isClosed: data.isClosed
+        isClosed: data.isClosed, // Ensure isClosed is included in the API request
       };
+
+      console.log('Submitting category update:', submitData);
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
       if (!res.ok) {
@@ -386,7 +388,6 @@ function CategoryEditor({ category, categories }: { category: Category; categori
             )}
           />
 
-          {/* Add new isClosed toggle */}
           <FormField
             control={form.control}
             name="isClosed"
