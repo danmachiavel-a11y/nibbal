@@ -1,5 +1,6 @@
 import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
+import { relations } from "drizzle-orm";
 import { z } from "zod";
 
 export const botConfig = pgTable("bot_config", {
@@ -37,8 +38,13 @@ const categoriesConfig = {
 
 export const categories = pgTable("categories", categoriesConfig);
 
-// After table creation, set up the self-reference
-categories.parentId.references(() => categories.id);
+// Define the self-referential relation using relations
+export const categoriesRelations = relations(categories, ({ one }) => ({
+  parent: one(categories, {
+    fields: [categories.parentId],
+    references: [categories.id],
+  }),
+}));
 
 export const tickets = pgTable("tickets", {
   id: serial("id").primaryKey(),
