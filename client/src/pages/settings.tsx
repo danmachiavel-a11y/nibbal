@@ -37,7 +37,10 @@ function CategoryList({ categories }: { categories: Category[] }) {
         method: 'DELETE',
       });
 
-      if (!res.ok) throw new Error('Failed to delete category');
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(`Failed to delete category: ${errorData.message || res.statusText}`);
+      }
 
       toast({
         title: "Success",
@@ -45,10 +48,10 @@ function CategoryList({ categories }: { categories: Category[] }) {
       });
 
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to delete category",
+        description: `Failed to delete category: ${error.message}`,
         variant: "destructive"
       });
     }
@@ -301,19 +304,25 @@ function CategoryEditor({ category, categories }: { category: Category; categori
       try {
         // Load categories
         const categoriesRes = await apiRequest("GET", "/api/discord/categories");
-        if (!categoriesRes.ok) throw new Error("Failed to fetch Discord categories");
+        if (!categoriesRes.ok) {
+          const errorData = await categoriesRes.json();
+          throw new Error(`Failed to fetch Discord categories: ${errorData.message || categoriesRes.statusText}`);
+        }
         const categories = await categoriesRes.json();
         form.setValue("discordCategories", categories);
 
         // Load roles
         const rolesRes = await apiRequest("GET", "/api/discord/roles");
-        if (!rolesRes.ok) throw new Error("Failed to fetch Discord roles");
+        if (!rolesRes.ok) {
+          const errorData = await rolesRes.json();
+          throw new Error(`Failed to fetch Discord roles: ${errorData.message || rolesRes.statusText}`);
+        }
         const roles = await rolesRes.json();
         form.setValue("discordRoles", roles);
-      } catch (error) {
+      } catch (error: any) {
         toast({
           title: "Error",
-          description: "Failed to load Discord data",
+          description: `Failed to load Discord data: ${error.message}`,
           variant: "destructive"
         });
       }
@@ -344,7 +353,10 @@ function CategoryEditor({ category, categories }: { category: Category; categori
       };
 
       const res = await apiRequest("PATCH", `/api/categories/${category.id}`, submitData);
-      if (!res.ok) throw new Error("Failed to update category");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(`Failed to update category: ${errorData.message || res.statusText}`);
+      }
 
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
 
@@ -353,10 +365,10 @@ function CategoryEditor({ category, categories }: { category: Category; categori
         description: `Updated ${category.isSubmenu ? "submenu" : "category"}: ${data.name}`,
       });
 
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to update category",
+        description: `Failed to update category: ${error.message}`,
         variant: "destructive"
       });
     }
@@ -511,13 +523,16 @@ function CategoryEditor({ category, categories }: { category: Category; categori
                       onClick={async () => {
                         try {
                           const res = await apiRequest("GET", "/api/discord/roles");
-                          if (!res.ok) throw new Error("Failed to fetch Discord roles");
+                          if (!res.ok) {
+                            const errorData = await res.json();
+                            throw new Error(`Failed to fetch Discord roles: ${errorData.message || res.statusText}`);
+                          }
                           const roles = await res.json();
                           form.setValue("discordRoles", roles);
-                        } catch (error) {
+                        } catch (error: any) {
                           toast({
                             title: "Error",
-                            description: "Failed to load Discord roles",
+                            description: `Failed to load Discord roles: ${error.message}`,
                             variant: "destructive"
                           });
                         }
@@ -563,13 +578,16 @@ function CategoryEditor({ category, categories }: { category: Category; categori
                       onClick={async () => {
                         try {
                           const res = await apiRequest("GET", "/api/discord/categories");
-                          if (!res.ok) throw new Error("Failed to fetch Discord categories");
+                          if (!res.ok) {
+                            const errorData = await res.json();
+                            throw new Error(`Failed to fetch Discord categories: ${errorData.message || res.statusText}`);
+                          }
                           const categories = await res.json();
                           form.setValue("discordCategories", categories);
-                        } catch (error) {
+                        } catch (error: any) {
                           toast({
                             title: "Error",
-                            description: "Failed to load Discord categories",
+                            description: `Failed to load Discord categories: ${error.message}`,
                             variant: "destructive"
                           });
                         }
@@ -711,7 +729,10 @@ function SettingsPage() {
     const loadBotConfig = async () => {
       try {
         const res = await apiRequest("GET", "/api/bot-config");
-        if (!res.ok) throw new Error("Failed to fetch bot configuration");
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(`Failed to fetch bot configuration: ${errorData.message || res.statusText}`);
+        }
         const config = await res.json();
 
         // Set form values with the loaded configuration
@@ -719,10 +740,10 @@ function SettingsPage() {
         botConfigForm.setValue("discordToken", config.discordToken || "");
         botConfigForm.setValue("welcomeMessage", config.welcomeMessage || "");
         botConfigForm.setValue("welcomeImageUrl", config.welcomeImageUrl || "");
-      } catch (error) {
+      } catch (error: any) {
         toast({
           title: "Error",
-          description: "Failed to load bot configuration",
+          description: `Failed to load bot configuration: ${error.message}`,
           variant: "destructive"
         });
       }
@@ -740,16 +761,19 @@ function SettingsPage() {
         welcomeImageUrl: data.welcomeImageUrl
       });
 
-      if (!res.ok) throw new Error("Failed to update bot configuration");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(`Failed to update bot configuration: ${errorData.message || res.statusText}`);
+      }
 
       toast({
         title: "Success",
         description: "Bot configuration saved successfully!"
       });
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to save bot configuration",
+        description: `Failed to save bot configuration: ${error.message}`,
         variant: "destructive"
       });
     }
@@ -761,19 +785,25 @@ function SettingsPage() {
       try {
         // Load categories
         const categoriesRes = await apiRequest("GET", "/api/discord/categories");
-        if (!categoriesRes.ok) throw new Error("Failed to fetch Discord categories");
+        if (!categoriesRes.ok) {
+          const errorData = await categoriesRes.json();
+          throw new Error(`Failed to fetch Discord categories: ${errorData.message || categoriesRes.statusText}`);
+        }
         const categories = await categoriesRes.json();
         categoryForm.setValue("discordCategories", categories);
 
         // Load roles
         const rolesRes = await apiRequest("GET", "/api/discord/roles");
-        if (!rolesRes.ok) throw new Error("Failed to fetch Discord roles");
+        if (!rolesRes.ok) {
+          const errorData = await rolesRes.json();
+          throw new Error(`Failed to fetch Discord roles: ${errorData.message || rolesRes.statusText}`);
+        }
         const roles = await rolesRes.json();
         categoryForm.setValue("discordRoles", roles);
-      } catch (error) {
+      } catch (error: any) {
         toast({
           title: "Error",
-          description: "Failed to load Discord data",
+          description: `Failed to load Discord data: ${error.message}`,
           variant: "destructive"
         });
       }
@@ -801,7 +831,10 @@ function SettingsPage() {
       };
 
       const res = await apiRequest("POST", "/api/categories", submitData);
-      if (!res.ok) throw new Error("Failed to create category");
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(`Failed to create category: ${errorData.message || res.statusText}`);
+      }
 
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
 
@@ -813,10 +846,10 @@ function SettingsPage() {
       // Reset form
       categoryForm.reset();
 
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to create category",
+        description: `Failed to create category: ${error.message}`,
         variant: "destructive"
       });
     }
@@ -953,13 +986,16 @@ function SettingsPage() {
                                     onClick={async () => {
                                       try {
                                         const res = await apiRequest("GET", "/api/discord/roles");
-                                        if (!res.ok) throw new Error("Failed to fetch Discord roles");
+                                        if (!res.ok) {
+                                          const errorData = await res.json();
+                                          throw new Error(`Failed to fetch Discord roles: ${errorData.message || res.statusText}`);
+                                        }
                                         const roles = await res.json();
                                         categoryForm.setValue("discordRoles", roles);
-                                      } catch (error) {
+                                      } catch (error: any) {
                                         toast({
                                           title: "Error",
-                                          description: "Failed to load Discord roles",
+                                          description: `Failed to load Discord roles: ${error.message}`,
                                           variant: "destructive"
                                         });
                                       }
@@ -1005,5 +1041,276 @@ function SettingsPage() {
                                     onClick={async () => {
                                       try {
                                         const res = await apiRequest("GET", "/api/discord/categories");
-                                        if (!res.ok) throw new Error("Failed to fetch Discord categories");
-                                        const categories =text
+                                        if (!res.ok) {
+                                          const errorData = await res.json();
+                                          throw new Error(`Failed to fetch Discord categories: ${errorData.message || res.statusText}`);
+                                        }
+                                        const categories = await res.json();
+                                        categoryForm.setValue("discordCategories", categories);
+                                      } catch (error: any) {
+                                        toast({
+                                          title: "Error",
+                                          description: `Failed to load Discord categories: ${error.message}`,
+                                          variant: "destructive"
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    Refresh Categories
+                                  </Button>
+                                </div>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="transcriptCategoryId"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Discord Transcript Category</FormLabel>
+                                <FormDescription>
+                                  The category where closed tickets will be moved
+                                </FormDescription>
+                                <div className="flex space-x-2">
+                                  <FormControl>
+                                    <select
+                                      className="w-full rounded-md border border-input bg-background px-3 py-2"
+                                      value={field.value || ''}
+                                      onChange={(e) => field.onChange(e.target.value)}
+                                    >
+                                      <option value="">Select a category</option>
+                                      {categoryForm.watch("discordCategories")?.map((category: any) => (
+                                        <option
+                                          key={category.id}
+                                          value={category.id}
+                                        >
+                                          {category.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </FormControl>
+                                </div>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="questions"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Questions</FormLabel>
+                                <FormDescription>
+                                  Enter each question on a new line
+                                </FormDescription>
+                                <FormControl>
+                                  <Textarea {...field} rows={5} />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="serviceSummary"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Service Summary</FormLabel>
+                                <FormDescription>
+                                  Description of this service shown when users select it.
+                                  Use new lines to format your message.
+                                </FormDescription>
+                                <FormControl>
+                                  <Textarea {...field} rows={5} />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={categoryForm.control}
+                            name="serviceImageUrl"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Service Image URL</FormLabel>
+                                <FormDescription>
+                                  Optional: URL of an image to show with the service description
+                                </FormDescription>
+                                <FormControl>
+                                  <Input {...field} value={field.value || ''} />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+                        </>
+                      )}
+
+                      <Button type="submit">Create {categoryForm.watch("isSubmenu") ? "Submenu" : "Category"}</Button>
+                    </form>
+                  </Form>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="bot-config">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Bot Configuration</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Form {...botConfigForm}>
+                    <form onSubmit={botConfigForm.handleSubmit(onBotConfigSubmit)} className="space-y-4">
+                      <FormField
+                        control={botConfigForm.control}
+                        name="welcomeMessage"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Welcome Message</FormLabel>
+                            <FormDescription>
+                              Enter the welcome message shown when users start the bot.
+                              You can use Markdown formatting:
+                              - **text** for bold
+                              - __text__ for italic
+                              - ```text``` for code blocks
+                            </FormDescription>
+                            <FormControl>
+                              <Textarea {...field} rows={3} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={botConfigForm.control}
+                        name="welcomeImageUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Welcome Image URL</FormLabel>
+                            <FormDescription>
+                              Optional: URL of an image to show with the welcome message
+                            </FormDescription>
+                            <FormControl>
+                              <Input {...field} value={field.value || ''} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={botConfigForm.control}
+                        name="telegramToken"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-center gap-2">
+                              <FormLabel>Telegram Bot Token</FormLabel>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <Info className="h-4 w-4 text-muted-foreground" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>During development/testing, the bot may show as "not connected"</p>
+                                    <p>because Telegram only allows one active connection per token.</p>
+                                    <p>This is normal and the bot will still work in production.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                            <FormDescription>
+                              Enter your Telegram bot token. You can get this from @BotFather on Telegram.
+                            </FormDescription>
+                            <div className="flex space-x-2">
+                              <FormControl>
+                                <Input type="password" {...field} />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    const res = await apiRequest("GET", "/api/bot/telegram/status");
+                                    if (!res.ok) throw new Error("Failed to check Telegram bot status");
+                                    const status = await res.json();
+                                    toast({
+                                      title: "Telegram Bot Status",
+                                      description: status.connected
+                                        ? "Connected and ready"
+                                        : "Not connected - This is normal during testing. The bot will work in production.",
+                                      variant: status.connected ? "default" : "destructive"
+                                    });
+                                  } catch (error) {
+                                    toast({
+                                      title: "Error",
+                                      description: "Failed to check Telegram bot status",
+                                      variant: "destructive"
+                                    });
+                                  }
+                                }}
+                              >
+                                Check Status
+                              </Button>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={botConfigForm.control}
+                        name="discordToken"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Discord Bot Token</FormLabel>
+                            <FormDescription>
+                              Enter your Discord bot token. You can get this from the Discord Developer Portal.
+                            </FormDescription>
+                            <div className="flex space-x-2">
+                              <FormControl>
+                                <Input type="password" {...field} />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    const res = await apiRequest("GET", "/api/bot/discord/status");
+                                    if (!res.ok) throw new Error("Failed to check Discord bot status");
+                                    const status = await res.json();
+                                    toast({
+                                      title: "Discord Bot Status",
+                                      description: status.connected ? "Connected" : "Not Connected",
+                                      variant: status.connected ? "default" : "destructive"
+                                    });
+                                  } catch (error) {
+                                    toast({
+                                      title: "Error",
+                                      description: "Failed to check Discord bot status",
+                                      variant: "destructive"
+                                    });
+                                  }
+                                }}
+                              >
+                                Check Status
+                              </Button>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="flex justify-end space-x-2">
+                        <Button type="submit" size="sm">
+                          Save Bot Configuration
+                        </Button>
+                      </div>
+                    </form>
+                  </Form>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export default SettingsPage;
