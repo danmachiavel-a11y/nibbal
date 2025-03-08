@@ -110,6 +110,14 @@ export class DatabaseStorage implements IStorage {
   // Bot config operations
   async getBotConfig(): Promise<BotConfig | undefined> {
     const [config] = await db.select().from(botConfig).limit(1);
+    if (!config) {
+      // Return default config if none exists
+      return {
+        id: 1,
+        welcomeMessage: "Welcome to the support bot! Please select a service:",
+        welcomeImageUrl: null
+      };
+    }
     return config;
   }
 
