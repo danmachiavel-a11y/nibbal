@@ -604,17 +604,43 @@ export class TelegramBot {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      const state = this.userStates.get(userId);
-      if (!state?.inQuestionnaire) {
-        await ctx.reply("There's nothing to cancel. Use /start to create a new ticket.");
-        return;
-      }
+      try {
+        // Clear questionnaire state if exists
+        const state = this.userStates.get(userId);
+        if (state?.inQuestionnaire) {
+          this.userStates.delete(userId);
+          this.stateCleanups.delete(userId);
+          this.activeUsers.delete(userId);
+        }
 
-      // Clear the state completely
-      this.userStates.delete(userId);
-      this.stateCleanups.delete(userId);
-      this.activeUsers.delete(userId);
-      await ctx.reply("❌ Ticket creation cancelled. Use /start when you're ready to try again.");
+        // Force close any active ticket
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (user) {
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          if (activeTicket) {
+            // Force close the ticket regardless of transcript category
+            await storage.updateTicketStatus(activeTicket.id, "closed");
+
+            // Try to move to transcripts if possible, but don't block on failure
+            if (activeTicket.discordChannelId) {
+              try {
+                await this.bridge.moveToTranscripts(activeTicket.id);
+              } catch (error) {
+                log(`Failed to move ticket ${activeTicket.id} to transcripts during force cancel: ${error}`, "warn");
+              }
+            }
+          }
+        }
+
+        await ctx.reply("✅ All operations cancelled. Use /start when you're ready to begin again.");
+      } catch (error) {
+        log(`Error in cancel command: ${error}`, "error");
+        // Even if there's an error, try to clear states
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+        await ctx.reply("✅ Reset completed. Use /start to begin again.");
+      }
     });
 
     this.bot.on("callback_query", async (ctx) => {
