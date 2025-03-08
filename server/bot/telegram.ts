@@ -958,7 +958,7 @@ export class TelegramBot {
 
     console.log(`Processing question ${state.currentQuestion+ 1}/${category.questions.length}`);
 
-        // Store the answer
+    // Store the answer
     state.answers.push(ctx.message.text);
 
     //    // Check if we have more questions
@@ -999,56 +999,48 @@ export class TelegramBot {
     if (!userId) return;
 
     const state = this.userStates.get(userId);
-    if (!state) return;
+    if (!state) {
+      await ctx.reply("❌ Something went wrong. Please try /start to begin again.");
+      return;
+    }
 
     try {
+      // Create or get user
       let user = await storage.getUserByTelegramId(userId.toString());
       if (!user) {
         user = await storage.createUser({
+          username: ctx.from.username || "Unknown",
           telegramId: userId.toString(),
-          discordId: null,
-          username: ctx.from?.username || "Unknown",
-          isBanned: false
+          role: "user"
         });
       }
 
-      // Create ticket with raw answers
+      // Create ticket
       const ticket = await storage.createTicket({
         userId: user.id,
         categoryId: state.categoryId,
         status: "open",
-        discordChannelId: null,
-        claimedBy: null,
-        amount: null,
-        answers: state.answers // Store raw answers
+        answers: state.answers,
       });
 
-      try {
-        // Create Discord channel first
-        await this.bridge.createTicketChannel(ticket);
-        await ctx.reply("✅ Ticket created! Our support team will assist you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+      // Create Discord channel
+      await this.bridge.createTicketChannel(ticket);
 
-        if (errorMessage.includes('maximum channel limit')) {
-          await ctx.reply(
-            "❌ Sorry, our support channels are currently at maximum capacity.\n" +
-            "Your ticket has been created but is in a pending state.\n" +
-            "Please try again in a few minutes, or contact an administrator for immediate assistance."
-          );
-        } else {
-          log(`Discord channel creation error: ${error}`, "error");
-          await ctx.reply("✅ Ticket created! However, there might be a slight delay before our team can respond. Please be patient.");
-        }
-      }
+      // Send success message
+      await ctx.reply("✅ Ticket created! A staff member will be with you shortly.");
 
-      //      // Only clean up state after successful ticket creation
+      // Clean up state after successful ticket creation
       this.userStates.delete(userId);
       this.stateCleanups.delete(userId);
       this.activeUsers.delete(userId);
     } catch (error) {
       log(`Error creating ticket: ${error}`, "error");
-      throw error;
+      await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
+
+      // Clean up state on error
+      this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
     }
   }
 
