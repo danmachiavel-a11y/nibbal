@@ -956,12 +956,12 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId || !ctx.message || !('text' in ctx.message)) return;
 
-    console.log(`Processing question${state.currentQuestion + 1}/${category.questions.length}`);
+    console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
 
-    //    //    // Store the answer
+    // Store the answer
     state.answers.push(ctx.message.text);
 
-    // Check if we have more questions
+    // Check if wehave more questions
     if (state.currentQuestion < category.questions.length - 1) {
       // Move to next question
       state.currentQuestion++;
