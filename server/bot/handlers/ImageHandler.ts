@@ -18,8 +18,13 @@ export class ImageHandler {
 
   async downloadImage(url: string): Promise<Buffer> {
     try {
+      log(`Downloading image from ${url}`);
       const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
       const buffer = await response.buffer();
+      log(`Successfully downloaded image (${buffer.length} bytes)`);
       return buffer;
     } catch (error) {
       log(`Error downloading image: ${error}`, "error");
@@ -48,18 +53,46 @@ export class ImageHandler {
   }
 
   async processDiscordToTelegram(url: string): Promise<Buffer> {
-    const cached = this.get(url);
-    if (cached?.buffer) {
-      return cached.buffer;
-    }
+    try {
+      log(`Processing Discord image for Telegram: ${url}`);
+      const cached = this.get(url);
+      if (cached?.buffer) {
+        log(`Using cached image for ${url}`);
+        return cached.buffer;
+      }
 
-    const buffer = await this.downloadImage(url);
-    this.set(url, { buffer });
-    return buffer;
+      const buffer = await this.downloadImage(url);
+      this.set(url, { buffer });
+      return buffer;
+    } catch (error) {
+      log(`Error processing Discord image for Telegram: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async processTelegramToDiscord(fileId: string, bot: any): Promise<Buffer> {
+    try {
+      log(`Processing Telegram image for Discord: ${fileId}`);
+      const cached = this.get(fileId);
+      if (cached?.buffer) {
+        log(`Using cached image for ${fileId}`);
+        return cached.buffer;
+      }
+
+      const file = await bot.telegram.getFile(fileId);
+      const url = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+      const buffer = await this.downloadImage(url);
+      this.set(fileId, { buffer });
+      return buffer;
+    } catch (error) {
+      log(`Error processing Telegram image for Discord: ${error}`, "error");
+      throw error;
+    }
   }
 
   clear() {
     this.cache.clear();
+    log("Image cache cleared");
   }
 }
 

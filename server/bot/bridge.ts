@@ -7,45 +7,6 @@ import fetch from 'node-fetch';
 import { imageHandler } from './handlers/ImageHandler';
 import { notificationsHandler } from './handlers/NotificationsHandler';
 
-interface ImageCacheEntry {
-  telegramFileId?: string;
-  discordUrl?: string;
-  buffer?: Buffer;
-  timestamp: number;
-}
-
-class ImageCache {
-  private cache: Map<string, ImageCacheEntry>;
-  private readonly TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-
-  constructor() {
-    this.cache = new Map();
-  }
-
-  set(key: string, entry: Partial<ImageCacheEntry>) {
-    this.cache.set(key, {
-      ...entry,
-      timestamp: Date.now()
-    });
-  }
-
-  get(key: string): ImageCacheEntry | undefined {
-    const entry = this.cache.get(key);
-    if (!entry) return undefined;
-
-    // Check if entry has expired
-    if (Date.now() - entry.timestamp > this.TTL) {
-      this.cache.delete(key);
-      return undefined;
-    }
-
-    return entry;
-  }
-
-  clear() {
-    this.cache.clear();
-  }
-}
 
 export class BridgeManager {
   private telegramBot: TelegramBot;
@@ -54,13 +15,11 @@ export class BridgeManager {
   private maxRetries: number = 3;
   private retryTimeout: number = 5000; // 5 seconds
   private healthCheckInterval: NodeJS.Timeout | null = null;
-  private imageCache: ImageCache;
 
   constructor() {
     log("Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
-    this.imageCache = new ImageCache();
     this.startHealthCheck();
   }
 
@@ -385,9 +344,16 @@ export class BridgeManager {
         for (const attachment of attachments) {
           if (attachment.url) {
             try {
+              log(`Processing Discord attachment: ${attachment.url}`);
               const buffer = await imageHandler.processDiscordToTelegram(attachment.url);
+              if (!buffer) {
+                throw new Error("Failed to process image");
+              }
+              log(`Successfully processed image, size: ${buffer.length} bytes`);
+
               const caption = `Image from ${username}`;
               await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, caption);
+              log(`Successfully sent photo to Telegram user ${user.telegramId}`);
             } catch (error) {
               log(`Error sending photo to Telegram: ${error}`, "error");
             }
@@ -417,8 +383,19 @@ export class BridgeManager {
         }
 
         // Process and send the image
-        const buffer = await imageHandler.processDiscordToTelegram(imageUrl);
-        await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, `Image from ${username}`);
+        try {
+          log(`Processing Discord image URL: ${imageUrl}`);
+          const buffer = await imageHandler.processDiscordToTelegram(imageUrl);
+          if (!buffer) {
+            throw new Error("Failed to process image");
+          }
+          log(`Successfully processed image, size: ${buffer.length} bytes`);
+
+          await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, `Image from ${username}`);
+          log(`Successfully sent photo to Telegram user ${user.telegramId}`);
+        } catch (error) {
+          log(`Error processing and sending image: ${error}`, "error");
+        }
       } else {
         // Regular text message handling
         await storage.createMessage({
@@ -437,7 +414,7 @@ export class BridgeManager {
     }
   }
 
-  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, imageUrl?: string) {
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: { fileId: string; }) {
     try {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
@@ -447,22 +424,54 @@ export class BridgeManager {
         return;
       }
 
-      // For regular messages, use simple webhook message format
-      const messageContent = {
-        content: content,
-        username: username,
-        avatarURL: avatarUrl
-      };
+      // Handle photo if present
+      if (photo?.fileId) {
+        try {
+          log(`Processing Telegram photo with fileId: ${photo.fileId}`);
+          const buffer = await imageHandler.processTelegramToDiscord(photo.fileId, this.telegramBot);
+          if (!buffer) {
+            throw new Error("Failed to process image");
+          }
+          log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-      if (imageUrl) {
-        messageContent.content = `${content}\n${imageUrl}`;
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              content: content ? `${username}: ${content}` : `${username} sent an image`,
+              username: username,
+              avatarURL: avatarUrl,
+              files: [{
+                attachment: buffer,
+                name: 'image.jpg'
+              }]
+            }
+          );
+          log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
+        } catch (error) {
+          log(`Error processing and sending photo to Discord: ${error}`, "error");
+          // Send text content even if image fails
+          if (content) {
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              {
+                content: `${username}: ${content}`,
+                username: username,
+                avatarURL: avatarUrl
+              }
+            );
+          }
+        }
+      } else {
+        // Regular text message
+        await this.discordBot.sendMessage(
+          ticket.discordChannelId,
+          {
+            content: `${username}: ${content}`,
+            username: username,
+            avatarURL: avatarUrl
+          }
+        );
       }
-
-      await this.discordBot.sendMessage(
-        ticket.discordChannelId,
-        messageContent,
-        username
-      );
 
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
@@ -476,107 +485,5 @@ export class BridgeManager {
 
   getDiscordBot(): DiscordBot {
     return this.discordBot;
-  }
-
-  // Add this method to the BridgeManager class
-  async forwardImageToTelegram(imageUrl: string, ticketId: number, username: string) {
-    try {
-      const ticket = await storage.getTicket(ticketId);
-      log(`Forwarding image to Telegram - Ticket: ${JSON.stringify(ticket)}`);
-
-      if (!ticket || !ticket.userId) {
-        log(`Invalid ticket or missing user ID: ${ticketId}`, "error");
-        return;
-      }
-
-      const user = await storage.getUser(ticket.userId);
-      log(`Found user: ${JSON.stringify(user)}`);
-
-      if (!user || !user.telegramId) {
-        log(`Invalid user or missing Telegram ID for ticket: ${ticketId}`, "error");
-        return;
-      }
-
-      // Add safety check for valid Telegram ID
-      if (!user.telegramId.match(/^\d+$/)) {
-        log(`Invalid Telegram ID format for user: ${user.id}`, "error");
-        return;
-      }
-
-      // Forward the image to Telegram
-      const buffer = await imageHandler.processDiscordToTelegram(imageUrl);
-      await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, `Image from ${username}`);
-
-      log(`Successfully sent image to Telegram user: ${user.username}`);
-    } catch (error) {
-      log(`Error forwarding image to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
-      throw error;
-    }
-  }
-
-  private async sendPhotoToTelegram(chatId: number, imageUrl: string, caption: string): Promise<void> {
-    try {
-      const cacheKey = imageUrl;
-      const cachedEntry = this.imageCache.get(cacheKey);
-
-      if (cachedEntry?.telegramFileId) {
-        log(`Using cached Telegram file ID for ${imageUrl}`);
-        await this.telegramBot.sendCachedPhoto(chatId, cachedEntry.telegramFileId, caption);
-        return;
-      }
-
-      log(`Sending new photo to Telegram for ${imageUrl}`);
-      const fileId = await this.telegramBot.sendPhoto(chatId, imageUrl, caption);
-      if (fileId) {
-        this.imageCache.set(cacheKey, { telegramFileId: fileId });
-      }
-    } catch (error) {
-      log(`Error sending photo to Telegram: ${error}`, "error");
-      throw error;
-    }
-  }
-
-  private async sendPhotoToDiscord(channelId: string, imageUrl: string, caption: string): Promise<void> {
-    try {
-      const cacheKey = imageUrl;
-      const cachedEntry = this.imageCache.get(cacheKey);
-
-      if (cachedEntry?.discordUrl) {
-        log(`Using cached Discord URL for ${imageUrl}`);
-        await this.discordBot.sendMessage(channelId, {
-          content: caption ? `${caption}\n${cachedEntry.discordUrl}` : cachedEntry.discordUrl,
-          username: "BridgeBot"
-        });
-        return;
-      }
-
-      // If we have a cached buffer, use it
-      if (cachedEntry?.buffer) {
-        log(`Using cached image buffer for ${imageUrl}`);
-        const discordUrl = await this.discordBot.sendPhoto(channelId, cachedEntry.buffer, caption);
-        if (discordUrl) {
-          this.imageCache.set(cacheKey, { ...cachedEntry, discordUrl });
-        }
-        return;
-      }
-
-      // Download and cache the image
-      log(`Downloading image from ${imageUrl}`);
-      const response = await fetch(imageUrl);
-      const buffer = await response.buffer();
-
-      // Store in cache
-      this.imageCache.set(cacheKey, { buffer });
-
-      // Send to Discord
-      log(`Sending new photo to Discord for ${imageUrl}`);
-      const discordUrl = await this.discordBot.sendPhoto(channelId, buffer, caption);
-      if (discordUrl) {
-        this.imageCache.set(cacheKey, { buffer, discordUrl });
-      }
-    } catch (error) {
-      log(`Error sending photo to Discord: ${error}`, "error");
-      throw error;
-    }
   }
 }

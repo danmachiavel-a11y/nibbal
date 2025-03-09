@@ -1,4 +1,5 @@
 import { log } from "../../vite";
+import { storage } from "../../storage";
 
 export class NotificationsHandler {
   // Store category role mappings
