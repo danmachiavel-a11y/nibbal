@@ -70,9 +70,9 @@ export class TelegramBot {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
-  private readonly INITIAL_RECONNECT_DELAY = 30000; // Increased to 30 seconds
-  private readonly STOP_TIMEOUT = 15000; // Increased to 15 seconds
-  private readonly CLEANUP_DELAY = 10000; // Increased to 10 seconds
+  private readonly INITIAL_RECONNECT_DELAY = 30000; // 30 seconds
+  private readonly STOP_TIMEOUT = 15000; // 15 seconds
+  private readonly CLEANUP_DELAY = 10000; // 10 seconds
   private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
@@ -91,12 +91,13 @@ export class TelegramBot {
         throw new Error("Invalid Telegram bot token");
       }
 
-      // Ensure single instance
+      // Force cleanup of any existing instance
       if (TelegramBot.instance) {
         log("Cleaning up existing Telegram bot instance");
-        TelegramBot.instance.stop().catch(error => {
-          log(`Error stopping existing instance: ${error}`, "error");
-        });
+        if (TelegramBot.instance.bot) {
+          TelegramBot.instance.bot.stop();
+        }
+        TelegramBot.instance = null;
       }
 
       this.bridge = bridge;
@@ -314,17 +315,13 @@ export class TelegramBot {
   }
 
   async start() {
-    if (!await this.acquireStartLock()) {
-      throw new Error("Could not acquire start lock");
-    }
-
     try {
       log("Starting Telegram bot...");
 
       // Ensure proper cleanup first
-      if (this._isConnected || this.bot) {
+      if (this.bot) {
         await this.stop();
-        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY));
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 2));
       }
 
       this._isConnected = false;
@@ -333,12 +330,13 @@ export class TelegramBot {
       log("Creating new Telegram bot instance");
       this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
+      // Add handlers
       await this.setupHandlers();
 
-      // Add longer delay before launching
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Add significant delay before launching
+      await new Promise(resolve => setTimeout(resolve, 10000));
 
-      // Use more conservative launch options
+      // Launch with conservative options
       await this.bot.launch({
         dropPendingUpdates: true,
         allowedUpdates: ["message", "callback_query"],
@@ -363,7 +361,7 @@ export class TelegramBot {
         log("409 Conflict detected - another bot instance is already running", "error");
         // Force cleanup and wait longer
         await this.stop();
-        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 2));
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 3));
       }
       throw error;
     } finally {
@@ -376,7 +374,7 @@ export class TelegramBot {
       log("Stopping Telegram bot...");
       this.stopHeartbeat();
 
-      if (this._isConnected && this.bot) {
+      if (this.bot) {
         try {
           // Set a timeout for the stop operation
           const stopPromise = this.bot.stop();
@@ -388,11 +386,12 @@ export class TelegramBot {
           ]);
         } catch (error) {
           log(`Error during bot stop: ${error}`, "warn");
-          // Force cleanup even if stop fails
+        } finally {
+          // Force cleanup
           this.bot = null;
         }
 
-        // Add delay after stopping
+        // Add significant delay after stopping
         await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY));
       }
 
@@ -401,7 +400,6 @@ export class TelegramBot {
       this.userStates.clear();
       this.reconnectAttempts = 0;
       this.stateCleanups.clear();
-      this.bot = null;
 
       log("Telegram bot stopped successfully");
     } catch (error) {
@@ -411,7 +409,7 @@ export class TelegramBot {
   }
 
   getIsConnected(): boolean {
-    return this._isConnected;
+    return this._isConnected && this.bot !== null;
   }
 
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
@@ -952,7 +950,7 @@ export class TelegramBot {
       return;
     }
 
-    constuserId = ctx.from?.id;
+    const userId = ctx.from?.id;
     if (!userId || !ctx.message || !('text' in ctx.message)) return;
 
     console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
@@ -1064,7 +1062,7 @@ export class TelegramBot {
   }
 
   getIsConnected(): boolean {
-    return this._isConnected;
+    return this._isConnected && this.bot !== null;
   }
 
   async sendMessage(chatId: number, text: string) {
