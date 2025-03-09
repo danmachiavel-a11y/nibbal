@@ -958,7 +958,7 @@ export class TelegramBot {
 
     console.log(`Processing question${state.currentQuestion + 1}/${category.questions.length}`);
 
-    //    // Store the answer
+    //    //    // Store the answer
     state.answers.push(ctx.message.text);
 
     // Check if we have more questions
@@ -1107,21 +1107,28 @@ export class TelegramBot {
         throw new Error(`Invalid Telegram chat ID: ${chatId}`);
       }
 
-      if (!photo || typeof photo !== 'string') {
-        throw new Error('Invalid photo source');
+      log(`Sending photo to chat ${chatId}`);
+      let sentMessage;
+
+      // If photo is a URL, download it first
+      if (photo.startsWith('http')) {
+        const response = await fetch(photo);
+        const buffer = await response.buffer();
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: buffer }, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      } else {
+        // If photo is already a file_id, use it directly
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, photo, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
       }
 
-      log(`Attempting to send photo to chat ${chatId}`);
-      log(`Photo source: ${photo}`);
-
-      const result = await this.bot.telegram.sendPhoto(chatId, photo, {
-        caption: caption ? escapeMarkdown(caption) : undefined,
-        parse_mode: "MarkdownV2"
-      });
-
       // Return the file_id for caching
-      if ('photo' in result && result.photo && result.photo.length > 0) {
-        const fileId = result.photo[result.photo.length - 1].file_id;
+      if (sentMessage?.photo && sentMessage.photo.length > 0) {
+        const fileId = sentMessage.photo[sentMessage.photo.length - 1].file_id;
         log(`Got file_id ${fileId} for photo`);
         return fileId;
       }

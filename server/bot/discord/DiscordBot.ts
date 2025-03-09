@@ -1,6 +1,7 @@
 import { Client, TextChannel, WebhookClient } from 'discord.js';
 import { log } from "../../vite";
 import { rateLimiter } from './RateLimiter';
+import fetch from 'node-fetch';
 
 interface WorkerCooldown {
   lastUsed: number;
@@ -44,9 +45,16 @@ export class DiscordBot {
         throw new Error('Invalid channel type');
       }
 
+      // Download the image first to avoid direct URL forwarding
+      const response = await fetch(photoUrl);
+      const buffer = await response.buffer();
+
       const message = await channel.send({
         content: caption,
-        files: [{ attachment: photoUrl }]
+        files: [{ 
+          attachment: buffer,
+          name: 'image.jpg' // Default name
+        }]
       });
 
       if (message.attachments.size > 0) {
