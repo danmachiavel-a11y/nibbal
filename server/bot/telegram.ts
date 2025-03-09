@@ -28,9 +28,7 @@ interface StateCleanup {
 
 function escapeMarkdown(text: string): string {
   if (!text) return '';
-
   const specialChars = ['[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-
   const formatPatterns = [
     { start: '**', end: '**', marker: '*' },
     { start: '__', end: '__', marker: '_' },
@@ -60,7 +58,6 @@ if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required");
 }
 
-
 export class TelegramBot {
   private bot: Telegraf | null = null;
   private bridge: BridgeManager;
@@ -73,10 +70,10 @@ export class TelegramBot {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
-  private readonly INITIAL_RECONNECT_DELAY = 10000; // Increased to 10 seconds
-  private readonly STOP_TIMEOUT = 8000; // 8 seconds timeout for stop operations
-  private readonly CLEANUP_DELAY = 5000; // 5 seconds delay after cleanup
-  private readonly HEARTBEAT_INTERVAL = 120000; // Increase to 2 minutes
+  private readonly INITIAL_RECONNECT_DELAY = 30000; // Increased to 30 seconds
+  private readonly STOP_TIMEOUT = 15000; // Increased to 15 seconds
+  private readonly CLEANUP_DELAY = 10000; // Increased to 10 seconds
+  private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
   private readonly COOLDOWN_WINDOW = 60000;
@@ -94,7 +91,7 @@ export class TelegramBot {
         throw new Error("Invalid Telegram bot token");
       }
 
-      // Force cleanup of existing instance
+      // Ensure single instance
       if (TelegramBot.instance) {
         log("Cleaning up existing Telegram bot instance");
         TelegramBot.instance.stop().catch(error => {
@@ -294,7 +291,7 @@ export class TelegramBot {
       try {
         await Promise.race([
           this.startLock,
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Start lock timeout")), 5000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Start lock timeout")), 10000))
         ]);
       } catch (error) {
         log("Start lock acquisition timed out", "warn");
@@ -305,7 +302,7 @@ export class TelegramBot {
     }
 
     this.startLock = new Promise(resolve => {
-      setTimeout(resolve, 1000); // Add small delay before resolving
+      setTimeout(resolve, 5000); // Add delay before resolving
     });
     this.isStarting = true;
     return true;
@@ -338,8 +335,8 @@ export class TelegramBot {
 
       await this.setupHandlers();
 
-      // Add delay before launching
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Add longer delay before launching
+      await new Promise(resolve => setTimeout(resolve, 5000));
 
       // Use more conservative launch options
       await this.bot.launch({
@@ -404,7 +401,6 @@ export class TelegramBot {
       this.userStates.clear();
       this.reconnectAttempts = 0;
       this.stateCleanups.clear();
-      this.activeUsers.clear();
       this.bot = null;
 
       log("Telegram bot stopped successfully");
@@ -412,6 +408,10 @@ export class TelegramBot {
       log(`Error stopping Telegram bot: ${error}`, "error");
       throw error;
     }
+  }
+
+  getIsConnected(): boolean {
+    return this._isConnected;
   }
 
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
@@ -952,15 +952,15 @@ export class TelegramBot {
       return;
     }
 
-    const userId = ctx.from?.id;
-if (!userId || !ctx.message || !('text' in ctx.message)) return;
+    constuserId = ctx.from?.id;
+    if (!userId || !ctx.message || !('text' in ctx.message)) return;
 
     console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
 
     // Store the answer
     state.answers.push(ctx.message.text);
 
-    // Check if wehave more questions
+    // Check if we have more questions
     if (state.currentQuestion < category.questions.length - 1) {
       // Move to next question
       state.currentQuestion++;
@@ -1064,16 +1064,7 @@ if (!userId || !ctx.message || !('text' in ctx.message)) return;
   }
 
   getIsConnected(): boolean {
-    try {
-      const connected = this._isConnected && this.bot?.botInfo !== undefined && !this.isStarting;
-      if (!connected) {
-        log("Telegram bot is not connected", "warn");
-      }
-      return connected;
-    } catch (error) {
-      log(`Error checking Telegram bot connection: ${error}`, "error");
-      return false;
-    }
+    return this._isConnected;
   }
 
   async sendMessage(chatId: number, text: string) {
