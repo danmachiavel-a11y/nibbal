@@ -41,19 +41,19 @@ export class DiscordBot {
       const webhookClient = await this.getWebhookForChannel(channelId);
       if (!webhookClient) throw new Error("Failed to get webhook");
 
-      const webhookMessage: any = {
+      let webhookMessage = {
         username: message.username || "Unknown User",
         avatarURL: message.avatarURL
       };
 
-      // Handle content if present
+      // Handle content and ensure it's a string
       if (message.content !== undefined && message.content !== null) {
-        webhookMessage.content = String(message.content);
+        webhookMessage = { ...webhookMessage, content: String(message.content) };
       }
 
       // Handle files if present
       if (message.files && Array.isArray(message.files)) {
-        webhookMessage.files = message.files;
+        webhookMessage = { ...webhookMessage, files: message.files };
       }
 
       const sentMessage = await webhookClient.send(webhookMessage);
@@ -61,7 +61,7 @@ export class DiscordBot {
       return sentMessage;
     } catch (error) {
       log(`Error sending message to Discord: ${error}`, "error");
-      throw error; // Propagate error for proper handling in bridge
+      throw error;
     }
   }
 
