@@ -4,6 +4,8 @@ import { DiscordBot } from "./discord";
 import type { Ticket } from "@shared/schema";
 import { log } from "../vite";
 import fetch from 'node-fetch';
+import { imageHandler } from './handlers/ImageHandler';
+import { notificationsHandler } from './handlers/NotificationsHandler';
 
 interface ImageCacheEntry {
   telegramFileId?: string;
@@ -295,7 +297,7 @@ export class BridgeManager {
       // Create embed for Q&A
       const embed = {
         username: "Ticket Bot",
-        content: category.discordRoleId ? `<@&${category.discordRoleId}>` : undefined,
+        content: undefined, // We'll handle role ping separately
         embeds: [{
           title: "🎫 New Ticket",
           description: "A new support ticket has been created",
@@ -314,6 +316,12 @@ export class BridgeManager {
         embed,
         "Ticket Bot"
       );
+
+      // Send role ping if category has a role
+      if (category.discordRoleId) {
+        await notificationsHandler.pingRoleForCategory(ticket.categoryId, channelId, this.discordBot);
+      }
+
       log(`Ticket channel created: ${channelName}`);
     } catch (error) {
       log(`Error creating Discord channel: ${error}`, "error");
@@ -373,15 +381,13 @@ export class BridgeManager {
           await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
         }
 
-        // Send each attachment
+        // Process each attachment
         for (const attachment of attachments) {
           if (attachment.url) {
             try {
-              await this.sendPhotoToTelegram(
-                parseInt(user.telegramId),
-                attachment.url,
-                `Image from ${username}`
-              );
+              const buffer = await imageHandler.processDiscordToTelegram(attachment.url);
+              const caption = `Image from ${username}`;
+              await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, caption);
             } catch (error) {
               log(`Error sending photo to Telegram: ${error}`, "error");
             }
@@ -410,8 +416,9 @@ export class BridgeManager {
           await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${textContent}`);
         }
 
-        // Send the image using caching system
-        await this.sendPhotoToTelegram(parseInt(user.telegramId), imageUrl, `Image from ${username}`);
+        // Process and send the image
+        const buffer = await imageHandler.processDiscordToTelegram(imageUrl);
+        await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, `Image from ${username}`);
       } else {
         // Regular text message handling
         await storage.createMessage({
@@ -497,7 +504,8 @@ export class BridgeManager {
       }
 
       // Forward the image to Telegram
-      await this.sendPhotoToTelegram(parseInt(user.telegramId), imageUrl, `Image from ${username}`);
+      const buffer = await imageHandler.processDiscordToTelegram(imageUrl);
+      await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, `Image from ${username}`);
 
       log(`Successfully sent image to Telegram user: ${user.username}`);
     } catch (error) {

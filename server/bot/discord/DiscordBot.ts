@@ -1,7 +1,7 @@
 import { Client, TextChannel, WebhookClient } from 'discord.js';
 import { log } from "../../vite";
 import { rateLimiter } from './RateLimiter';
-import fetch from 'node-fetch';
+import { imageHandler } from '../handlers/ImageHandler';
 
 interface WorkerCooldown {
   lastUsed: number;
@@ -47,11 +47,9 @@ export class DiscordBot {
 
       let buffer: Buffer;
       if (typeof photo === 'string') {
-        // If photo is a URL, download it
-        const response = await fetch(photo);
-        buffer = await response.buffer();
+        // Process image through ImageHandler for caching and optimization
+        buffer = await imageHandler.processDiscordToTelegram(photo);
       } else {
-        // If photo is already a Buffer, use it directly
         buffer = photo;
       }
 
