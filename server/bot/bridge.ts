@@ -497,19 +497,16 @@ export class BridgeManager {
             });
           }
 
-          // Then send the photo - ensure content is always a string
-          await this.discordBot.sendMessage(
-            ticket.discordChannelId,
-            {
-              content: content?.trim() ? content : "Sent an image:",
-              files: [{
-                attachment: buffer,
-                name: 'image.jpg'
-              }],
-              username: username,
-              avatarURL: avatarUrl
-            }
-          );
+          // Then send the photo
+          await this.discordBot.sendMessage(ticket.discordChannelId, {
+            content: content?.trim() ? undefined : "Sent an image:",
+            files: [{
+              attachment: buffer,
+              name: 'image.jpg'
+            }],
+            username: username,
+            avatarURL: avatarUrl
+          });
 
           log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
