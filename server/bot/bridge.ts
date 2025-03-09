@@ -7,6 +7,12 @@ import fetch from 'node-fetch';
 import { imageHandler } from './handlers/ImageHandler';
 import { notificationsHandler } from './handlers/NotificationsHandler';
 
+interface ImageCacheEntry {
+  telegramFileId?: string;
+  discordUrl?: string;
+  buffer?: Buffer;
+  timestamp: number;
+}
 
 export class BridgeManager {
   private telegramBot: TelegramBot;
@@ -15,6 +21,8 @@ export class BridgeManager {
   private maxRetries: number = 3;
   private retryTimeout: number = 5000; // 5 seconds
   private healthCheckInterval: NodeJS.Timeout | null = null;
+  private readonly imageCacheTTL = 24 * 60 * 60 * 1000; // 24 hours
+  private imageCache: Map<string, ImageCacheEntry> = new Map();
 
   constructor() {
     log("Initializing Bridge Manager");
@@ -23,42 +31,23 @@ export class BridgeManager {
     this.startHealthCheck();
   }
 
-  private startHealthCheck() {
-    // Run health check every 60 seconds instead of 30
-    this.healthCheckInterval = setInterval(async () => {
-      try {
-        // Add delay between checks to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const health = await this.healthCheck();
-
-        if (!health.telegram || !health.discord) {
-          log("Bot disconnected, attempting to reconnect...");
-          // Add delay before reconnection attempt
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          await this.reconnectDisconnectedBots(health);
-        }
-      } catch (error) {
-        log(`Health check failed: ${error}`, "error");
-      }
-    }, 60000); // Increased from 30000 to 60000 ms
+  private setCachedImage(key: string, entry: Partial<ImageCacheEntry>) {
+    this.imageCache.set(key, {
+      ...entry,
+      timestamp: Date.now()
+    });
   }
 
-  private async reconnectDisconnectedBots(health: { telegram: boolean; discord: boolean }) {
-    try {
-      if (!health.telegram) {
-        log("Attempting to reconnect Telegram bot...");
-        // Add longer delay before reconnection
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
-      }
-      if (!health.discord) {
-        log("Attempting to reconnect Discord bot...");
-        await this.startBotWithRetry(() => this.discordBot.start(), "Discord");
-      }
-    } catch (error) {
-      log(`Error reconnecting bots: ${error}`, "error");
-      throw error;
+  private getCachedImage(key: string): ImageCacheEntry | undefined {
+    const entry = this.imageCache.get(key);
+    if (!entry) return undefined;
+
+    if (Date.now() - entry.timestamp > this.imageCacheTTL) {
+      this.imageCache.delete(key);
+      return undefined;
     }
+
+    return entry;
   }
 
   async start() {
@@ -143,6 +132,44 @@ export class BridgeManager {
       log("Bots restarted successfully");
     } catch (error) {
       log(`Error restarting bots: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  private startHealthCheck() {
+    // Run health check every 60 seconds instead of 30
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        // Add delay between checks to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const health = await this.healthCheck();
+
+        if (!health.telegram || !health.discord) {
+          log("Bot disconnected, attempting to reconnect...");
+          // Add delay before reconnection attempt
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          await this.reconnectDisconnectedBots(health);
+        }
+      } catch (error) {
+        log(`Health check failed: ${error}`, "error");
+      }
+    }, 60000); // Increased from 30000 to 60000 ms
+  }
+
+  private async reconnectDisconnectedBots(health: { telegram: boolean; discord: boolean }) {
+    try {
+      if (!health.telegram) {
+        log("Attempting to reconnect Telegram bot...");
+        // Add longer delay before reconnection
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
+      }
+      if (!health.discord) {
+        log("Attempting to reconnect Discord bot...");
+        await this.startBotWithRetry(() => this.discordBot.start(), "Discord");
+      }
+    } catch (error) {
+      log(`Error reconnecting bots: ${error}`, "error");
       throw error;
     }
   }
@@ -318,13 +345,12 @@ export class BridgeManager {
         return;
       }
 
-      // Add safety check for valid Telegram ID
       if (!user.telegramId.match(/^\d+$/)) {
         log(`Invalid Telegram ID format for user: ${user.id}`, "error");
         return;
       }
 
-      // First, handle any attachments if present
+      // Handle attachments if present
       if (attachments && attachments.length > 0) {
         // Store message with attachment indication
         await storage.createMessage({
@@ -344,6 +370,15 @@ export class BridgeManager {
         for (const attachment of attachments) {
           if (attachment.url) {
             try {
+              const cacheKey = attachment.url;
+              const cachedImage = this.getCachedImage(cacheKey);
+
+              if (cachedImage?.telegramFileId) {
+                log(`Using cached Telegram fileId for ${attachment.url}`);
+                await this.telegramBot.sendCachedPhoto(parseInt(user.telegramId), cachedImage.telegramFileId, `Image from ${username}`);
+                continue;
+              }
+
               log(`Processing Discord attachment: ${attachment.url}`);
               const buffer = await imageHandler.processDiscordToTelegram(attachment.url);
               if (!buffer) {
@@ -352,7 +387,12 @@ export class BridgeManager {
               log(`Successfully processed image, size: ${buffer.length} bytes`);
 
               const caption = `Image from ${username}`;
-              await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, caption);
+              const fileId = await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, caption);
+
+              if (fileId) {
+                this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
+              }
+
               log(`Successfully sent photo to Telegram user ${user.telegramId}`);
             } catch (error) {
               log(`Error sending photo to Telegram: ${error}`, "error");
@@ -384,6 +424,15 @@ export class BridgeManager {
 
         // Process and send the image
         try {
+          const cacheKey = imageUrl;
+          const cachedImage = this.getCachedImage(cacheKey);
+
+          if (cachedImage?.telegramFileId) {
+            log(`Using cached Telegram fileId for ${imageUrl}`);
+            await this.telegramBot.sendCachedPhoto(parseInt(user.telegramId), cachedImage.telegramFileId, `Image from ${username}`);
+            return;
+          }
+
           log(`Processing Discord image URL: ${imageUrl}`);
           const buffer = await imageHandler.processDiscordToTelegram(imageUrl);
           if (!buffer) {
@@ -391,7 +440,12 @@ export class BridgeManager {
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, `Image from ${username}`);
+          const fileId = await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, `Image from ${username}`);
+
+          if (fileId) {
+            this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
+          }
+
           log(`Successfully sent photo to Telegram user ${user.telegramId}`);
         } catch (error) {
           log(`Error processing and sending image: ${error}`, "error");
@@ -427,6 +481,22 @@ export class BridgeManager {
       // Handle photo if present
       if (photo?.fileId) {
         try {
+          const cacheKey = photo.fileId;
+          const cachedImage = this.getCachedImage(cacheKey);
+
+          if (cachedImage?.discordUrl) {
+            log(`Using cached Discord URL for ${photo.fileId}`);
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              {
+                content: content ? `${username}: ${content}\n${cachedImage.discordUrl}` : `${username} sent an image: ${cachedImage.discordUrl}`,
+                username: username,
+                avatarURL: avatarUrl
+              }
+            );
+            return;
+          }
+
           log(`Processing Telegram photo with fileId: ${photo.fileId}`);
           const buffer = await imageHandler.processTelegramToDiscord(photo.fileId, this.telegramBot);
           if (!buffer) {
@@ -434,18 +504,16 @@ export class BridgeManager {
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          await this.discordBot.sendMessage(
+          const discordUrl = await this.discordBot.sendPhoto(
             ticket.discordChannelId,
-            {
-              content: content ? `${username}: ${content}` : `${username} sent an image`,
-              username: username,
-              avatarURL: avatarUrl,
-              files: [{
-                attachment: buffer,
-                name: 'image.jpg'
-              }]
-            }
+            buffer,
+            content ? `${username}: ${content}` : `${username} sent an image`
           );
+
+          if (discordUrl) {
+            this.setCachedImage(cacheKey, { discordUrl, buffer });
+          }
+
           log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
           log(`Error processing and sending photo to Discord: ${error}`, "error");
