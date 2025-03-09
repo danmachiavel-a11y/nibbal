@@ -37,6 +37,29 @@ export class DiscordBot {
     setInterval(() => this.cleanupWebhooks(), 300000);
   }
 
+  async sendPhoto(channelId: string, photoUrl: string, caption?: string): Promise<string | undefined> {
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (!(channel instanceof TextChannel)) {
+        throw new Error('Invalid channel type');
+      }
+
+      const message = await channel.send({
+        content: caption,
+        files: [{ attachment: photoUrl }]
+      });
+
+      if (message.attachments.size > 0) {
+        const attachment = message.attachments.first();
+        return attachment?.url;
+      }
+      return undefined;
+    } catch (error) {
+      log(`Error sending photo: ${error}`, "error");
+      throw error;
+    }
+  }
+
   private async cleanupWebhooks() {
     for (const [channelId, webhooks] of this.webhookPool.entries()) {
       const now = Date.now();

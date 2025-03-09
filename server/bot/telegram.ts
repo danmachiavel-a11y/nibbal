@@ -958,7 +958,7 @@ export class TelegramBot {
 
     console.log(`Processing question${state.currentQuestion + 1}/${category.questions.length}`);
 
-    // Store the answer
+    //    // Store the answer
     state.answers.push(ctx.message.text);
 
     // Check if we have more questions
@@ -1120,7 +1120,7 @@ export class TelegramBot {
       });
 
       // Return the file_id for caching
-      if (result?.photo && result.photo.length > 0) {
+      if ('photo' in result && result.photo && result.photo.length > 0) {
         const fileId = result.photo[result.photo.length - 1].file_id;
         log(`Got file_id ${fileId} for photo`);
         return fileId;

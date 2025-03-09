@@ -375,26 +375,11 @@ export class BridgeManager {
         for (const attachment of attachments) {
           if (attachment.url) {
             try {
-              // Check cache first
-              const cached = this.imageCache.get(attachment.url);
-              if (cached?.telegramFileId) {
-                log(`Using cached Telegram file_id for ${attachment.url}`);
-                await this.telegramBot.sendCachedPhoto(
-                  parseInt(user.telegramId),
-                  cached.telegramFileId,
-                  `Image from ${username}`
-                );
-              } else {
-                // If not cached, send and cache the new photo
-                const fileId = await this.telegramBot.sendPhoto(
-                  parseInt(user.telegramId),
-                  attachment.url,
-                  `Image from ${username}`
-                );
-                if (fileId) {
-                  this.imageCache.set(attachment.url, { telegramFileId: fileId });
-                }
-              }
+              await this.sendPhotoToTelegram(
+                parseInt(user.telegramId),
+                attachment.url,
+                `Image from ${username}`
+              );
             } catch (error) {
               log(`Error sending photo to Telegram: ${error}`, "error");
             }
@@ -423,26 +408,10 @@ export class BridgeManager {
           await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${textContent}`);
         }
 
-        // Check cache for image
-        const cached = this.imageCache.get(imageUrl);
-        if (cached?.telegramFileId) {
-          await this.telegramBot.sendCachedPhoto(
-            parseInt(user.telegramId),
-            cached.telegramFileId,
-            `Image from ${username}`
-          );
-        } else {
-          const fileId = await this.telegramBot.sendPhoto(
-            parseInt(user.telegramId),
-            imageUrl,
-            `Image from ${username}`
-          );
-          if (fileId) {
-            this.imageCache.set(imageUrl, { telegramFileId: fileId });
-          }
-        }
+        // Send the image using caching system
+        await this.sendPhotoToTelegram(parseInt(user.telegramId), imageUrl, `Image from ${username}`);
       } else {
-        // Regular text message handling remains unchanged
+        // Regular text message handling
         await storage.createMessage({
           ticketId,
           content,
@@ -541,28 +510,35 @@ export class BridgeManager {
 
     if (cachedEntry && cachedEntry.telegramFileId) {
       log(`Using cached Telegram file ID for ${imageUrl}`);
-      await this.telegramBot.sendPhoto(chatId, cachedEntry.telegramFileId, caption);
+      await this.telegramBot.sendCachedPhoto(chatId, cachedEntry.telegramFileId, caption);
       return;
     }
 
     log(`Sending new photo to Telegram for ${imageUrl}`);
-    const telegramFileId = await this.telegramBot.sendPhoto(chatId, imageUrl, caption);
-    this.imageCache.set(cacheKey, { telegramFileId });
+    const fileId = await this.telegramBot.sendPhoto(chatId, imageUrl, caption);
+    if (fileId) {
+      this.imageCache.set(cacheKey, { telegramFileId: fileId });
+    }
   }
 
   private async sendPhotoToDiscord(channelId: string, imageUrl: string, caption: string): Promise<void> {
-      const cacheKey = imageUrl;
-      const cachedEntry = this.imageCache.get(cacheKey);
+    const cacheKey = imageUrl;
+    const cachedEntry = this.imageCache.get(cacheKey);
 
-      if (cachedEntry && cachedEntry.discordUrl) {
-          log(`Using cached Discord URL for ${imageUrl}`);
-          await this.discordBot.sendMessage(channelId, {content: `${caption}\n${cachedEntry.discordUrl}`, username: "BridgeBot"});
-          return;
-      }
+    if (cachedEntry && cachedEntry.discordUrl) {
+      log(`Using cached Discord URL for ${imageUrl}`);
+      await this.discordBot.sendMessage(channelId, {
+        content: caption ? `${caption}\n${cachedEntry.discordUrl}` : cachedEntry.discordUrl,
+        username: "BridgeBot"
+      });
+      return;
+    }
 
-      log(`Sending new photo to Discord for ${imageUrl}`);
-      const discordUrl = await this.discordBot.sendPhoto(channelId, imageUrl, caption);
+    log(`Sending new photo to Discord for ${imageUrl}`);
+    const discordUrl = await this.discordBot.sendPhoto(channelId, imageUrl, caption);
+    if (discordUrl) {
       this.imageCache.set(cacheKey, { discordUrl });
+    }
   }
 
 }
