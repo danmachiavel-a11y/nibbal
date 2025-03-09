@@ -49,16 +49,13 @@ export class DiscordBot {
       const webhookClient = await this.getWebhookForChannel(channelId);
       if (!webhookClient) throw new Error("Failed to get webhook");
 
-      // Ensure content is a string if present
-      if (message.content) {
-        message.content = String(message.content);
-      }
-
       // Handle files separately
       if (message.files) {
         const sentMessage = await webhookClient.send({
-          ...message,
+          content: message.content ? String(message.content) : undefined,
           username: message.username || source || "Unknown User",
+          avatarURL: message.avatarURL,
+          files: message.files
         });
         log(`Successfully sent file message to Discord channel ${channelId}`);
         return sentMessage;
@@ -66,8 +63,9 @@ export class DiscordBot {
 
       // Regular message
       const sentMessage = await webhookClient.send({
-        ...message,
+        content: message.content ? String(message.content) : undefined,
         username: message.username || source || "Unknown User",
+        avatarURL: message.avatarURL
       });
       log(`Successfully sent message to Discord channel ${channelId}`);
       return sentMessage;
@@ -86,7 +84,7 @@ export class DiscordBot {
 
       const message = await channel.send({
         content: caption,
-        files: [{ 
+        files: [{
           attachment: photo,
           name: 'image.jpg'
         }]
@@ -156,6 +154,7 @@ export class DiscordBot {
         });
 
         this.webhookPool.set(channelId, webhooks);
+        log(`Created new webhook for channel ${channelId}`);
         return webhookClient;
       }
 
