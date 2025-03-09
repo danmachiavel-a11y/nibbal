@@ -38,25 +38,56 @@ export class DiscordBot {
     setInterval(() => this.cleanupWebhooks(), 300000);
   }
 
-  async sendPhoto(channelId: string, photo: string | Buffer, caption?: string): Promise<string | undefined> {
+  async sendMessage(channelId: string, message: any, source?: string) {
+    try {
+      log(`Attempting to send message to Discord channel ${channelId}`);
+
+      // Check rate limit
+      await rateLimiter.webhookCheck(channelId);
+      await rateLimiter.globalCheck();
+
+      const webhookClient = await this.getWebhookForChannel(channelId);
+      if (!webhookClient) throw new Error("Failed to get webhook");
+
+      // Ensure content is a string if present
+      if (message.content) {
+        message.content = String(message.content);
+      }
+
+      // Handle files separately
+      if (message.files) {
+        const sentMessage = await webhookClient.send({
+          ...message,
+          username: message.username || source || "Unknown User",
+        });
+        log(`Successfully sent file message to Discord channel ${channelId}`);
+        return sentMessage;
+      }
+
+      // Regular message
+      const sentMessage = await webhookClient.send({
+        ...message,
+        username: message.username || source || "Unknown User",
+      });
+      log(`Successfully sent message to Discord channel ${channelId}`);
+      return sentMessage;
+    } catch (error) {
+      log(`Error sending message to Discord: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async sendPhoto(channelId: string, photo: Buffer, caption?: string): Promise<string | undefined> {
     try {
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
         throw new Error('Invalid channel type');
       }
 
-      let buffer: Buffer;
-      if (typeof photo === 'string') {
-        // Process image through ImageHandler for caching and optimization
-        buffer = await imageHandler.processDiscordToTelegram(photo);
-      } else {
-        buffer = photo;
-      }
-
       const message = await channel.send({
         content: caption,
         files: [{ 
-          attachment: buffer,
+          attachment: photo,
           name: 'image.jpg'
         }]
       });

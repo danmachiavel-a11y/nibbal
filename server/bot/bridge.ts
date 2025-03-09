@@ -481,23 +481,6 @@ export class BridgeManager {
       // Handle photo if present
       if (photo?.fileId) {
         try {
-          const cacheKey = photo.fileId;
-          const cachedImage = this.getCachedImage(cacheKey);
-
-          if (cachedImage?.discordUrl) {
-            log(`Using cached Discord URL for ${photo.fileId}`);
-            await this.discordBot.sendMessage(
-              ticket.discordChannelId,
-              {
-                content: content ? `${content}\n${cachedImage.discordUrl}` : cachedImage.discordUrl,
-                username: username || "Unknown User",
-                avatarURL: avatarUrl
-              },
-              username
-            );
-            return;
-          }
-
           log(`Processing Telegram photo with fileId: ${photo.fileId}`);
           const buffer = await imageHandler.processTelegramToDiscord(photo.fileId, this.telegramBot);
           if (!buffer) {
@@ -505,15 +488,32 @@ export class BridgeManager {
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          const discordUrl = await this.discordBot.sendPhoto(
-            ticket.discordChannelId,
-            buffer,
-            content
-          );
-
-          if (discordUrl) {
-            this.setCachedImage(cacheKey, { discordUrl, buffer });
+          // Send message first if there's content
+          if (content) {
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              {
+                content: String(content),
+                username: username || "Unknown User",
+                avatarURL: avatarUrl
+              },
+              username
+            );
           }
+
+          // Then send the photo
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              files: [{
+                attachment: buffer,
+                name: 'image.jpg'
+              }],
+              username: username || "Unknown User",
+              avatarURL: avatarUrl
+            },
+            username
+          );
 
           log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
@@ -523,7 +523,7 @@ export class BridgeManager {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: content,
+                content: String(content),
                 username: username || "Unknown User",
                 avatarURL: avatarUrl
               },
@@ -536,7 +536,7 @@ export class BridgeManager {
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
-            content: content,
+            content: String(content),
             username: username || "Unknown User",
             avatarURL: avatarUrl
           },
