@@ -488,31 +488,22 @@ export class BridgeManager {
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          // Send message first if there's content
-          if (content?.trim()) {
-            await this.discordBot.sendMessage(ticket.discordChannelId, {
-              content: content,
-              username: username,
-              avatarURL: avatarUrl
-            });
-          }
-
-          // Then send the photo
+          // Send the photo with caption if any
           await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: content?.trim() ? undefined : "Sent an image:",
+            content: content || "Sent an image",
+            username: username,
+            avatarURL: avatarUrl,
             files: [{
               attachment: buffer,
               name: 'image.jpg'
-            }],
-            username: username,
-            avatarURL: avatarUrl
+            }]
           });
 
           log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
           log(`Error processing and sending photo to Discord: ${error}`, "error");
           // Send text content even if image fails
-          if (content?.trim()) {
+          if (content) {
             await this.discordBot.sendMessage(ticket.discordChannelId, {
               content: content,
               username: username,
