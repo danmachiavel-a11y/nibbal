@@ -295,7 +295,7 @@ export class BridgeManager {
       // Create embed for Q&A
       const embed = {
         username: "Ticket Bot",
-        content: category.roleId ? `<@&${category.roleId}>` : "", // Add role ping if roleId exists
+        content: category.discordRoleId ? `<@&${category.discordRoleId}>` : undefined,
         embeds: [{
           title: "🎫 New Ticket",
           description: "A new support ticket has been created",
