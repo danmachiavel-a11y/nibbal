@@ -956,9 +956,9 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId || !ctx.message || !('text' in ctx.message)) return;
 
-    console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
+    console.log(`Processing question${state.currentQuestion + 1}/${category.questions.length}`);
 
-    // Store// Store the answer
+    // Store the answer
     state.answers.push(ctx.message.text);
 
     // Check if we have more questions
@@ -1097,7 +1097,7 @@ export class TelegramBot {
       throw error;
     }
   }
-  async sendPhoto(chatId: number, photo: string, caption?: string) {
+  async sendPhoto(chatId: number, photo: string, caption?: string): Promise<string | undefined> {
     try {
       if (!this.bot) {
         throw new Error("Bot not initialized");
@@ -1114,14 +1114,40 @@ export class TelegramBot {
       log(`Attempting to send photo to chat ${chatId}`);
       log(`Photo source: ${photo}`);
 
-      await this.bot.telegram.sendPhoto(chatId, photo, {
+      const result = await this.bot.telegram.sendPhoto(chatId, photo, {
         caption: caption ? escapeMarkdown(caption) : undefined,
         parse_mode: "MarkdownV2"
       });
 
+      // Return the file_id for caching
+      if (result?.photo && result.photo.length > 0) {
+        const fileId = result.photo[result.photo.length - 1].file_id;
+        log(`Got file_id ${fileId} for photo`);
+        return fileId;
+      }
+
       log(`Successfully sent photo to chat ${chatId}`);
+      return undefined;
     } catch (error) {
       log(`Error sending photo: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async sendCachedPhoto(chatId: number, fileId: string, caption?: string): Promise<void> {
+    try {
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
+      }
+
+      await this.bot.telegram.sendPhoto(chatId, fileId, {
+        caption: caption ? escapeMarkdown(caption) : undefined,
+        parse_mode: "MarkdownV2"
+      });
+
+      log(`Successfully sent cached photo (${fileId}) to chat ${chatId}`);
+    } catch (error) {
+      log(`Error sending cached photo: ${error}`, "error");
       throw error;
     }
   }
