@@ -1,6 +1,14 @@
+import { storage } from "../storage";
+import { TelegramBot } from "./telegram";
+import { DiscordBot } from "./discord";
+import type { Ticket } from "@shared/schema";
+import { log } from "../vite";
+import fetch from 'node-fetch';
+
 interface ImageCacheEntry {
   telegramFileId?: string;
   discordUrl?: string;
+  buffer?: Buffer;
   timestamp: number;
 }
 
@@ -36,12 +44,6 @@ class ImageCache {
     this.cache.clear();
   }
 }
-
-import { storage } from "../storage";
-import { TelegramBot } from "./telegram";
-import { DiscordBot } from "./discord";
-import type { Ticket } from "@shared/schema";
-import { log } from "../vite";
 
 export class BridgeManager {
   private telegramBot: TelegramBot;
@@ -540,10 +542,29 @@ export class BridgeManager {
         return;
       }
 
+      // If we have a cached buffer, use it
+      if (cachedEntry?.buffer) {
+        log(`Using cached image buffer for ${imageUrl}`);
+        const discordUrl = await this.discordBot.sendPhoto(channelId, cachedEntry.buffer, caption);
+        if (discordUrl) {
+          this.imageCache.set(cacheKey, { ...cachedEntry, discordUrl });
+        }
+        return;
+      }
+
+      // Download and cache the image
+      log(`Downloading image from ${imageUrl}`);
+      const response = await fetch(imageUrl);
+      const buffer = await response.buffer();
+
+      // Store in cache
+      this.imageCache.set(cacheKey, { buffer });
+
+      // Send to Discord
       log(`Sending new photo to Discord for ${imageUrl}`);
-      const discordUrl = await this.discordBot.sendPhoto(channelId, imageUrl, caption);
+      const discordUrl = await this.discordBot.sendPhoto(channelId, buffer, caption);
       if (discordUrl) {
-        this.imageCache.set(cacheKey, { discordUrl });
+        this.imageCache.set(cacheKey, { buffer, discordUrl });
       }
     } catch (error) {
       log(`Error sending photo to Discord: ${error}`, "error");

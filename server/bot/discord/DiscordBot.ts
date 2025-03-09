@@ -38,22 +38,28 @@ export class DiscordBot {
     setInterval(() => this.cleanupWebhooks(), 300000);
   }
 
-  async sendPhoto(channelId: string, photoUrl: string, caption?: string): Promise<string | undefined> {
+  async sendPhoto(channelId: string, photo: string | Buffer, caption?: string): Promise<string | undefined> {
     try {
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
         throw new Error('Invalid channel type');
       }
 
-      // Download the image first to avoid direct URL forwarding
-      const response = await fetch(photoUrl);
-      const buffer = await response.buffer();
+      let buffer: Buffer;
+      if (typeof photo === 'string') {
+        // If photo is a URL, download it
+        const response = await fetch(photo);
+        buffer = await response.buffer();
+      } else {
+        // If photo is already a Buffer, use it directly
+        buffer = photo;
+      }
 
       const message = await channel.send({
         content: caption,
         files: [{ 
           attachment: buffer,
-          name: 'image.jpg' // Default name
+          name: 'image.jpg'
         }]
       });
 
@@ -301,6 +307,4 @@ export class DiscordBot {
       return [];
     }
   }
-  // ... other methods ...
-
 }
