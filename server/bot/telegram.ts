@@ -304,19 +304,15 @@ export class TelegramBot {
       }
     }
 
-    let resolveLock: () => void;
     this.startLock = new Promise(resolve => {
-      resolveLock = resolve;
+      setTimeout(resolve, 1000); // Add small delay before resolving
     });
     this.isStarting = true;
-    resolveLock();
     return true;
   }
 
   private releaseStartLock() {
-    if (this.startLock) {
-      this.startLock = null;
-    }
+    this.startLock = null;
     this.isStarting = false;
   }
 
@@ -342,10 +338,13 @@ export class TelegramBot {
 
       await this.setupHandlers();
 
+      // Add delay before launching
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       // Use more conservative launch options
       await this.bot.launch({
         dropPendingUpdates: true,
-        allowed_updates: ["message", "callback_query"],
+        allowedUpdates: ["message", "callback_query"],
         polling: {
           timeout: 30,
           limit: 100
@@ -954,7 +953,7 @@ export class TelegramBot {
     }
 
     const userId = ctx.from?.id;
-    if (!userId || !ctx.message || !('text' in ctx.message)) return;
+if (!userId || !ctx.message || !('text' in ctx.message)) return;
 
     console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
 
