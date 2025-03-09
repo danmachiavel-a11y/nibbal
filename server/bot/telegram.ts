@@ -64,26 +64,13 @@ export class TelegramBot {
   private userStates: Map<number, UserState>;
   private stateCleanups: Map<number, StateCleanup> = new Map();
   private _isConnected: boolean = false;
-  private static instance: TelegramBot | null = null;
   private isStarting: boolean = false;
-  private startLock: Promise<void> | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
-  private readonly INITIAL_RECONNECT_DELAY = 30000; // 30 seconds
-  private readonly STOP_TIMEOUT = 15000; // 15 seconds
   private readonly CLEANUP_DELAY = 10000; // 10 seconds
   private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
-  private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
-  private readonly COOLDOWN_WINDOW = 60000;
-  private readonly MAX_COMMANDS = 5;
-  private messageRateLimits: Map<number, MessageRateLimit> = new Map();
-  private readonly MESSAGE_WINDOW = 2000;
-  private readonly MAX_MESSAGES = 10;
-  private readonly SPAM_BLOCK_DURATION = 300000;
-  private readonly MAX_CONCURRENT_USERS = 500;
-  private activeUsers: Set<number> = new Set();
 
   constructor(bridge: BridgeManager) {
     try {
@@ -91,18 +78,8 @@ export class TelegramBot {
         throw new Error("Invalid Telegram bot token");
       }
 
-      // Force cleanup of any existing instance
-      if (TelegramBot.instance) {
-        log("Cleaning up existing Telegram bot instance");
-        if (TelegramBot.instance.bot) {
-          TelegramBot.instance.bot.stop();
-        }
-        TelegramBot.instance = null;
-      }
-
       this.bridge = bridge;
       this.userStates = new Map();
-      TelegramBot.instance = this;
 
       // Start cleanup interval for stale states
       setInterval(() => this.cleanupStaleStates(), 60000);
@@ -120,7 +97,6 @@ export class TelegramBot {
       if (now - cleanup.createdAt > this.STATE_TIMEOUT) {
         this.userStates.delete(userId);
         this.stateCleanups.delete(userId);
-        this.activeUsers.delete(userId);
         log(`Cleaned up stale state for user ${userId}`);
       }
     });
@@ -138,7 +114,6 @@ export class TelegramBot {
     const timeout = setTimeout(() => {
       this.userStates.delete(userId);
       this.stateCleanups.delete(userId);
-      this.activeUsers.delete(userId);
       log(`State timeout for user ${userId}`);
     }, this.STATE_TIMEOUT);
 
@@ -221,19 +196,18 @@ export class TelegramBot {
   }
 
   private startHeartbeat() {
-    this.stopHeartbeat();
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
 
     this.heartbeatInterval = setInterval(async () => {
       try {
         if (!this._isConnected || this.isStarting) return;
 
-        // Add more robust connection check
         const me = await this.bot?.telegram.getMe();
         if (!me) {
           throw new Error("Bot getMe() returned null");
         }
-
-        this._isConnected = true;
       } catch (error) {
         log("Heartbeat check failed, attempting to recover", "warn");
         this._isConnected = false;
@@ -287,63 +261,40 @@ export class TelegramBot {
     }
   }
 
-  private async acquireStartLock(): Promise<boolean> {
-    if (this.startLock) {
-      try {
-        await Promise.race([
-          this.startLock,
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Start lock timeout")), 10000))
-        ]);
-      } catch (error) {
-        log("Start lock acquisition timed out", "warn");
-        this.startLock = null;
-        this.isStarting = false;
-        return false;
-      }
+  async start() {
+    if (this.isStarting) {
+      log("Bot is already starting, waiting...");
+      return;
     }
 
-    this.startLock = new Promise(resolve => {
-      setTimeout(resolve, 5000); // Add delay before resolving
-    });
     this.isStarting = true;
-    return true;
-  }
 
-  private releaseStartLock() {
-    this.startLock = null;
-    this.isStarting = false;
-  }
-
-  async start() {
     try {
       log("Starting Telegram bot...");
 
-      // Ensure proper cleanup first
+      // Stop existing bot if any
       if (this.bot) {
         await this.stop();
-        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 2));
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY));
       }
 
       this._isConnected = false;
       this.stopHeartbeat();
 
+      // Create new bot instance
       log("Creating new Telegram bot instance");
       this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
       // Add handlers
       await this.setupHandlers();
 
-      // Add significant delay before launching
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      // Add delay before launching
+      await new Promise(resolve => setTimeout(resolve, 5000));
 
       // Launch with conservative options
       await this.bot.launch({
         dropPendingUpdates: true,
-        allowedUpdates: ["message", "callback_query"],
-        polling: {
-          timeout: 30,
-          limit: 100
-        }
+        allowedUpdates: ["message", "callback_query"]
       });
 
       const botInfo = await this.bot.telegram.getMe();
@@ -351,6 +302,7 @@ export class TelegramBot {
 
       this._isConnected = true;
       this.startHeartbeat();
+      this.reconnectAttempts = 0;
 
       log("Telegram bot started successfully");
     } catch (error) {
@@ -359,13 +311,13 @@ export class TelegramBot {
 
       if (error instanceof Error && error.message.includes("409: Conflict")) {
         log("409 Conflict detected - another bot instance is already running", "error");
-        // Force cleanup and wait longer
         await this.stop();
-        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 3));
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 2));
       }
+
       throw error;
     } finally {
-      this.releaseStartLock();
+      this.isStarting = false;
     }
   }
 
@@ -376,30 +328,19 @@ export class TelegramBot {
 
       if (this.bot) {
         try {
-          // Set a timeout for the stop operation
-          const stopPromise = this.bot.stop();
-          await Promise.race([
-            stopPromise,
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Stop timeout")), this.STOP_TIMEOUT)
-            )
-          ]);
+          await this.bot.stop();
         } catch (error) {
           log(`Error during bot stop: ${error}`, "warn");
         } finally {
-          // Force cleanup
           this.bot = null;
         }
-
-        // Add significant delay after stopping
-        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY));
       }
 
       this._isConnected = false;
       this.isStarting = false;
       this.userStates.clear();
-      this.reconnectAttempts = 0;
       this.stateCleanups.clear();
+      this.reconnectAttempts = 0;
 
       log("Telegram bot stopped successfully");
     } catch (error) {
