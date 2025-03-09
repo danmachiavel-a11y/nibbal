@@ -468,7 +468,7 @@ export class BridgeManager {
     }
   }
 
-  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: { fileId: string; }) {
+  private async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: { fileId: string; }) {
     try {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
@@ -490,55 +490,43 @@ export class BridgeManager {
 
           // Send message first if there's content
           if (content?.trim()) {
-            await this.discordBot.sendMessage(
-              ticket.discordChannelId,
-              {
-                content: String(content),
-                username: username,
-                avatarURL: avatarUrl
-              }
-            );
+            await this.discordBot.sendMessage(ticket.discordChannelId, {
+              content: content,
+              username: username,
+              avatarURL: avatarUrl
+            });
           }
 
           // Then send the photo
-          await this.discordBot.sendMessage(
-            ticket.discordChannelId,
-            {
-              content: content?.trim() ? undefined : "Sent an image:",
-              username: username,
-              avatarURL: avatarUrl,
-              files: [{
-                attachment: buffer,
-                name: 'image.jpg'
-              }]
-            }
-          );
+          await this.discordBot.sendMessage(ticket.discordChannelId, {
+            content: content?.trim() ? undefined : "Sent an image:",
+            files: [{
+              attachment: buffer,
+              name: 'image.jpg'
+            }],
+            username: username,
+            avatarURL: avatarUrl
+          });
 
           log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
           log(`Error processing and sending photo to Discord: ${error}`, "error");
           // Send text content even if image fails
           if (content?.trim()) {
-            await this.discordBot.sendMessage(
-              ticket.discordChannelId,
-              {
-                content: String(content),
-                username: username,
-                avatarURL: avatarUrl
-              }
-            );
+            await this.discordBot.sendMessage(ticket.discordChannelId, {
+              content: content,
+              username: username,
+              avatarURL: avatarUrl
+            });
           }
         }
       } else {
         // Regular text message
-        await this.discordBot.sendMessage(
-          ticket.discordChannelId,
-          {
-            content: String(content || ""),
-            username: username,
-            avatarURL: avatarUrl
-          }
-        );
+        await this.discordBot.sendMessage(ticket.discordChannelId, {
+          content: content || "",
+          username: username,
+          avatarURL: avatarUrl
+        });
       }
 
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);

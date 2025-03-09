@@ -22,7 +22,6 @@ export class DiscordBot {
   private readonly MAX_WEBHOOK_FAILURES = 3;
   private readonly WEBHOOK_TIMEOUT = 300000; // 5 minutes
   private readonly MAX_WEBHOOKS_PER_CHANNEL = 5;
-  private readonly WEBHOOK_ROTATION_INTERVAL = 60000; // 1 minute
 
   constructor() {
     this.client = new Client({
@@ -38,7 +37,7 @@ export class DiscordBot {
     setInterval(() => this.cleanupWebhooks(), 300000);
   }
 
-  async sendMessage(channelId: string, message: any, source?: string) {
+  async sendMessage(channelId: string, message: any) {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 
@@ -49,12 +48,16 @@ export class DiscordBot {
       const webhookClient = await this.getWebhookForChannel(channelId);
       if (!webhookClient) throw new Error("Failed to get webhook");
 
+      const payload = {
+        content: message.content ? String(message.content) : undefined,
+        username: message.username || "Unknown User",
+        avatarURL: message.avatarURL
+      };
+
       // Handle files separately
       if (message.files) {
         const sentMessage = await webhookClient.send({
-          content: message.content ? String(message.content) : undefined,
-          username: message.username || source || "Unknown User",
-          avatarURL: message.avatarURL,
+          ...payload,
           files: message.files
         });
         log(`Successfully sent file message to Discord channel ${channelId}`);
@@ -62,11 +65,7 @@ export class DiscordBot {
       }
 
       // Regular message
-      const sentMessage = await webhookClient.send({
-        content: message.content ? String(message.content) : undefined,
-        username: message.username || source || "Unknown User",
-        avatarURL: message.avatarURL
-      });
+      const sentMessage = await webhookClient.send(payload);
       log(`Successfully sent message to Discord channel ${channelId}`);
       return sentMessage;
     } catch (error) {
@@ -164,28 +163,6 @@ export class DiscordBot {
       return null;
     }
   }
-
-  async createChannel(name: string, categoryId: string): Promise<TextChannel | null> {
-    try {
-      // Check channel creation rate limit
-      await rateLimiter.channelCreateCheck(this.guild?.id || 'unknown');
-
-      // Global rate limit check
-      await rateLimiter.globalCheck();
-
-      const channel = await this.guild?.channels.create({
-        name,
-        parent: categoryId,
-        type: 0
-      });
-
-      return channel as TextChannel;
-    } catch (error) {
-      log(`Error creating channel: ${error}`, "error");
-      return null;
-    }
-  }
-
   async sendWebhookMessage(channelId: string, message: string | any): Promise<void> {
     try {
       // Check webhook rate limit
