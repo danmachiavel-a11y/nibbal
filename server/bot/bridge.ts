@@ -489,10 +489,11 @@ export class BridgeManager {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: content ? `${username}: ${content}\n${cachedImage.discordUrl}` : `${username} sent an image: ${cachedImage.discordUrl}`,
-                username: username,
+                content: content ? `${content}\n${cachedImage.discordUrl}` : cachedImage.discordUrl,
+                username: username || "Unknown User",
                 avatarURL: avatarUrl
-              }
+              },
+              username
             );
             return;
           }
@@ -507,7 +508,7 @@ export class BridgeManager {
           const discordUrl = await this.discordBot.sendPhoto(
             ticket.discordChannelId,
             buffer,
-            content ? `${username}: ${content}` : `${username} sent an image`
+            content
           );
 
           if (discordUrl) {
@@ -522,10 +523,11 @@ export class BridgeManager {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: `${username}: ${content}`,
-                username: username,
+                content: content,
+                username: username || "Unknown User",
                 avatarURL: avatarUrl
-              }
+              },
+              username
             );
           }
         }
@@ -534,10 +536,11 @@ export class BridgeManager {
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
-            content: `${username}: ${content}`,
-            username: username,
+            content: content,
+            username: username || "Unknown User",
             avatarURL: avatarUrl
-          }
+          },
+          username
         );
       }
 

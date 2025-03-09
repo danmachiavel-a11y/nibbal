@@ -2,6 +2,7 @@ import { Telegraf, Context } from "telegraf";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
+import fetch from 'node-fetch';
 
 interface CommandCooldown {
   lastUsed: number;
@@ -237,14 +238,17 @@ export class TelegramBot {
 
         const me = await this.bot?.telegram.getMe();
         if (!me) {
-          throw new Error("Bot getMe() returned null");
+          log("Heartbeat check failed: Bot returned null", "warn");
+          return; // Don't trigger reconnect on temporary issues
         }
       } catch (error) {
-        log("Heartbeat check failed, attempting to recover", "warn");
-        this._isConnected = false;
-        await this.handleDisconnect();
+        log(`Heartbeat check failed: ${error}`, "warn");
+        if (error.message?.includes('restart')) {
+          this._isConnected = false;
+          await this.handleDisconnect();
+        }
       }
-    }, this.HEARTBEAT_INTERVAL);
+    }, 300000); // Increased to 5 minutes to reduce unnecessary reconnections
   }
 
   private stopHeartbeat() {
@@ -302,18 +306,66 @@ export class TelegramBot {
     }
   }
 
-  async sendPhoto(chatId: number, photo: Buffer | string, caption?: string) {
+  async sendPhoto(chatId: number, photo: Buffer | string, caption?: string): Promise<string | undefined> {
     try {
       if (!this.bot) {
         throw new Error("Bot not initialized");
       }
 
-      await this.bot.telegram.sendPhoto(chatId, photo, {
+      log(`Sending photo to chat ${chatId}`);
+      let sentMessage;
+
+      // If photo is a URL, download it first
+      if (typeof photo === 'string' && photo.startsWith('http')) {
+        const response = await fetch(photo);
+        const buffer = await response.buffer();
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: buffer }, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      } else if (photo instanceof Buffer) {
+        // Handle buffer by using InputFile format
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: photo }, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      } else {
+        // Handle file_id string
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, photo, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      }
+
+      // Return the file_id for caching
+      if (sentMessage?.photo && sentMessage.photo.length > 0) {
+        const fileId = sentMessage.photo[sentMessage.photo.length - 1].file_id;
+        log(`Got file_id ${fileId} for photo`);
+        return fileId;
+      }
+
+      log(`Successfully sent photo to chat ${chatId}`);
+      return undefined;
+    } catch (error) {
+      log(`Error sending photo: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async sendCachedPhoto(chatId: number, fileId: string, caption?: string): Promise<void> {
+    try {
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
+      }
+
+      await this.bot.telegram.sendPhoto(chatId, fileId, {
         caption: caption ? escapeMarkdown(caption) : undefined,
         parse_mode: "MarkdownV2"
       });
+
+      log(`Successfully sent cached photo (${fileId}) to chat ${chatId}`);
     } catch (error) {
-      log(`Error sending photo: ${error}`, "error");
+      log(`Error sending cached photo: ${error}`, "error");
       throw error;
     }
   }
@@ -1632,7 +1684,7 @@ export class TelegramBot {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
-        if (errorMessage.includes('maximum channel limit')) {
+        if (errorMessage.includes('maximum channel limit')){
           await ctx.reply(
             "❌ Sorry, our support channels are currently at maximum capacity.\n" +
             "Your ticket has been created but is in a pending state."
