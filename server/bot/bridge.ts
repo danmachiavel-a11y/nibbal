@@ -488,40 +488,58 @@ export class BridgeManager {
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: content || undefined,
-            username: username,
-            avatarURL: avatarUrl,
+          // Send message with photo
+          const messagePayload = {
             files: [{
               attachment: buffer,
               name: 'image.jpg'
-            }]
-          });
+            }],
+            username: username || "Unknown User",
+            avatarURL: avatarUrl
+          };
 
+          if (content?.trim()) {
+            messagePayload.content = content;
+          }
+
+          await this.discordBot.sendMessage(ticket.discordChannelId, messagePayload);
           log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
           log(`Error processing and sending photo to Discord: ${error}`, "error");
-          // Send text content even if image fails
-          if (content) {
-            await this.discordBot.sendMessage(ticket.discordChannelId, {
-              content: content,
-              username: username,
-              avatarURL: avatarUrl
-            });
+          // Only try to send text message if photo fails and we have content
+          if (content?.trim()) {
+            try {
+              await this.discordBot.sendMessage(ticket.discordChannelId, {
+                content: content,
+                username: username || "Unknown User",
+                avatarURL: avatarUrl
+              });
+            } catch (error) {
+              log(`Failed to send fallback text message: ${error}`, "error");
+            }
           }
+          // Don't throw here - we want to avoid bot disconnection
+          return;
         }
       } else {
         // Regular text message
-        await this.discordBot.sendMessage(ticket.discordChannelId, {
-          content: content || "",
-          username: username,
-          avatarURL: avatarUrl
-        });
+        try {
+          await this.discordBot.sendMessage(ticket.discordChannelId, {
+            content: content || "",
+            username: username || "Unknown User",
+            avatarURL: avatarUrl
+          });
+        } catch (error) {
+          log(`Failed to send text message: ${error}`, "error");
+          // Don't throw here - we want to avoid bot disconnection
+          return;
+        }
       }
 
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
       log(`Error forwarding to Discord: ${error}`, "error");
+      // Don't throw here - we want to avoid bot disconnection
     }
   }
 
