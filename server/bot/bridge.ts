@@ -488,9 +488,8 @@ export class BridgeManager {
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          // Send the photo with caption if any
           await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: content || "Sent an image",
+            content: content || undefined,
             username: username,
             avatarURL: avatarUrl,
             files: [{
@@ -522,7 +521,7 @@ export class BridgeManager {
 
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
-      log(`Error forwarding to Discord: ${error instanceof Error ? error.message : String(error)}`, "error");
+      log(`Error forwarding to Discord: ${error}`, "error");
     }
   }
 

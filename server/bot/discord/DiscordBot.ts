@@ -3,11 +3,6 @@ import { log } from "../../vite";
 import { rateLimiter } from './RateLimiter';
 import { imageHandler } from '../handlers/ImageHandler';
 
-interface WorkerCooldown {
-  lastUsed: number;
-  commands: Map<string, number>;
-}
-
 interface WebhookPool {
   webhook: WebhookClient;
   lastUsed: number;
@@ -17,8 +12,6 @@ interface WebhookPool {
 export class DiscordBot {
   private client: Client;
   private webhookPool: Map<string, WebhookPool[]> = new Map();
-  private workerCooldowns: Map<string, WorkerCooldown> = new Map();
-  private readonly PAID_COOLDOWN = 300000; // 5 minutes
   private readonly MAX_WEBHOOK_FAILURES = 3;
   private readonly WEBHOOK_TIMEOUT = 300000; // 5 minutes
   private readonly MAX_WEBHOOKS_PER_CHANNEL = 5;
@@ -235,42 +228,6 @@ export class DiscordBot {
     } catch (error) {
       log(`Error sending webhook message: ${error}`, "error");
       throw error;
-    }
-  }
-
-  async checkWorkerCooldown(workerId: string, command: string): Promise<boolean> {
-    if (!this.workerCooldowns.has(workerId)) {
-      this.workerCooldowns.set(workerId, {
-        lastUsed: Date.now(),
-        commands: new Map()
-      });
-    }
-
-    const cooldown = this.workerCooldowns.get(workerId)!;
-    const now = Date.now();
-
-    // Check command-specific cooldown
-    if (command === 'paid') {
-      const lastPaid = cooldown.commands.get('paid') || 0;
-      if (now - lastPaid < this.PAID_COOLDOWN) {
-        return false;
-      }
-      cooldown.commands.set('paid', now);
-    }
-
-    return true;
-  }
-
-  async handlePaidCommand(message: any, workerId: string): Promise<void> {
-    try {
-      if (!await this.checkWorkerCooldown(workerId, 'paid')) {
-        await message.reply("⚠️ Please wait 5 minutes between /paid commands.");
-        return;
-      }
-
-      // Existing paid command logic...
-    } catch (error) {
-      log(`Error handling paid command: ${error}`, "error");
     }
   }
 
