@@ -462,7 +462,6 @@ export class TelegramBot {
   }
 
 
-
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
     if (!this.commandCooldowns.has(userId)) {
       this.commandCooldowns.set(userId, new Map());
@@ -587,6 +586,119 @@ export class TelegramBot {
       reply_markup: { inline_keyboard: keyboard }
     });
     await ctx.answerCbQuery();
+  }
+
+  private async handleCategorySelection(ctx: Context, categoryId: number) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const category = await storage.getCategory(categoryId);
+    if (!category) {
+      await this.sendMessage(userId, "❌ Invalid category selected.");
+      return;
+    }
+
+    if (!await this.checkActiveUsers(userId)) {
+      await this.sendMessage(userId, "❌ Too many active users. Please try again later.");
+      return;
+    }
+
+    // If category is closed, prevent selection
+    if (category.isClosed) {
+      await this.sendMessage(userId, "❌ This service is currently unavailable.");
+      return;
+    }
+
+    if (category.questions.length > 0) {
+      // Start questionnaire
+      const state: UserState = {
+        categoryId,
+        currentQuestion: 0,
+        answers: [],
+        inQuestionnaire: true
+      };
+      this.setState(userId, state);
+      await ctx.reply(category.questions[0]);
+    } else {
+      // Create ticket directly
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await this.sendMessage(userId, "❌ User not found. Please try /start.");
+        return;
+      }
+      await this.createTicket({ from: { id: userId, first_name: user.telegramName, username: user.telegramUsername }, reply: this.sendMessage.bind(this, userId) });
+    }
+  }
+
+  private async createTicket(ctx: Context) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const state = this.userStates.get(userId);
+    if (!state) {
+      await ctx.reply("❌ Something went wrong. Please try /start to begin again.");
+      return;
+    }
+
+    try {
+      // Create or get user
+      let user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        user = await storage.createUser({
+          username: ctx.from.username || "Unknown",
+          telegramId: userId.toString(),
+          telegramUsername: ctx.from.username,
+          telegramName: ctx.from.first_name,
+          discordId: null,
+          isBanned: false
+        });
+      }
+
+      // Create ticket with raw answers
+      const ticket = await storage.createTicket({
+        userId: user.id,
+        categoryId: state.categoryId,
+        status: "open",
+        discordChannelId: null,
+        claimedBy: null,
+        amount: null,
+        answers: state.answers,
+        completedAt: null
+      });
+
+      try {
+        // Create Discord channel first
+        await this.bridge.createTicketChannel(ticket);
+        await ctx.reply("✅ Ticket created! A staff member will be with you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        if (errorMessage.includes('maximum channel limit')) {
+          await ctx.reply(
+            "❌ Sorry, our support channels are currently at maximum capacity.\n" +
+            "Your ticket has been created but is in a pending state."
+          );
+        } else {
+          await ctx.reply(
+            "❌ There was an error creating your Discord channel. Please try again or contact an administrator."
+          );
+          log(`Failed to create Discord channel for ticket ${ticket.id}: ${errorMessage}`, "error");
+        }
+      } finally {
+        // Clean up state after ticket creation (success or failure)
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+      }
+    } catch (error) {
+      log(`Error creating ticket: ${error}`, "error");
+      await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
+
+      // Clean up state on error
+      this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
+    }
   }
 
   private setupHandlers() {
@@ -1041,76 +1153,6 @@ export class TelegramBot {
     }
   }
 
-  private async createTicket(ctx: Context) {
-    const userId = ctx.from?.id;
-    if (!userId) return;
-
-    const state = this.userStates.get(userId);
-    if (!state) {
-      await ctx.reply("❌ Something went wrong. Please try /start to begin again.");
-      return;
-    }
-
-    try {
-      // Create or get user
-      let user = await storage.getUserByTelegramId(userId.toString());
-      if (!user) {
-        user = await storage.createUser({
-          username: ctx.from.username || "Unknown",
-          telegramId: userId.toString(),
-          telegramUsername: ctx.from.username,
-          telegramName: ctx.from.first_name,
-          discordId: null,
-          isBanned: false
-        });
-      }
-
-      // Create ticket with raw answers
-      const ticket = await storage.createTicket({
-        userId: user.id,
-        categoryId: state.categoryId,
-        status: "open",
-        discordChannelId: null,
-        claimedBy: null,
-        amount: null,
-        answers: state.answers,
-        completedAt: null
-      });
-
-      try {
-        // Create Discord channel first
-        await this.bridge.createTicketChannel(ticket);
-        await ctx.reply("✅ Ticket created! A staff member will be with you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-
-        if (errorMessage.includes('maximum channel limit')) {
-          await ctx.reply(
-            "❌ Sorry, our support channels are currently at maximum capacity.\n" +
-            "Your ticket has been created but is in a pending state."
-          );
-        } else {
-          await ctx.reply(
-            "❌ There was an error creating your Discord channel. Please try again or contact an administrator."
-          );
-          log(`Failed to create Discord channel for ticket ${ticket.id}: ${errorMessage}`, "error");
-        }
-      } finally {
-        // Clean up state after ticket creation (success or failure)
-        this.userStates.delete(userId);
-        this.stateCleanups.delete(userId);
-        this.activeUsers.delete(userId);
-      }
-    } catch (error) {
-      log(`Error creating ticket: ${error}`, "error");
-      await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
-
-      // Clean up state on error
-      this.userStates.delete(userId);
-      this.stateCleanups.delete(userId);
-      this.activeUsers.delete(userId);
-    }
-  }
 }
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
