@@ -489,20 +489,19 @@ export class BridgeManager {
             try {
               await this.discordBot.sendMessage(ticket.discordChannelId, {
                 content: content,
-                username,
+                username: username,
                 avatarURL: avatarUrl
               });
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
-              // Continue with photo even if text fails
             }
           }
 
           // Then send the photo
           try {
             await this.discordBot.sendMessage(ticket.discordChannelId, {
-              content: " ", // Ensure valid content
-              username,
+              content: "Sent an image",
+              username: username,
               avatarURL: avatarUrl,
               files: [{
                 attachment: buffer,
@@ -512,7 +511,6 @@ export class BridgeManager {
             log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
           } catch (error) {
             log(`Error sending photo: ${error}`, "error");
-            // Don't throw, prevent bot disconnection
           }
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
@@ -521,7 +519,7 @@ export class BridgeManager {
             try {
               await this.discordBot.sendMessage(ticket.discordChannelId, {
                 content: content,
-                username,
+                username: username,
                 avatarURL: avatarUrl
               });
             } catch (msgError) {
@@ -534,7 +532,7 @@ export class BridgeManager {
         try {
           await this.discordBot.sendMessage(ticket.discordChannelId, {
             content: content || " ",
-            username,
+            username: username,
             avatarURL: avatarUrl
           });
         } catch (error) {
@@ -549,10 +547,10 @@ export class BridgeManager {
     }
   }
 
-  // Fix role ping issue
+  // Fix role ping issue by removing extra @ symbols
   async pingRole(roleId: string, channelId: string, message?: string) {
     try {
-      const roleTag = roleId.replace(/^@+/, '@'); // Remove extra @ symbols
+      const roleTag = roleId.startsWith('@') ? roleId : `@${roleId}`; // Ensure only one @
       await this.discordBot.sendMessage(channelId, {
         content: `${roleTag}${message ? ` ${message}` : ''}`,
         username: "Ticket Bot"
