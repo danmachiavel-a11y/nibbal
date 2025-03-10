@@ -68,11 +68,11 @@ app.use((req, res, next) => {
     // Start the server first
     await new Promise<void>((resolve) => {
       server.listen({
-        port: 5000,
+        port: 3000,
         host: "0.0.0.0",
         reusePort: true,
       }, () => {
-        log(`Server listening on port 5000`);
+        log(`Server listening on port 3000`);
         resolve();
       });
     });
