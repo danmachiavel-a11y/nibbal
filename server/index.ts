@@ -43,8 +43,14 @@ app.use((req, res, next) => {
   try {
     // First, run database migrations
     log("Running database migrations...");
-    await migrate(db, { migrationsFolder: './migrations' });
-    log("Database migrations completed successfully");
+    try {
+      await migrate(db, { migrationsFolder: './migrations' });
+      log("Database migrations completed successfully");
+    } catch (dbError) {
+      log(`Database migration error: ${dbError}`, "error");
+      // Continue execution - we want the server to start even if migrations fail
+      // This allows admins to fix database issues through the UI
+    }
 
     // Create HTTP server and register routes
     log("Setting up HTTP server...");

@@ -20,13 +20,13 @@ export class BridgeManager {
   private discordBot: DiscordBot;
   private retryAttempts: number = 0;
   private maxRetries: number = 3;
-  private retryTimeout: number = 5000; // 5 seconds
+  private retryTimeout: number = 5000;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly imageCacheTTL = 24 * 60 * 60 * 1000; // 24 hours
   private imageCache: Map<string, ImageCacheEntry> = new Map();
 
   constructor() {
-    log("Initializing Bridge Manager");
+    log("[Bridge] Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
     this.startHealthCheck();
@@ -69,21 +69,45 @@ export class BridgeManager {
 
   async start() {
     log("Starting bots...");
+
     try {
-      await Promise.allSettled([
-        this.startBotWithRetry(
-          () => this.telegramBot.start(),
-          "Telegram"
-        ),
-        this.startBotWithRetry(
-          () => this.discordBot.start(),
-          "Discord"
-        )
-      ]);
-      log("Bots initialization completed");
+      // Start Telegram bot - don't throw if it fails
+      try {
+        await this.startTelegramBot();
+      } catch (telegramError) {
+        log(`Telegram bot failed to start: ${telegramError}`, "error");
+        // Continue execution - we want the server to run even if Telegram fails
+      }
+
+      // Start Discord bot - don't throw if it fails
+      try {
+        await this.startDiscordBot();
+      } catch (discordError) {
+        log(`Discord bot failed to start: ${discordError}`, "error");
+        // Continue execution - we want the server to run even if Discord fails
+      }
+
+      log("Bot initialization completed - some integrations may be in error state");
+      return true;
     } catch (error) {
-      log(`Error starting bots: ${error}`, "error");
+      log(`Fatal error starting bots: ${error}`, "error");
+      // Don't throw, allow server to continue running
+      return false;
     }
+  }
+
+  private async startTelegramBot() {
+    await this.startBotWithRetry(
+      () => this.telegramBot.start(),
+      "Telegram"
+    );
+  }
+
+  private async startDiscordBot() {
+    await this.startBotWithRetry(
+      () => this.discordBot.start(),
+      "Discord"
+    );
   }
 
   private async startBotWithRetry(
@@ -465,119 +489,76 @@ export class BridgeManager {
     }
   }
 
-  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string) {
+  // Update forwardToDiscord to handle photo properly
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photoId?: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
-      log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
+      log(`[Bridge] Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
 
       if (!ticket || !ticket.discordChannelId) {
-        log(`Invalid ticket or missing Discord channel: ${ticketId}`, "error");
+        log(`[Bridge] Invalid ticket or missing Discord channel: ${ticketId}`, "error");
         return;
       }
 
       // Handle photo if present
-      if (photo) {
+      if (photoId) {
         try {
-          log(`Processing Telegram photo with fileId: ${photo}`);
-          const buffer = await imageHandler.processTelegramToDiscord(photo, this.telegramBot.getBot());
-          if (!buffer) {
-            throw new Error("Failed to process image");
-          }
-          log(`Successfully processed image, size: ${buffer.length} bytes`);
+          log(`[Bridge] Processing Telegram photo with fileId: ${photoId}`);
+          const buffer = await imageHandler.processTelegramToDiscord(photoId, this.telegramBot.getBot());
 
-          // If there's text content, send it first
-          if (content?.trim()) {
-            try {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: String(content),
-                  username: username,
-                  avatarURL: avatarUrl
-                }
-              );
-            } catch (error) {
-              log(`Error sending text message: ${error}`, "error");
-              // Continue with photo even if text fails
-            }
+          if (!buffer || !(buffer instanceof Buffer)) {
+            throw new Error(`Invalid buffer returned for photo: ${photoId}`);
           }
 
-          // Then send the photo
-          try {
-            await this.discordBot.sendMessage(
-              ticket.discordChannelId,
-              {
-                content: "Image from Telegram", // Discord requires content or files
-                username: username,
-                avatarURL: avatarUrl,
-                files: [{
-                  attachment: buffer,
-                  name: 'image.jpg'
-                }]
-              }
-            );
-            log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
-          } catch (error) {
-            log(`Error sending photo: ${error}`, "error");
-          }
+          log(`[Bridge] Successfully processed image, size: ${buffer.length} bytes`);
+
+          // Send photo with caption if any
+          await this.discordBot.sendMessage(ticket.discordChannelId, {
+            content: content || " ", // Ensure valid content
+            username: username,
+            avatarURL: avatarUrl,
+            files: [{
+              attachment: buffer,
+              name: 'image.jpg'
+            }]
+          });
+
+          log(`[Bridge] Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
-          log(`Error processing photo: ${error}`, "error");
+          log(`[Bridge] Error processing photo: ${error}`, "error");
           // Send text content even if image fails
           if (content?.trim()) {
-            try {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: String(content),
-                  username: username,
-                  avatarURL: avatarUrl
-                }
-              );
-            } catch (msgError) {
-              log(`Error sending fallback message: ${msgError}`, "error");
-            }
+            await this.discordBot.sendMessage(ticket.discordChannelId, {
+              content: content,
+              username: username,
+              avatarURL: avatarUrl
+            });
           }
         }
       } else {
         // Regular text message
-        try {
-          await this.discordBot.sendMessage(
-            ticket.discordChannelId,
-            {
-              content: String(content || " "),
-              username: username,
-              avatarURL: avatarUrl
-            }
-          );
-        } catch (error) {
-          log(`Error sending text message: ${error}`, "error");
-        }
-      }
-
-      log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
-    } catch (error) {
-      log(`Error in forwardToDiscord: ${error}`, "error");
-      // Don't rethrow to prevent bot disconnection
-    }
-  }
-
-  // Fix role ping to use bot client instead of webhooks
-  async pingRole(roleId: string, channelId: string, message?: string) {
-    try {
-      // Remove @ symbol if present and use the bot client
-      const cleanRoleId = roleId.replace(/^@+/, '');
-      const channel = await this.discordBot.getClient().channels.fetch(channelId);
-      if (channel?.isTextBased()) {
-        await (channel as TextChannel).send({
-          content: `<@&${cleanRoleId}>${message ? ` ${message}` : ''}`,
-          allowedMentions: { roles: [cleanRoleId] }
+        await this.discordBot.sendMessage(ticket.discordChannelId, {
+          content: content || " ", // Ensure valid content
+          username: username,
+          avatarURL: avatarUrl
         });
       }
+
+      log(`[Bridge] Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
-      log(`Error pinging role: ${error}`, "error");
+      log(`[Bridge] Error in forwardToDiscord: ${error}`, "error");
     }
   }
 
+  // Fix role ping to use bot client
+  async pingRole(roleId: string, channelId: string, message?: string) {
+    try {
+      const cleanRoleId = roleId.replace(/^@+/, ''); // Remove any @ symbols
+      await this.discordBot.pingRole(cleanRoleId, channelId, message);
+    } catch (error) {
+      log(`[Bridge] Error pinging role: ${error}`, "error");
+    }
+  }
   getTelegramBot(): TelegramBot {
     return this.telegramBot;
   }
