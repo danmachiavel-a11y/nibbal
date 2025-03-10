@@ -96,6 +96,10 @@ export class DiscordBot {
     }
   }
 
+  getClient(): Client {
+    return this.client;
+  }
+
   private async cleanupWebhooks() {
     for (const [channelId, webhooks] of this.webhookPool.entries()) {
       const now = Date.now();

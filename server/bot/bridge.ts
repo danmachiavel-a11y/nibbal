@@ -6,6 +6,7 @@ import { log } from "../vite";
 import fetch from 'node-fetch';
 import { imageHandler } from './handlers/ImageHandler';
 import { notificationsHandler } from './handlers/NotificationsHandler';
+import { TextChannel } from 'discord.js';
 
 interface ImageCacheEntry {
   telegramFileId?: string;
@@ -464,7 +465,7 @@ export class BridgeManager {
     }
   }
 
-  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: { fileId: string; }) {
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
@@ -475,10 +476,10 @@ export class BridgeManager {
       }
 
       // Handle photo if present
-      if (photo?.fileId) {
+      if (photo) {
         try {
-          log(`Processing Telegram photo with fileId: ${photo.fileId}`);
-          const buffer = await imageHandler.processTelegramToDiscord(photo.fileId, this.telegramBot);
+          log(`Processing Telegram photo with fileId: ${photo}`);
+          const buffer = await imageHandler.processTelegramToDiscord(photo, this.telegramBot);
           if (!buffer) {
             throw new Error("Failed to process image");
           }
@@ -487,27 +488,34 @@ export class BridgeManager {
           // If there's text content, send it first
           if (content?.trim()) {
             try {
-              await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: content,
-                username: username,
-                avatarURL: avatarUrl
-              });
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: String(content),
+                  username: username,
+                  avatarURL: avatarUrl
+                }
+              );
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
+              // Continue with photo even if text fails
             }
           }
 
           // Then send the photo
           try {
-            await this.discordBot.sendMessage(ticket.discordChannelId, {
-              content: "Sent an image",
-              username: username,
-              avatarURL: avatarUrl,
-              files: [{
-                attachment: buffer,
-                name: 'image.jpg'
-              }]
-            });
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              {
+                content: " ", // Discord requires content or files
+                username: username,
+                avatarURL: avatarUrl,
+                files: [{
+                  attachment: buffer,
+                  name: 'image.jpg'
+                }]
+              }
+            );
             log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
           } catch (error) {
             log(`Error sending photo: ${error}`, "error");
@@ -517,11 +525,14 @@ export class BridgeManager {
           // Send text content even if image fails
           if (content?.trim()) {
             try {
-              await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: content,
-                username: username,
-                avatarURL: avatarUrl
-              });
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: String(content),
+                  username: username,
+                  avatarURL: avatarUrl
+                }
+              );
             } catch (msgError) {
               log(`Error sending fallback message: ${msgError}`, "error");
             }
@@ -530,11 +541,14 @@ export class BridgeManager {
       } else {
         // Regular text message
         try {
-          await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: content || " ",
-            username: username,
-            avatarURL: avatarUrl
-          });
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              content: String(content || " "),
+              username: username,
+              avatarURL: avatarUrl
+            }
+          );
         } catch (error) {
           log(`Error sending text message: ${error}`, "error");
         }
@@ -547,14 +561,18 @@ export class BridgeManager {
     }
   }
 
-  // Fix role ping issue by removing extra @ symbols
+  // Fix role ping to use bot client instead of webhooks
   async pingRole(roleId: string, channelId: string, message?: string) {
     try {
-      const roleTag = roleId.startsWith('@') ? roleId : `@${roleId}`; // Ensure only one @
-      await this.discordBot.sendMessage(channelId, {
-        content: `${roleTag}${message ? ` ${message}` : ''}`,
-        username: "Ticket Bot"
-      });
+      // Remove @ symbol if present and use the bot client
+      const cleanRoleId = roleId.replace(/^@+/, '');
+      const channel = await this.discordBot.getClient().channels.fetch(channelId);
+      if (channel?.isTextBased()) {
+        await (channel as TextChannel).send({
+          content: `<@&${cleanRoleId}>${message ? ` ${message}` : ''}`,
+          allowedMentions: { roles: [cleanRoleId] }
+        });
+      }
     } catch (error) {
       log(`Error pinging role: ${error}`, "error");
     }
