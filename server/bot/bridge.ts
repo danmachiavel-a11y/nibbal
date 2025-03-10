@@ -479,7 +479,7 @@ export class BridgeManager {
       if (photo) {
         try {
           log(`Processing Telegram photo with fileId: ${photo}`);
-          const buffer = await imageHandler.processTelegramToDiscord(photo, this.telegramBot);
+          const buffer = await imageHandler.processTelegramToDiscord(photo, this.telegramBot.getBot());
           if (!buffer) {
             throw new Error("Failed to process image");
           }
@@ -507,7 +507,7 @@ export class BridgeManager {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: " ", // Discord requires content or files
+                content: "Image from Telegram", // Discord requires content or files
                 username: username,
                 avatarURL: avatarUrl,
                 files: [{

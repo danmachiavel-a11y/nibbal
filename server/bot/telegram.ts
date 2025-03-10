@@ -227,6 +227,13 @@ export class TelegramBot {
     return this._isConnected && this.bot !== null;
   }
 
+  getBot(): Telegraf {
+    if (!this.bot) {
+      throw new Error("Telegram bot not initialized");
+    }
+    return this.bot;
+  }
+
   private startHeartbeat() {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);

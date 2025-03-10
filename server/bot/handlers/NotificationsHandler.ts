@@ -16,10 +16,14 @@ export class NotificationsHandler {
       // Cache the role ID for future use
       this.roleCache.set(categoryId, category.discordRoleId);
 
-      // Send role ping
-      await discordBot.sendMessage(channelId, {
-        content: `<@&${category.discordRoleId}>`,
-        username: "Ticket Bot"
+      // Send role ping through bridge manager
+      await discordBot.getClient().channels.fetch(channelId).then(channel => {
+        if (channel?.isTextBased()) {
+          (channel as any).send({
+            content: `<@&${category.discordRoleId}>`,
+            allowedMentions: { roles: [category.discordRoleId] }
+          });
+        }
       });
 
       log(`Successfully pinged role ${category.discordRoleId} for category ${categoryId}`);
