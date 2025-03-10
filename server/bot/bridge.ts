@@ -491,11 +491,14 @@ export class BridgeManager {
           // If there's text content, send it first
           if (content?.trim()) {
             try {
-              await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: content,
-                username: username || "Unknown User",
-                avatarURL: avatarUrl
-              });
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: String(content),
+                  username: username,
+                  avatarURL: avatarUrl
+                }
+              );
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
             }
@@ -503,14 +506,17 @@ export class BridgeManager {
 
           // Then send the photo
           try {
-            await this.discordBot.sendMessage(ticket.discordChannelId, {
-              files: [{
-                attachment: buffer,
-                name: 'image.jpg'
-              }],
-              username: username || "Unknown User",
-              avatarURL: avatarUrl
-            });
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              {
+                files: [{
+                  attachment: buffer,
+                  name: 'image.jpg'
+                }],
+                username: username,
+                avatarURL: avatarUrl
+              }
+            );
             log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
           } catch (error) {
             log(`Error sending photo: ${error}`, "error");
@@ -520,11 +526,14 @@ export class BridgeManager {
           // Send text content even if image fails
           if (content?.trim()) {
             try {
-              await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: content,
-                username: username || "Unknown User",
-                avatarURL: avatarUrl
-              });
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: String(content),
+                  username: username,
+                  avatarURL: avatarUrl
+                }
+              );
             } catch (msgError) {
               log(`Error sending fallback message: ${msgError}`, "error");
             }
@@ -533,11 +542,14 @@ export class BridgeManager {
       } else {
         // Regular text message
         try {
-          await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: content || "",
-            username: username || "Unknown User",
-            avatarURL: avatarUrl
-          });
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              content: String(content || ""),
+              username: username,
+              avatarURL: avatarUrl
+            }
+          );
         } catch (error) {
           log(`Error sending text message: ${error}`, "error");
         }
