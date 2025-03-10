@@ -48,7 +48,7 @@ export class DiscordBot {
 
       // Handle content
       if (message.content !== undefined && message.content !== null) {
-        webhookMessage.content = String(message.content).trim() || undefined;
+        webhookMessage.content = String(message.content).trim() || " ";
       }
 
       // Handle files
@@ -78,7 +78,7 @@ export class DiscordBot {
       }
 
       const message = await channel.send({
-        content: caption,
+        content: caption || undefined,
         files: [{
           attachment: photo,
           name: 'image.jpg'
