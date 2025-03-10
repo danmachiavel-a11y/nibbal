@@ -50,6 +50,22 @@ export class BridgeManager {
     return entry;
   }
 
+  private startHealthCheck() {
+    // Run health check every 5 minutes
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        const health = await this.healthCheck();
+        if (!health.telegram || !health.discord) {
+          log("Bot disconnected, attempting to reconnect...");
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          await this.reconnectDisconnectedBots(health);
+        }
+      } catch (error) {
+        log(`Health check failed: ${error}`, "error");
+      }
+    }, 300000); // 5 minutes
+  }
+
   async start() {
     log("Starting bots...");
     try {
@@ -134,26 +150,6 @@ export class BridgeManager {
       log(`Error restarting bots: ${error}`, "error");
       throw error;
     }
-  }
-
-  private startHealthCheck() {
-    // Run health check every 60 seconds instead of 30
-    this.healthCheckInterval = setInterval(async () => {
-      try {
-        // Add delay between checks to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const health = await this.healthCheck();
-
-        if (!health.telegram || !health.discord) {
-          log("Bot disconnected, attempting to reconnect...");
-          // Add delay before reconnection attempt
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          await this.reconnectDisconnectedBots(health);
-        }
-      } catch (error) {
-        log(`Health check failed: ${error}`, "error");
-      }
-    }, 60000); // Increased from 30000 to 60000 ms
   }
 
   private async reconnectDisconnectedBots(health: { telegram: boolean; discord: boolean }) {
@@ -492,21 +488,21 @@ export class BridgeManager {
           if (content?.trim()) {
             try {
               await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: String(content).trim(),
-                username: username,
+                content: content,
+                username,
                 avatarURL: avatarUrl
               });
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
-              // Don't throw, continue with photo
+              // Continue with photo even if text fails
             }
           }
 
           // Then send the photo
           try {
             await this.discordBot.sendMessage(ticket.discordChannelId, {
-              content: " ", // Ensure content is a valid string
-              username: username,
+              content: " ", // Ensure valid content
+              username,
               avatarURL: avatarUrl,
               files: [{
                 attachment: buffer,
@@ -524,8 +520,8 @@ export class BridgeManager {
           if (content?.trim()) {
             try {
               await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: String(content).trim(),
-                username: username,
+                content: content,
+                username,
                 avatarURL: avatarUrl
               });
             } catch (msgError) {
@@ -537,8 +533,8 @@ export class BridgeManager {
         // Regular text message
         try {
           await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: String(content || " ").trim(),
-            username: username,
+            content: content || " ",
+            username,
             avatarURL: avatarUrl
           });
         } catch (error) {
@@ -550,6 +546,19 @@ export class BridgeManager {
     } catch (error) {
       log(`Error in forwardToDiscord: ${error}`, "error");
       // Don't rethrow to prevent bot disconnection
+    }
+  }
+
+  // Fix role ping issue
+  async pingRole(roleId: string, channelId: string, message?: string) {
+    try {
+      const roleTag = roleId.replace(/^@+/, '@'); // Remove extra @ symbols
+      await this.discordBot.sendMessage(channelId, {
+        content: `${roleTag}${message ? ` ${message}` : ''}`,
+        username: "Ticket Bot"
+      });
+    } catch (error) {
+      log(`Error pinging role: ${error}`, "error");
     }
   }
 

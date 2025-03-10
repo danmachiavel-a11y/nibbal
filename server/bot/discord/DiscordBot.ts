@@ -159,82 +159,6 @@ export class DiscordBot {
       return null;
     }
   }
-  async sendWebhookMessage(channelId: string, message: string | any): Promise<void> {
-    try {
-      // Check webhook rate limit
-      await rateLimiter.webhookCheck(channelId);
-
-      // Global rate limit check
-      await rateLimiter.globalCheck();
-
-      const webhookClient = await this.getWebhookForChannel(channelId);
-      if (!webhookClient) throw new Error("Failed to get webhook");
-
-      try {
-        let messageContent: any;
-
-        // Handle embed messages
-        if (typeof message === 'object') {
-          messageContent = {
-            embeds: [{
-              title: message.title,
-              description: message.description,
-              color: message.color,
-              fields: message.fields.map((field: any) => ({
-                name: field.name,
-                value: `\`\`\`${field.value}\`\`\``,
-                inline: field.inline || false
-              }))
-            }]
-          };
-        } else {
-          // Regular text messages
-          messageContent = message;
-        }
-
-        // Send message
-        const sentMessage = await webhookClient.send(messageContent);
-
-        // Pin the message if it's an embed (questionnaire)
-        if (typeof message === 'object' && message.title?.includes('New Ticket Questions')) {
-          const channel = await this.client.channels.fetch(channelId) as TextChannel;
-          if (channel) {
-            const messages = await channel.messages.fetchPinned();
-            // Unpin old messages if there are too many
-            while (messages.size >= 50) {
-              const oldestPin = messages.last();
-              if (oldestPin) await oldestPin.unpin();
-              messages.delete(oldestPin!.id);
-            }
-            // Pin the new message
-            await sentMessage.pin();
-          }
-        }
-
-        // Reset failure count on success
-        const webhooks = this.webhookPool.get(channelId) || [];
-        const webhook = webhooks.find(w => w.webhook === webhookClient);
-        if (webhook) {
-          webhook.failures = 0;
-          webhook.lastUsed = Date.now();
-        }
-      } catch (error) {
-        // Increment failure count
-        const webhooks = this.webhookPool.get(channelId) || [];
-        const webhook = webhooks.find(w => w.webhook === webhookClient);
-        if (webhook) {
-          webhook.failures++;
-          if (webhook.failures >= this.MAX_WEBHOOK_FAILURES) {
-            webhook.webhook.destroy();
-          }
-        }
-        throw error;
-      }
-    } catch (error) {
-      log(`Error sending webhook message: ${error}`, "error");
-      throw error;
-    }
-  }
 
   async editChannel(channelId: string, options: any): Promise<void> {
     try {
@@ -246,7 +170,7 @@ export class DiscordBot {
 
       const channel = await this.client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
-        await channel.edit(options);
+        await (channel as TextChannel).edit(options);
       }
     } catch (error) {
       log(`Error editing channel: ${error}`, "error");
