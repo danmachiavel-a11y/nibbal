@@ -468,7 +468,7 @@ export class BridgeManager {
     }
   }
 
-  private async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: { fileId: string; }) {
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: { fileId: string; }) {
     try {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
@@ -488,40 +488,65 @@ export class BridgeManager {
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: content || undefined,
-            username: username,
-            avatarURL: avatarUrl,
-            files: [{
-              attachment: buffer,
-              name: 'image.jpg'
-            }]
-          });
+          // If there's text content, send it first
+          if (content?.trim()) {
+            try {
+              await this.discordBot.sendMessage(ticket.discordChannelId, {
+                content: content,
+                username: username || "Unknown User",
+                avatarURL: avatarUrl
+              });
+            } catch (error) {
+              log(`Error sending text message: ${error}`, "error");
+            }
+          }
 
-          log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
-        } catch (error) {
-          log(`Error processing and sending photo to Discord: ${error}`, "error");
-          // Send text content even if image fails
-          if (content) {
+          // Then send the photo
+          try {
             await this.discordBot.sendMessage(ticket.discordChannelId, {
-              content: content,
-              username: username,
+              files: [{
+                attachment: buffer,
+                name: 'image.jpg'
+              }],
+              username: username || "Unknown User",
               avatarURL: avatarUrl
             });
+            log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
+          } catch (error) {
+            log(`Error sending photo: ${error}`, "error");
+          }
+        } catch (error) {
+          log(`Error processing photo: ${error}`, "error");
+          // Send text content even if image fails
+          if (content?.trim()) {
+            try {
+              await this.discordBot.sendMessage(ticket.discordChannelId, {
+                content: content,
+                username: username || "Unknown User",
+                avatarURL: avatarUrl
+              });
+            } catch (msgError) {
+              log(`Error sending fallback message: ${msgError}`, "error");
+            }
           }
         }
       } else {
         // Regular text message
-        await this.discordBot.sendMessage(ticket.discordChannelId, {
-          content: content || "",
-          username: username,
-          avatarURL: avatarUrl
-        });
+        try {
+          await this.discordBot.sendMessage(ticket.discordChannelId, {
+            content: content || "",
+            username: username || "Unknown User",
+            avatarURL: avatarUrl
+          });
+        } catch (error) {
+          log(`Error sending text message: ${error}`, "error");
+        }
       }
 
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
-      log(`Error forwarding to Discord: ${error}`, "error");
+      log(`Error in forwardToDiscord: ${error}`, "error");
+      // Don't rethrow to prevent bot disconnection
     }
   }
 
