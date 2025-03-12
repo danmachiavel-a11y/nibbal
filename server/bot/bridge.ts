@@ -37,11 +37,11 @@ export class BridgeManager {
       // Remove @ symbols and format for Discord mention
       const cleanRoleId = roleId.replace(/[@]/g, '');
 
-      // Get channel directly from Discord client
-      const channel = await this.discordBot.client.channels.fetch(channelId);
+      // Get channel from Discord client's cache
+      const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
       if (channel?.isTextBased()) {
-        // Use the bot's client to send the message directly
-        await this.discordBot.client.users.send(channelId, {
+        // Send message as bot directly
+        await channel.send({
           content: `<@&${cleanRoleId}>`,
           allowedMentions: { roles: [cleanRoleId] }
         });
@@ -64,11 +64,11 @@ export class BridgeManager {
       const cleanRoleId = category.discordRoleId.replace(/[@]/g, '');
       this.roleCache.set(categoryId, cleanRoleId);
 
-      // Get channel directly from Discord client
-      const channel = await this.discordBot.client.channels.fetch(channelId);
+      // Get channel from Discord client's cache
+      const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
       if (channel?.isTextBased()) {
-        // Use the bot's client to send the message directly
-        await this.discordBot.client.users.send(channelId, {
+        // Send message as bot directly
+        await channel.send({
           content: `<@&${cleanRoleId}>`,
           allowedMentions: { roles: [cleanRoleId] }
         });
