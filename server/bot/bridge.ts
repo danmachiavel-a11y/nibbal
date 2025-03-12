@@ -35,11 +35,12 @@ export class BridgeManager {
   async pingRole(roleId: string, channelId: string, message?: string) {
     try {
       // Remove @ symbols and format for Discord mention
-      const cleanRoleId = roleId.replace(/@/g, '');
+      const cleanRoleId = roleId.replace(/[@]/g, '');
+
       await this.discordBot.sendMessage(
         channelId,
         {
-          content: `<@&${cleanRoleId}>${message ? ` ${message}` : ''}`,
+          content: `<@&${cleanRoleId}>`,
           username: "Ticket Bot",
           allowedMentions: { roles: [cleanRoleId] }
         }
@@ -59,10 +60,20 @@ export class BridgeManager {
       }
 
       // Cache the role ID for future use
-      this.roleCache.set(categoryId, category.discordRoleId);
+      const cleanRoleId = category.discordRoleId.replace(/[@]/g, '');
+      this.roleCache.set(categoryId, cleanRoleId);
 
-      // Use the simplified pingRole method
-      await this.pingRole(category.discordRoleId, channelId);
+      // Use sendMessage directly with proper role mention format
+      await this.discordBot.sendMessage(
+        channelId,
+        {
+          content: `<@&${cleanRoleId}>`,
+          username: "Ticket Bot",
+          allowedMentions: { roles: [cleanRoleId] }
+        }
+      );
+
+      log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
     } catch (error) {
       log(`Error pinging role for category: ${error}`, "error");
     }
@@ -376,7 +387,7 @@ export class BridgeManager {
       // Check if error is due to channel limit
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('Maximum number of channels in category') ||
-          errorMessage.includes('channel limit')) {
+        errorMessage.includes('channel limit')) {
         // Update ticket status to pending
         await storage.updateTicketStatus(ticket.id, "pending");
         throw new Error("Category is at maximum channel limit. Please try again later or contact an administrator.");
