@@ -464,7 +464,7 @@ export class BridgeManager {
     }
   }
 
-  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: { fileId: string; }) {
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
@@ -475,10 +475,10 @@ export class BridgeManager {
       }
 
       // Handle photo if present
-      if (photo?.fileId) {
+      if (photo) {
         try {
-          log(`Processing Telegram photo with fileId: ${photo.fileId}`);
-          const buffer = await imageHandler.processTelegramToDiscord(photo.fileId, this.telegramBot);
+          log(`Processing photo`);
+          const buffer = await imageHandler.processTelegramToDiscord(photo, this.telegramBot);
           if (!buffer) {
             throw new Error("Failed to process image");
           }
@@ -500,7 +500,7 @@ export class BridgeManager {
           // Then send the photo
           try {
             await this.discordBot.sendMessage(ticket.discordChannelId, {
-              content: "Sent an image",
+              content: " ", // Ensure content is always a valid string
               username: username,
               avatarURL: avatarUrl,
               files: [{
@@ -550,7 +550,10 @@ export class BridgeManager {
   // Fix role ping issue by removing extra @ symbols
   async pingRole(roleId: string, channelId: string, message?: string) {
     try {
-      const roleTag = roleId.startsWith('@') ? roleId : `@${roleId}`; // Ensure only one @
+      // Remove all @ symbols and add exactly one
+      const cleanRoleId = roleId.replace(/@/g, '');
+      const roleTag = `@${cleanRoleId}`;
+
       await this.discordBot.sendMessage(channelId, {
         content: `${roleTag}${message ? ` ${message}` : ''}`,
         username: "Ticket Bot"
