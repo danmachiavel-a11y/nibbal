@@ -40,7 +40,8 @@ export class BridgeManager {
       // Get channel directly from Discord client
       const channel = await this.discordBot.client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
-        await (channel as TextChannel).send({
+        // Use the bot's client to send the message directly
+        await this.discordBot.client.users.send(channelId, {
           content: `<@&${cleanRoleId}>`,
           allowedMentions: { roles: [cleanRoleId] }
         });
@@ -66,7 +67,8 @@ export class BridgeManager {
       // Get channel directly from Discord client
       const channel = await this.discordBot.client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
-        await (channel as TextChannel).send({
+        // Use the bot's client to send the message directly
+        await this.discordBot.client.users.send(channelId, {
           content: `<@&${cleanRoleId}>`,
           allowedMentions: { roles: [cleanRoleId] }
         });
