@@ -16,7 +16,7 @@ export class NotificationsHandler {
       // Cache the role ID for future use
       this.roleCache.set(categoryId, category.discordRoleId);
 
-      // Send role ping
+      // Send role ping without adding @ symbol (bridge will handle formatting)
       await discordBot.sendMessage(channelId, {
         content: `<@&${category.discordRoleId}>`,
         username: "Ticket Bot"
