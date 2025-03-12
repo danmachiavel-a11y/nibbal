@@ -68,6 +68,7 @@ export class TelegramBot {
   private readonly CLEANUP_DELAY = 10000; // 10 seconds
   private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
+  private readonly RECONNECT_COOLDOWN = 30000; // 30 seconds
 
   // Rate limiting and cooldown functionality
   private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
@@ -248,7 +249,7 @@ export class TelegramBot {
           await this.handleDisconnect();
         }
       }
-    }, 300000); // Increased to 5 minutes to reduce unnecessary reconnections
+    }, this.HEARTBEAT_INTERVAL);
   }
 
   private stopHeartbeat() {
@@ -262,9 +263,15 @@ export class TelegramBot {
     if (this.isStarting) return;
 
     log("Bot disconnected, attempting to reconnect...");
-    await new Promise(resolve => setTimeout(resolve, 30000)); // 30 second delay
+    await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN));
 
     try {
+      if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+        log("Max reconnection attempts reached, waiting for longer cooldown", "warn");
+        this.reconnectAttempts = 0;
+        await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN * 2));
+      }
+
       log(`Attempting to reconnect (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
 
       if (this.bot) {
@@ -441,6 +448,7 @@ export class TelegramBot {
       await ctx.reply("Sorry, there was an error processing your message. Please try again.");
     }
   }
+
 
 
   private async handleCategoryMenu(ctx: Context) {
