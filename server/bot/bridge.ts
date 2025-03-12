@@ -4,8 +4,6 @@ import { DiscordBot } from "./discord";
 import type { Ticket } from "@shared/schema";
 import { log } from "../vite";
 import fetch from 'node-fetch';
-import { imageHandler } from './handlers/ImageHandler';
-import { notificationsHandler } from './handlers/NotificationsHandler';
 import { TextChannel } from 'discord.js';
 
 interface ImageCacheEntry {
@@ -24,6 +22,7 @@ export class BridgeManager {
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly imageCacheTTL = 24 * 60 * 60 * 1000; // 24 hours
   private imageCache: Map<string, ImageCacheEntry> = new Map();
+  private roleCache: Map<number, string> = new Map();
 
   constructor() {
     log("Initializing Bridge Manager");
@@ -49,6 +48,70 @@ export class BridgeManager {
     }
 
     return entry;
+  }
+
+  // Integrated image processing functions
+  async processTelegramToDiscord(fileId: string, telegramBot: TelegramBot): Promise<Buffer | null> {
+    try {
+      const file = await telegramBot.bot?.telegram.getFile(fileId);
+      if (!file?.file_path) return null;
+
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+      const response = await fetch(fileUrl);
+      if (!response.ok) return null;
+
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      log(`Error processing Telegram image: ${error}`, "error");
+      return null;
+    }
+  }
+
+  async processDiscordToTelegram(url: string): Promise<Buffer | null> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      log(`Error processing Discord image: ${error}`, "error");
+      return null;
+    }
+  }
+
+  // Fix role ping methods to use consistent formatting
+  async pingRole(roleId: string, channelId: string, message?: string) {
+    try {
+      // Remove all @ symbols and use proper Discord mention format
+      const cleanRoleId = roleId.replace(/@/g, '');
+
+      // Get the channel using bot client
+      const channel = await this.discordBot.getClient().channels.fetch(channelId);
+      if (channel?.isTextBased()) {
+        await (channel as TextChannel).send({
+          content: `<@&${cleanRoleId}>${message ? ` ${message}` : ''}`,
+          allowedMentions: { roles: [cleanRoleId] }
+        });
+        log(`Successfully pinged role ${cleanRoleId} in channel ${channelId}`);
+      }
+    } catch (error) {
+      log(`Error pinging role: ${error}`, "error");
+    }
+  }
+
+  async pingRoleForCategory(categoryId: number, channelId: string): Promise<void> {
+    try {
+      const category = await storage.getCategory(categoryId);
+      if (!category?.discordRoleId) {
+        log(`No role ID found for category ${categoryId}`);
+        return;
+      }
+
+      // Use the unified pingRole method
+      await this.pingRole(category.discordRoleId, channelId);
+    } catch (error) {
+      log(`Error pinging role for category: ${error}`, "error");
+    }
   }
 
   private startHealthCheck() {
@@ -302,7 +365,7 @@ export class BridgeManager {
 
       // Send role ping if category has a role
       if (category.discordRoleId) {
-        await notificationsHandler.pingRoleForCategory(ticket.categoryId, channelId, this.discordBot);
+        await this.pingRoleForCategory(ticket.categoryId, channelId);
       }
 
       log(`Ticket channel created: ${channelName}`);
@@ -377,7 +440,7 @@ export class BridgeManager {
               }
 
               log(`Processing Discord attachment: ${attachment.url}`);
-              const buffer = await imageHandler.processDiscordToTelegram(attachment.url);
+              const buffer = await this.processDiscordToTelegram(attachment.url);
               if (!buffer) {
                 throw new Error("Failed to process image");
               }
@@ -431,7 +494,7 @@ export class BridgeManager {
           }
 
           log(`Processing Discord image URL: ${imageUrl}`);
-          const buffer = await imageHandler.processDiscordToTelegram(imageUrl);
+          const buffer = await this.processDiscordToTelegram(imageUrl);
           if (!buffer) {
             throw new Error("Failed to process image");
           }
@@ -479,7 +542,7 @@ export class BridgeManager {
       if (photo) {
         try {
           log(`Processing photo`);
-          const buffer = await imageHandler.processTelegramToDiscord(photo, this.telegramBot);
+          const buffer = await this.processTelegramToDiscord(photo, this.telegramBot);
           if (!buffer) {
             throw new Error("Failed to process image");
           }
@@ -547,24 +610,6 @@ export class BridgeManager {
     }
   }
 
-  // Fix role ping issue by removing extra @ symbols
-  async pingRole(roleId: string, channelId: string, message?: string) {
-    try {
-      // Remove all @ symbols from roleId
-      const cleanRoleId = roleId.replace(/@/g, '');
-
-      // Get the channel using bot client
-      const channel = await this.discordBot.getClient().channels.fetch(channelId);
-      if (channel?.isTextBased()) {
-        await (channel as TextChannel).send({
-          content: `<@&${cleanRoleId}>${message ? ` ${message}` : ''}`,
-          allowedMentions: { roles: [cleanRoleId] }
-        });
-      }
-    } catch (error) {
-      log(`Error pinging role: ${error}`, "error");
-    }
-  }
 
   getTelegramBot(): TelegramBot {
     return this.telegramBot;
