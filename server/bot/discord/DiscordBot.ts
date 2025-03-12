@@ -30,9 +30,9 @@ export class DiscordBot {
     setInterval(() => this.cleanupWebhooks(), 300000);
   }
 
-  async sendMessage(channelId: string, message: any): Promise<any> {
+  async sendMessage(channelId: string, message: any) {
     try {
-      log(`[Discord] Attempting to send message to channel ${channelId}`);
+      log(`Attempting to send message to Discord channel ${channelId}`);
 
       // Check rate limit
       await rateLimiter.webhookCheck(channelId);
@@ -61,13 +61,11 @@ export class DiscordBot {
         webhookMessage.content = " "; // Discord requires either content or files
       }
 
-      log(`[Discord] Sending webhook message with content length: ${webhookMessage.content?.length || 0} and ${webhookMessage.files?.length || 0} files`);
-
       const sentMessage = await webhookClient.send(webhookMessage);
-      log(`[Discord] Successfully sent message to channel ${channelId}`);
+      log(`Successfully sent message to Discord channel ${channelId}`);
       return sentMessage;
     } catch (error) {
-      log(`[Discord] Error sending message: ${error}`, "error");
+      log(`Error sending message to Discord: ${error}`, "error");
       throw error;
     }
   }
@@ -80,7 +78,7 @@ export class DiscordBot {
       }
 
       const message = await channel.send({
-        content: caption || " ",
+        content: caption || undefined,
         files: [{
           attachment: photo,
           name: 'image.jpg'
@@ -98,13 +96,9 @@ export class DiscordBot {
     }
   }
 
-  getClient(): Client {
-    return this.client;
-  }
-
   private async cleanupWebhooks() {
-    const now = Date.now();
     for (const [channelId, webhooks] of this.webhookPool.entries()) {
+      const now = Date.now();
       const activeWebhooks = webhooks.filter(pool => {
         const isActive = now - pool.lastUsed < this.WEBHOOK_TIMEOUT && pool.failures < this.MAX_WEBHOOK_FAILURES;
         if (!isActive) {
@@ -185,7 +179,10 @@ export class DiscordBot {
 
   async fetchMessages(channelId: string, limit: number = 50): Promise<any[]> {
     try {
+      // Check messages fetch rate limit
       await rateLimiter.messagesFetchCheck(channelId);
+
+      // Global rate limit check
       await rateLimiter.globalCheck();
 
       const channel = await this.client.channels.fetch(channelId);
@@ -197,23 +194,6 @@ export class DiscordBot {
     } catch (error) {
       log(`Error fetching messages: ${error}`, "error");
       return [];
-    }
-  }
-  async pingRole(roleId: string, channelId: string, message?: string): Promise<void> {
-    try {
-      const cleanRoleId = roleId.replace(/^@+/, ''); // Remove any @ symbols
-      const channel = await this.client.channels.fetch(channelId);
-
-      if (channel?.isTextBased()) {
-        await (channel as TextChannel).send({
-          content: `<@&${cleanRoleId}>${message ? ` ${message}` : ''}`,
-          allowedMentions: { roles: [cleanRoleId] }
-        });
-        log(`[Discord] Successfully pinged role ${cleanRoleId} in channel ${channelId}`);
-      }
-    } catch (error) {
-      log(`[Discord] Error pinging role: ${error}`, "error");
-      throw error;
     }
   }
 }

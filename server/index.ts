@@ -43,14 +43,8 @@ app.use((req, res, next) => {
   try {
     // First, run database migrations
     log("Running database migrations...");
-    try {
-      await migrate(db, { migrationsFolder: './migrations' });
-      log("Database migrations completed successfully");
-    } catch (dbError) {
-      log(`Database migration error: ${dbError}`, "error");
-      // Continue execution - we want the server to start even if migrations fail
-      // This allows admins to fix database issues through the UI
-    }
+    await migrate(db, { migrationsFolder: './migrations' });
+    log("Database migrations completed successfully");
 
     // Create HTTP server and register routes
     log("Setting up HTTP server...");
@@ -74,11 +68,11 @@ app.use((req, res, next) => {
     // Start the server first
     await new Promise<void>((resolve) => {
       server.listen({
-        port: 3000,
+        port: 5000,
         host: "0.0.0.0",
         reusePort: true,
       }, () => {
-        log(`Server listening on port 3000`);
+        log(`Server listening on port 5000`);
         resolve();
       });
     });
