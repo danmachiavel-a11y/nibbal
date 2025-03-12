@@ -455,16 +455,21 @@ export class TelegramBot {
         if (photos && photos.total_count > 0) {
           const fileId = photos.photos[0][0].file_id;
           const file = await this.bot?.telegram.getFile(fileId);
-          avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file?.file_path}`;
+          if (file?.file_path) {
+            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+          }
         }
       } catch (error) {
         log(`Error getting Telegram user avatar: ${error}`, "error");
       }
 
+      // Use first_name or username, defaulting to "Telegram User"
+      const displayName = ctx.from?.first_name || ctx.from?.username || "Telegram User";
+
       await this.bridge.forwardToDiscord(
         ctx.message.text,
         ticket.id,
-        ctx.from?.first_name || ctx.from?.username || "Telegram User",
+        displayName,
         avatarUrl
       );
 
@@ -935,7 +940,7 @@ export class TelegramBot {
         log(`Successfully forwarded photo from Telegram to Discord for ticket ${activeTicket.id}`);
       } catch (error) {
         log(`Error handling photo message: ${error}`, "error");
-        await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
+        await ctx.reply("Sorry, there was an error processing your photo. Pleasetry again.");
       }
     });
   }

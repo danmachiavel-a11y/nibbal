@@ -166,4 +166,8 @@ export class DiscordBot {
       return [];
     }
   }
+
+  getClient(): Client {
+    return this.client;
+  }
 }

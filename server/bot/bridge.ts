@@ -6,6 +6,7 @@ import { log } from "../vite";
 import fetch from 'node-fetch';
 import { imageHandler } from './handlers/ImageHandler';
 import { notificationsHandler } from './handlers/NotificationsHandler';
+import { TextChannel } from 'discord.js';
 
 interface ImageCacheEntry {
   telegramFileId?: string;
@@ -489,12 +490,11 @@ export class BridgeManager {
             try {
               await this.discordBot.sendMessage(ticket.discordChannelId, {
                 content: String(content).trim(),
-                username: username,
-                avatarURL: avatarUrl
+                username: username || "Telegram User", // Use provided name or fallback
+                avatarURL: avatarUrl // Use the avatar URL directly
               });
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
-              // Continue with photo even if text fails
             }
           }
 
@@ -502,7 +502,7 @@ export class BridgeManager {
           try {
             await this.discordBot.sendMessage(ticket.discordChannelId, {
               content: " ", // Ensure content is always a valid string
-              username: username,
+              username: username || "Telegram User",
               avatarURL: avatarUrl,
               files: [{
                 attachment: buffer,
@@ -512,7 +512,6 @@ export class BridgeManager {
             log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
           } catch (error) {
             log(`Error sending photo: ${error}`, "error");
-            // Don't throw to prevent bot disconnection
           }
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
@@ -521,7 +520,7 @@ export class BridgeManager {
             try {
               await this.discordBot.sendMessage(ticket.discordChannelId, {
                 content: String(content).trim(),
-                username: username,
+                username: username || "Telegram User",
                 avatarURL: avatarUrl
               });
             } catch (msgError) {
@@ -534,7 +533,7 @@ export class BridgeManager {
         try {
           await this.discordBot.sendMessage(ticket.discordChannelId, {
             content: String(content || " ").trim(),
-            username: username,
+            username: username || "Telegram User",
             avatarURL: avatarUrl
           });
         } catch (error) {
@@ -545,21 +544,22 @@ export class BridgeManager {
       log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
       log(`Error in forwardToDiscord: ${error}`, "error");
-      // Don't rethrow to prevent bot disconnection
     }
   }
 
   // Fix role ping issue by removing extra @ symbols
   async pingRole(roleId: string, channelId: string, message?: string) {
     try {
-      // Remove all @ symbols and add exactly one
+      // Remove all @ symbols and use proper mention format
       const cleanRoleId = roleId.replace(/@/g, '');
-      const roleTag = `@${cleanRoleId}`;
 
-      await this.discordBot.sendMessage(channelId, {
-        content: `${roleTag}${message ? ` ${message}` : ''}`,
-        username: "Ticket Bot"
-      });
+      // Send role ping directly through bot instead of webhook
+      const channel = await this.discordBot.getClient().channels.fetch(channelId);
+      if (channel?.isTextBased()) {
+        await (channel as TextChannel).send({
+          content: `<@&${cleanRoleId}>${message ? ` ${message}` : ''}`,
+        });
+      }
     } catch (error) {
       log(`Error pinging role: ${error}`, "error");
     }
