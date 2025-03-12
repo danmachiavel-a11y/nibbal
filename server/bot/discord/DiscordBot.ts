@@ -30,6 +30,33 @@ export class DiscordBot {
     setInterval(() => this.cleanupWebhooks(), 300000);
   }
 
+  getClient(): Client {
+    return this.client;
+  }
+
+  async start() {
+    try {
+      await this.client.login(process.env.DISCORD_BOT_TOKEN);
+      log("Discord bot started successfully");
+    } catch (error) {
+      log(`Error starting Discord bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async stop() {
+    try {
+      this.client.destroy();
+      log("Discord bot stopped successfully");
+    } catch (error) {
+      log(`Error stopping Discord bot: ${error}`, "error");
+    }
+  }
+
+  isReady(): boolean {
+    return this.client.isReady();
+  }
+
   async sendMessage(channelId: string, message: any) {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
@@ -165,9 +192,5 @@ export class DiscordBot {
       log(`Error fetching messages: ${error}`, "error");
       return [];
     }
-  }
-
-  getClient(): Client {
-    return this.client;
   }
 }

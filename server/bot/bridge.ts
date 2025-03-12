@@ -64,16 +64,14 @@ export class BridgeManager {
       // Remove any @ symbols from the role ID
       const cleanRoleId = category.discordRoleId.replace(/@/g, '');
 
-      // Get the channel using the bot client
       const channel = await this.discordBot.getClient().channels.fetch(channelId);
       if (channel?.isTextBased()) {
         await (channel as TextChannel).send({
           content: `<@&${cleanRoleId}>`,
           allowedMentions: { roles: [cleanRoleId] }
         });
+        log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
       }
-
-      log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
     } catch (error) {
       log(`Error pinging role: ${error}`, "error");
     }
