@@ -69,6 +69,8 @@ export class TelegramBot {
   private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private readonly RECONNECT_COOLDOWN = 30000; // 30 seconds
+  private readonly MAX_FAILED_HEARTBEATS = 3;
+  private failedHeartbeats = 0;
 
   // Rate limiting and cooldown functionality
   private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
@@ -133,6 +135,56 @@ export class TelegramBot {
     });
   }
 
+  private stopHeartbeat = (): void => {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  };
+
+  private startHeartbeat = (): void => {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+
+    this.heartbeatInterval = setInterval(
+      () => this.handleHeartbeat(),
+      this.HEARTBEAT_INTERVAL
+    );
+  };
+
+  private async handleHeartbeat() {
+    try {
+      if (!this._isConnected || this.isStarting) return;
+
+      const me = await this.bot?.telegram.getMe();
+      if (!me) {
+        this.failedHeartbeats++;
+        log(`Heartbeat check failed (attempt ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}): Bot returned null`, "warn");
+
+        // Only disconnect after multiple consecutive failures
+        if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
+          this._isConnected = false;
+          await this.handleDisconnect();
+        }
+        return;
+      }
+
+      // Reset failed heartbeats counter on successful check
+      this.failedHeartbeats = 0;
+    } catch (error) {
+      log(`Heartbeat check failed: ${error}`, "warn");
+      this.failedHeartbeats++;
+
+      // Only disconnect on critical errors or after multiple failures
+      if ((error.message?.includes('restart') || error.message?.includes('unauthorized')) ||
+        this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
+        this._isConnected = false;
+        await this.handleDisconnect();
+      }
+    }
+  }
+
   async start() {
     if (this.isStarting) {
       log("Bot is already starting, waiting...");
@@ -152,6 +204,7 @@ export class TelegramBot {
 
       this._isConnected = false;
       this.stopHeartbeat();
+      this.failedHeartbeats = 0;
 
       // Create new bot instance
       log("Creating new Telegram bot instance");
@@ -180,6 +233,7 @@ export class TelegramBot {
     } catch (error) {
       log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
+      this.failedHeartbeats = 0;
 
       if (error instanceof Error && error.message.includes("409: Conflict")) {
         log("409 Conflict detected - another bot instance is already running", "error");
@@ -216,6 +270,7 @@ export class TelegramBot {
       this.commandCooldowns.clear();
       this.messageRateLimits.clear();
       this.activeUsers.clear();
+      this.failedHeartbeats = 0;
 
       log("Telegram bot stopped successfully");
     } catch (error) {
@@ -228,36 +283,6 @@ export class TelegramBot {
     return this._isConnected && this.bot !== null;
   }
 
-  private startHeartbeat() {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-    }
-
-    this.heartbeatInterval = setInterval(async () => {
-      try {
-        if (!this._isConnected || this.isStarting) return;
-
-        const me = await this.bot?.telegram.getMe();
-        if (!me) {
-          log("Heartbeat check failed: Bot returned null", "warn");
-          return; // Don't trigger reconnect on temporary issues
-        }
-      } catch (error) {
-        log(`Heartbeat check failed: ${error}`, "warn");
-        if (error.message?.includes('restart')) {
-          this._isConnected = false;
-          await this.handleDisconnect();
-        }
-      }
-    }, this.HEARTBEAT_INTERVAL);
-  }
-
-  private stopHeartbeat() {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-  }
 
   private async handleDisconnect() {
     if (this.isStarting) return;
@@ -274,11 +299,12 @@ export class TelegramBot {
 
       log(`Attempting to reconnect (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
 
+      // Stop existing bot instance gracefully
       if (this.bot) {
         try {
           await this.bot.stop();
         } catch (error) {
-          log(`Error stopping bot: ${error}`, "warn");
+          log(`Error stopping bot during reconnect: ${error}`, "warn");
         }
       }
 
@@ -1005,7 +1031,7 @@ export class TelegramBot {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
-        if (errorMessage.includes('maximum channel limit')){
+        if (errorMessage.includes('maximum channel limit')) {
           await ctx.reply(
             "❌ Sorry, our support channels are currently at maximum capacity.\n" +
             "Your ticket has been created but is in a pending state."
@@ -1692,7 +1718,7 @@ export class TelegramBot {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
-        if (errorMessage.includes('maximum channel limit')){
+        if (errorMessage.includes('maximum channel limit')) {
           await ctx.reply(
             "❌ Sorry, our support channels are currently at maximum capacity.\n" +
             "Your ticket has been created but is in a pending state."

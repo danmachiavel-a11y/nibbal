@@ -488,12 +488,13 @@ export class BridgeManager {
           if (content?.trim()) {
             try {
               await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: content,
+                content: String(content).trim(),
                 username: username,
                 avatarURL: avatarUrl
               });
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
+              // Continue with photo even if text fails
             }
           }
 
@@ -511,6 +512,7 @@ export class BridgeManager {
             log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
           } catch (error) {
             log(`Error sending photo: ${error}`, "error");
+            // Don't throw to prevent bot disconnection
           }
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
@@ -518,7 +520,7 @@ export class BridgeManager {
           if (content?.trim()) {
             try {
               await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: content,
+                content: String(content).trim(),
                 username: username,
                 avatarURL: avatarUrl
               });
@@ -531,7 +533,7 @@ export class BridgeManager {
         // Regular text message
         try {
           await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: content || " ",
+            content: String(content || " ").trim(),
             username: username,
             avatarURL: avatarUrl
           });
