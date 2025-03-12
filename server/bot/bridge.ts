@@ -540,7 +540,7 @@ export class BridgeManager {
     }
   }
 
-  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string) {
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string, firstName?: string, lastName?: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
@@ -549,6 +549,11 @@ export class BridgeManager {
         log(`Invalid ticket or missing Discord channel: ${ticketId}`, "error");
         return;
       }
+
+      // Construct display name from firstName and lastName, fallback to username
+      const displayName = [firstName, lastName]
+        .filter(Boolean)
+        .join(' ') || username;
 
       // Handle photo if present
       if (photo) {
@@ -563,11 +568,14 @@ export class BridgeManager {
           // If there's text content, send it first
           if (content?.trim()) {
             try {
-              await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: String(content).trim(),
-                username: username || "Telegram User", // Use provided name or fallback
-                avatarURL: avatarUrl // Use the avatar URL directly
-              });
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: String(content).trim(),
+                  username: displayName,
+                  avatarURL: avatarUrl
+                }
+              );
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
             }
@@ -575,15 +583,18 @@ export class BridgeManager {
 
           // Then send the photo
           try {
-            await this.discordBot.sendMessage(ticket.discordChannelId, {
-              content: " ", // Ensure content is always a valid string
-              username: username || "Telegram User",
-              avatarURL: avatarUrl,
-              files: [{
-                attachment: buffer,
-                name: 'image.jpg'
-              }]
-            });
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              {
+                content: " ", // Ensure content is always a valid string
+                username: displayName,
+                avatarURL: avatarUrl,
+                files: [{
+                  attachment: buffer,
+                  name: 'image.jpg'
+                }]
+              }
+            );
             log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
           } catch (error) {
             log(`Error sending photo: ${error}`, "error");
@@ -593,11 +604,14 @@ export class BridgeManager {
           // Send text content even if image fails
           if (content?.trim()) {
             try {
-              await this.discordBot.sendMessage(ticket.discordChannelId, {
-                content: String(content).trim(),
-                username: username || "Telegram User",
-                avatarURL: avatarUrl
-              });
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: String(content).trim(),
+                  username: displayName,
+                  avatarURL: avatarUrl
+                }
+              );
             } catch (msgError) {
               log(`Error sending fallback message: ${msgError}`, "error");
             }
@@ -606,11 +620,14 @@ export class BridgeManager {
       } else {
         // Regular text message
         try {
-          await this.discordBot.sendMessage(ticket.discordChannelId, {
-            content: String(content || " ").trim(),
-            username: username || "Telegram User",
-            avatarURL: avatarUrl
-          });
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              content: String(content || " ").trim(),
+              username: displayName,
+              avatarURL: avatarUrl
+            }
+          );
         } catch (error) {
           log(`Error sending text message: ${error}`, "error");
         }

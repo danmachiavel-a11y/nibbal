@@ -463,14 +463,19 @@ export class TelegramBot {
         log(`Error getting Telegram user avatar: ${error}`, "error");
       }
 
-      // Use first_name or username, defaulting to "Telegram User"
-      const displayName = ctx.from?.first_name || ctx.from?.username || "Telegram User";
+      // Get user's first and last name
+      const firstName = ctx.from?.first_name || "";
+      const lastName = ctx.from?.last_name || "";
+      const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
       await this.bridge.forwardToDiscord(
         ctx.message.text,
         ticket.id,
         displayName,
-        avatarUrl
+        avatarUrl,
+        undefined, // photo parameter
+        firstName,
+        lastName
       );
 
       log(`Message processed successfully for ticket ${ticket.id}`);
@@ -922,25 +927,39 @@ export class TelegramBot {
           timestamp: new Date()
         });
 
-        await this.bridge.forwardToDiscord(
-          ctx.message.caption || "Sent an image:",
-          activeTicket.id,
-          ctx.from.first_name || ctx.from.username || "Telegram User",
-          avatarUrl
-        );
+        // Get user's first and last name
+        const firstName = ctx.from?.first_name || "";
+        const lastName = ctx.from?.last_name || "";
+        const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
+        // Send caption if exists
+        if (ctx.message.caption) {
+          await this.bridge.forwardToDiscord(
+            ctx.message.caption,
+            activeTicket.id,
+            displayName,
+            avatarUrl,
+            undefined,
+            firstName,
+            lastName
+          );
+        }
+
+        // Send the image
         await this.bridge.forwardToDiscord(
           "",
           activeTicket.id,
-          ctx.from.first_name || ctx.from.username || "Telegram User",
+          displayName,
           avatarUrl,
-          imageUrl
+          imageUrl,
+          firstName,
+          lastName
         );
 
         log(`Successfully forwarded photo from Telegram to Discord for ticket ${activeTicket.id}`);
       } catch (error) {
         log(`Error handling photo message: ${error}`, "error");
-        await ctx.reply("Sorry, there was an error processing your photo. Pleasetry again.");
+        await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
       }
     });
   }
@@ -1609,19 +1628,33 @@ export class TelegramBot {
           timestamp: new Date()
         });
 
-        await this.bridge.forwardToDiscord(
-          ctx.message.caption || "Sent an image:",
-          activeTicket.id,
-          ctx.from.first_name || ctx.from.username || "Telegram User",
-          avatarUrl
-        );
+        // Get user's first and last name
+        const firstName = ctx.from?.first_name || "";
+        const lastName = ctx.from?.last_name || "";
+        const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
+        // Send caption if exists
+        if (ctx.message.caption) {
+          await this.bridge.forwardToDiscord(
+            ctx.message.caption,
+            activeTicket.id,
+            displayName,
+            avatarUrl,
+            undefined,
+            firstName,
+            lastName
+          );
+        }
+
+        // Send the image
         await this.bridge.forwardToDiscord(
           "",
           activeTicket.id,
-          ctx.from.first_name || ctx.from.username || "Telegram User",
+          displayName,
           avatarUrl,
-          imageUrl
+          imageUrl,
+          firstName,
+          lastName
         );
 
         log(`Successfully forwarded photo from Telegram to Discord for ticket ${activeTicket.id}`);
