@@ -65,7 +65,7 @@ export class TelegramBot {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
-  private readonly CLEANUP_DELAY = 2000; // Reduced from 10s to 2s
+  private readonly CLEANUP_DELAY = 1000; // Reduced from 2s to 1s
   private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
 
@@ -101,7 +101,7 @@ export class TelegramBot {
         this.userStates.delete(userId);
         this.stateCleanups.delete(userId);
         this.activeUsers.delete(userId);
-        log(`Cleaned up stale state for user ${userId}`);
+        log(`[Telegram] Cleaned up stale state for user ${userId}`);
       }
     }
   }
@@ -117,7 +117,7 @@ export class TelegramBot {
       this.userStates.delete(userId);
       this.stateCleanups.delete(userId);
       this.activeUsers.delete(userId);
-      log(`State timeout for user ${userId}`);
+      log(`[Telegram] State timeout for user ${userId}`);
     }, this.STATE_TIMEOUT);
 
     this.stateCleanups.set(userId, {
@@ -133,15 +133,12 @@ export class TelegramBot {
     }
 
     this.isStarting = true;
-    const startTime = Date.now();
 
     try {
-      log(`[Telegram] Starting bot initialization at ${new Date().toISOString()}`);
+      log("[Telegram] Starting bot initialization");
 
       if (this.bot) {
-        log("[Telegram] Stopping existing bot instance");
         await this.stop();
-        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY));
       }
 
       this._isConnected = false;
@@ -167,7 +164,7 @@ export class TelegramBot {
         this._isConnected = true;
         this.reconnectAttempts = 0;
 
-        // Defer health check start
+        // Start health checks after successful connection
         setTimeout(() => {
           if (this._isConnected) {
             log("[Telegram] Starting health checks");
@@ -175,8 +172,7 @@ export class TelegramBot {
           }
         }, 5000);
 
-        const duration = Date.now() - startTime;
-        log(`[Telegram] Bot started successfully in ${duration}ms`);
+        log("[Telegram] Bot started successfully");
       } catch (launchError: any) {
         log(`[Telegram] Launch error: ${launchError.stack || launchError}`, "error");
 
@@ -198,14 +194,14 @@ export class TelegramBot {
 
   async stop() {
     try {
-      log("Stopping Telegram bot...");
+      log("[Telegram] Stopping bot");
       this.stopHeartbeat();
 
       if (this.bot) {
         try {
           await this.bot.stop();
         } catch (error) {
-          log(`Error during bot stop: ${error}`, "warn");
+          log(`[Telegram] Error during bot stop: ${error}`, "warn");
         } finally {
           this.bot = null;
         }
@@ -220,9 +216,9 @@ export class TelegramBot {
       this.messageRateLimits.clear();
       this.activeUsers.clear();
 
-      log("Telegram bot stopped successfully");
+      log("[Telegram] Bot stopped successfully");
     } catch (error) {
-      log(`Error stopping Telegram bot: ${error}`, "error");
+      log(`[Telegram] Error stopping bot: ${error}`, "error");
       throw error;
     }
   }
@@ -475,6 +471,7 @@ export class TelegramBot {
       await ctx.reply("Sorry, there was an error processing your message. Please try again.");
     }
   }
+
 
 
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
@@ -965,7 +962,7 @@ export class TelegramBot {
         return;
       }
 
-      const activeTicket =await storage.getActiveTicketByUserId(user.id);
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
       if (!activeTicket) {
         await ctx.reply("Please start a ticket first before sending photos.");
         return;
@@ -1101,5 +1098,3 @@ export class TelegramBot {
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN environment variable must be set");
 }
-
-export { TelegramBot };
