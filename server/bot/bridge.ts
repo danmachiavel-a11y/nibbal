@@ -550,14 +550,15 @@ export class BridgeManager {
   // Fix role ping issue by removing extra @ symbols
   async pingRole(roleId: string, channelId: string, message?: string) {
     try {
-      // Remove all @ symbols and use proper mention format
+      // Remove all @ symbols from roleId
       const cleanRoleId = roleId.replace(/@/g, '');
 
-      // Send role ping directly through bot instead of webhook
+      // Send role ping directly through bot client
       const channel = await this.discordBot.getClient().channels.fetch(channelId);
       if (channel?.isTextBased()) {
         await (channel as TextChannel).send({
           content: `<@&${cleanRoleId}>${message ? ` ${message}` : ''}`,
+          allowedMentions: { roles: [cleanRoleId] }
         });
       }
     } catch (error) {
