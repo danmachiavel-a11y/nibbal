@@ -553,7 +553,7 @@ export class BridgeManager {
       // Remove all @ symbols from roleId
       const cleanRoleId = roleId.replace(/@/g, '');
 
-      // Send role ping directly through bot client using Discord's proper role mention format
+      // Get the channel using bot client
       const channel = await this.discordBot.getClient().channels.fetch(channelId);
       if (channel?.isTextBased()) {
         await (channel as TextChannel).send({

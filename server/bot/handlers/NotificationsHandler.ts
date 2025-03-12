@@ -1,5 +1,6 @@
 import { log } from "../../vite";
 import { storage } from "../../storage";
+import { TextChannel } from "discord.js";
 
 export class NotificationsHandler {
   // Store category role mappings
@@ -16,13 +17,19 @@ export class NotificationsHandler {
       // Cache the role ID for future use
       this.roleCache.set(categoryId, category.discordRoleId);
 
-      // Send role ping without adding @ symbol (bridge will handle formatting)
-      await discordBot.sendMessage(channelId, {
-        content: `<@&${category.discordRoleId}>`,
-        username: "Ticket Bot"
-      });
+      // Remove any @ symbols from the role ID
+      const cleanRoleId = category.discordRoleId.replace(/@/g, '');
 
-      log(`Successfully pinged role ${category.discordRoleId} for category ${categoryId}`);
+      // Get the channel using the bot client
+      const channel = await discordBot.getClient().channels.fetch(channelId);
+      if (channel?.isTextBased()) {
+        await (channel as TextChannel).send({
+          content: `<@&${cleanRoleId}>`,
+          allowedMentions: { roles: [cleanRoleId] }
+        });
+      }
+
+      log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
     } catch (error) {
       log(`Error pinging role: ${error}`, "error");
     }
