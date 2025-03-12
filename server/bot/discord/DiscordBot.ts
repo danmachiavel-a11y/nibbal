@@ -10,7 +10,7 @@ interface WebhookPool {
 }
 
 export class DiscordBot {
-  private client: Client;
+  public client: Client;
   private webhookPool: Map<string, WebhookPool[]> = new Map();
   private readonly MAX_WEBHOOK_FAILURES = 3;
   private readonly WEBHOOK_TIMEOUT = 300000; // 5 minutes

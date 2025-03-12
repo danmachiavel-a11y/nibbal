@@ -31,21 +31,21 @@ export class BridgeManager {
     this.startHealthCheck();
   }
 
-  // Simplified role ping method
+  // Role ping methods with proper Discord formatting
   async pingRole(roleId: string, channelId: string, message?: string) {
     try {
       // Remove @ symbols and format for Discord mention
       const cleanRoleId = roleId.replace(/[@]/g, '');
 
-      await this.discordBot.sendMessage(
-        channelId,
-        {
+      // Get channel directly from Discord client
+      const channel = await this.discordBot.client.channels.fetch(channelId);
+      if (channel?.isTextBased()) {
+        await (channel as TextChannel).send({
           content: `<@&${cleanRoleId}>`,
-          username: "Ticket Bot",
           allowedMentions: { roles: [cleanRoleId] }
-        }
-      );
-      log(`Successfully pinged role ${cleanRoleId} in channel ${channelId}`);
+        });
+        log(`Successfully pinged role ${cleanRoleId} in channel ${channelId}`);
+      }
     } catch (error) {
       log(`Error pinging role: ${error}`, "error");
     }
@@ -63,17 +63,15 @@ export class BridgeManager {
       const cleanRoleId = category.discordRoleId.replace(/[@]/g, '');
       this.roleCache.set(categoryId, cleanRoleId);
 
-      // Use sendMessage directly with proper role mention format
-      await this.discordBot.sendMessage(
-        channelId,
-        {
+      // Get channel directly from Discord client
+      const channel = await this.discordBot.client.channels.fetch(channelId);
+      if (channel?.isTextBased()) {
+        await (channel as TextChannel).send({
           content: `<@&${cleanRoleId}>`,
-          username: "Ticket Bot",
           allowedMentions: { roles: [cleanRoleId] }
-        }
-      );
-
-      log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
+        });
+        log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
+      }
     } catch (error) {
       log(`Error pinging role for category: ${error}`, "error");
     }
