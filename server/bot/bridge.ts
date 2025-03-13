@@ -572,9 +572,9 @@ export class BridgeManager {
                 ticket.discordChannelId,
                 {
                   content: String(content).trim(),
-                  username: displayName,
                   avatarURL: avatarUrl
-                }
+                },
+                displayName
               );
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
@@ -587,13 +587,13 @@ export class BridgeManager {
               ticket.discordChannelId,
               {
                 content: " ", // Ensure content is always a valid string
-                username: displayName,
                 avatarURL: avatarUrl,
                 files: [{
                   attachment: buffer,
                   name: 'image.jpg'
                 }]
-              }
+              },
+              displayName
             );
             log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
           } catch (error) {
@@ -608,9 +608,9 @@ export class BridgeManager {
                 ticket.discordChannelId,
                 {
                   content: String(content).trim(),
-                  username: displayName,
                   avatarURL: avatarUrl
-                }
+                },
+                displayName
               );
             } catch (msgError) {
               log(`Error sending fallback message: ${msgError}`, "error");
@@ -624,9 +624,9 @@ export class BridgeManager {
             ticket.discordChannelId,
             {
               content: String(content || " ").trim(),
-              username: displayName,
               avatarURL: avatarUrl
-            }
+            },
+            displayName
           );
         } catch (error) {
           log(`Error sending text message: ${error}`, "error");
