@@ -640,6 +640,7 @@ export class BridgeManager {
   }
 
 
+
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
@@ -652,10 +653,10 @@ export class BridgeManager {
         throw new Error("Could not find Telegram information for ticket creator");
       }
 
-      // Send ping notification to Telegram user
+      // Send ping notification to Telegram user with @ mention
       await this.telegramBot.sendMessage(
         parseInt(user.telegramId),
-        `🔔 You've been pinged by ${discordUsername} in ticket #${ticketId}`
+        `🔔 @${user.username} You've been pinged by ${discordUsername} in ticket #${ticketId}`
       );
 
       log(`Successfully sent ping to Telegram user ${user.telegramId}`);
@@ -681,11 +682,11 @@ export class BridgeManager {
         throw new Error("No Discord channel found for ticket");
       }
 
-      // Send role ping
+      // Send role ping with improved formatting
       await this.discordBot.sendMessage(
         ticket.discordChannelId,
         {
-          content: `<@&${category.discordRoleId}> - You've been pinged by ${telegramUsername} from Telegram`,
+          content: `🔔 <@&${category.discordRoleId}> You've been pinged by @${telegramUsername} in ticket #${ticketId}`,
           allowedMentions: { roles: [category.discordRoleId] }
         },
         "Ticket Bot"

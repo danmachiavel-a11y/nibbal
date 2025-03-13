@@ -270,8 +270,14 @@ export class DiscordBot {
             return;
           }
 
+          // Use member's display name if available, fallback to username
+          const displayName = interaction.member?.displayName || 
+                             interaction.user.displayName ||
+                             interaction.user.username ||
+                             "Discord User";
+
           // Forward ping through bridge
-          await this.bridge.forwardPingToTelegram(ticket.id, interaction.user.username || "Discord User");
+          await this.bridge.forwardPingToTelegram(ticket.id, displayName);
 
           // Send confirmation
           await interaction.reply({
