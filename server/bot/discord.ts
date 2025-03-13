@@ -251,6 +251,46 @@ export class DiscordBot {
     this.client.on('interactionCreate', async (interaction) => {
       if (!interaction.isChatInputCommand()) return;
 
+      // Add ping command handler
+      if (interaction.commandName === 'ping') {
+        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+
+        if (!ticket) {
+          await interaction.reply({
+            content: "This command can only be used in ticket channels!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Get ticket creator's info
+          const user = await storage.getUser(ticket.userId!);
+          if (!user || !user.telegramId) {
+            await interaction.reply({
+              content: "Could not find Telegram information for this ticket's creator.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          // Forward ping through bridge
+          await this.bridge.forwardPingToTelegram(ticket.id, interaction.user.username || "Discord User");
+
+          // Send confirmation
+          await interaction.reply({
+            content: "✅ The ticket creator has been successfully notified.",
+            ephemeral: true
+          });
+        } catch (error) {
+          log(`Error sending ping: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to send ping. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+
       if (interaction.commandName === 'paid') {
         const amount = interaction.options.getInteger('amount', true);
         const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
@@ -557,44 +597,6 @@ export class DiscordBot {
           log(`Error getting ticket creator info: ${error}`, "error");
           await interaction.reply({
             content: "An error occurred while fetching user information.",
-            ephemeral: true
-          });
-        }
-      }
-      if (interaction.commandName === 'ping') {
-        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
-
-        if (!ticket) {
-          await interaction.reply({
-            content: "This command can only be used in ticket channels!",
-            ephemeral: true
-          });
-          return;
-        }
-
-        try {
-          // Get ticket creator's info
-          const user = await storage.getUser(ticket.userId!);
-          if (!user || !user.telegramId) {
-            await interaction.reply({
-              content: "Could not find Telegram information for this ticket's creator.",
-              ephemeral: true
-            });
-            return;
-          }
-
-          // Forward ping through bridge
-          await this.bridge.forwardPingToTelegram(ticket.id, interaction.user.username || "Discord User");
-
-          // Send confirmation
-          await interaction.reply({
-            content: "Ping sent to Telegram user!",
-            ephemeral: true
-          });
-        } catch (error) {
-          log(`Error sending ping: ${error}`, "error");
-          await interaction.reply({
-            content: "Failed to send ping. Please try again.",
             ephemeral: true
           });
         }
