@@ -173,6 +173,11 @@ export class DiscordBot {
           ]
         },
         {
+          name: 'ping',
+          description: 'Ping the Telegram user of this ticket',
+          type: ApplicationCommandType.ChatInput
+        },
+        {
           name: 'close',
           description: 'Close the ticket and move it to transcripts',
           type: ApplicationCommandType.ChatInput
@@ -556,6 +561,44 @@ export class DiscordBot {
           });
         }
       }
+      if (interaction.commandName === 'ping') {
+        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+
+        if (!ticket) {
+          await interaction.reply({
+            content: "This command can only be used in ticket channels!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Get ticket creator's info
+          const user = await storage.getUser(ticket.userId!);
+          if (!user || !user.telegramId) {
+            await interaction.reply({
+              content: "Could not find Telegram information for this ticket's creator.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          // Forward ping through bridge
+          await this.bridge.forwardPingToTelegram(ticket.id, interaction.user.username || "Discord User");
+
+          // Send confirmation
+          await interaction.reply({
+            content: "Ping sent to Telegram user!",
+            ephemeral: true
+          });
+        } catch (error) {
+          log(`Error sending ping: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to send ping. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
     });
 
     // Handle all text messages
@@ -648,7 +691,6 @@ export class DiscordBot {
       throw error;
     }
   }
-
 
 
   async sendMessage(channelId: string, message: any, username: string): Promise<void> {

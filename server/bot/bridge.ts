@@ -640,6 +640,63 @@ export class BridgeManager {
   }
 
 
+  async forwardPingToTelegram(ticketId: number, discordUsername: string) {
+    try {
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket || !ticket.userId) {
+        throw new Error("Invalid ticket or missing user ID");
+      }
+
+      const user = await storage.getUser(ticket.userId);
+      if (!user || !user.telegramId) {
+        throw new Error("Could not find Telegram information for ticket creator");
+      }
+
+      // Send ping notification to Telegram user
+      await this.telegramBot.sendMessage(
+        parseInt(user.telegramId),
+        `🔔 You've been pinged by ${discordUsername} in ticket #${ticketId}`
+      );
+
+      log(`Successfully sent ping to Telegram user ${user.telegramId}`);
+    } catch (error) {
+      log(`Error forwarding ping to Telegram: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async forwardPingToDiscord(ticketId: number, telegramUsername: string) {
+    try {
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket || !ticket.categoryId) {
+        throw new Error("Invalid ticket or missing category");
+      }
+
+      const category = await storage.getCategory(ticket.categoryId);
+      if (!category || !category.discordRoleId) {
+        throw new Error("No role ID found for category");
+      }
+
+      if (!ticket.discordChannelId) {
+        throw new Error("No Discord channel found for ticket");
+      }
+
+      // Send role ping
+      await this.discordBot.sendMessage(
+        ticket.discordChannelId,
+        {
+          content: `<@&${category.discordRoleId}> - You've been pinged by ${telegramUsername} from Telegram`,
+          allowedMentions: { roles: [category.discordRoleId] }
+        },
+        "Ticket Bot"
+      );
+
+      log(`Successfully sent ping to Discord role ${category.discordRoleId}`);
+    } catch (error) {
+      log(`Error forwarding ping to Discord: ${error}`, "error");
+      throw error;
+    }
+  }
 
   getTelegramBot(): TelegramBot {
     return this.telegramBot;
