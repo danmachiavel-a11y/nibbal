@@ -8,22 +8,27 @@ import {
   EmbedBuilder,
   ApplicationCommandType,
   ApplicationCommandOptionType,
-  ChannelSelectMenuBuilder,
-  ActionRowBuilder,
+  WebhookClient
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
+import { rateLimiter } from './discord/RateLimiter';
 
-if (!process.env.DISCORD_BOT_TOKEN) {
-  throw new Error("DISCORD_BOT_TOKEN is required");
+interface WebhookPool {
+  webhook: WebhookClient;
+  lastUsed: number;
+  failures: number;
 }
 
 export class DiscordBot {
   private client: Client;
   private bridge: BridgeManager;
-  private webhooks: Map<string, Webhook>;
-  private webhookCreationLock: Set<string> = new Set(); // Add lock to prevent concurrent creation
+  private webhooks: Map<string, WebhookPool[]> = new Map();
+  private webhookCreationLock: Set<string> = new Set();
+  private readonly MAX_WEBHOOK_FAILURES = 3;
+  private readonly WEBHOOK_TIMEOUT = 300000; // 5 minutes
+  private readonly MAX_WEBHOOKS_PER_CHANNEL = 5;
 
   constructor(bridge: BridgeManager) {
     this.client = new Client({
@@ -35,6 +40,10 @@ export class DiscordBot {
     });
     this.bridge = bridge;
     this.webhooks = new Map();
+
+    // Start webhook cleanup interval
+    setInterval(() => this.cleanupWebhooks(), 300000);
+
     this.setupHandlers();
   }
 
@@ -541,70 +550,14 @@ export class DiscordBot {
     }
   }
 
-  // Add helper function for webhook management
-  private async getOrCreateWebhook(channel: TextChannel, avatarUrl?: string): Promise<Webhook> {
-    try {
-      // Check cache first
-      let webhook = this.webhooks.get(channel.id);
-      if (webhook) {
-        try {
-          // Verify webhook is still valid
-          await webhook.fetch();
-          return webhook;
-        } catch (error) {
-          log(`Cached webhook invalid, will create new one: ${error}`, "error");
-          this.webhooks.delete(channel.id);
-        }
-      }
 
-      // Prevent concurrent webhook creation for same channel
-      if (this.webhookCreationLock.has(channel.id)) {
-        log(`Waiting for webhook creation lock on channel ${channel.id}`);
-        // Wait for lock to be released
-        while (this.webhookCreationLock.has(channel.id)) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        // Check cache again after waiting
-        webhook = this.webhooks.get(channel.id);
-        if (webhook) return webhook;
-      }
-
-      // Set lock
-      this.webhookCreationLock.add(channel.id);
-
-      try {
-        // Check for existing webhook first
-        const existingWebhooks = await channel.fetchWebhooks();
-        webhook = existingWebhooks.find(w => w.name === "Telegram Bridge");
-
-        if (!webhook) {
-          // Add delay to avoid rate limits
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          log(`Creating new webhook for channel ${channel.id}`);
-          webhook = await channel.createWebhook({
-            name: "Telegram Bridge",
-            avatar: avatarUrl
-          });
-        }
-
-        // Cache the webhook
-        this.webhooks.set(channel.id, webhook);
-        log(`Using webhook: ${webhook.id} for channel ${channel.id}`);
-        return webhook;
-      } finally {
-        // Always release lock
-        this.webhookCreationLock.delete(channel.id);
-      }
-    } catch (error) {
-      log(`Error getting/creating webhook: ${error}`, "error");
-      throw error;
-    }
-  }
-
-  // Update sendMessage to use the new helper
   async sendMessage(channelId: string, message: any, username: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
+
+      // Check rate limits
+      await rateLimiter.webhookCheck(channelId);
+      await rateLimiter.globalCheck();
 
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
@@ -612,7 +565,8 @@ export class DiscordBot {
       }
 
       // Get or create webhook with proper caching
-      const webhook = await this.getOrCreateWebhook(channel);
+      const webhook = await this.getWebhookForChannel(channel);
+      if (!webhook) throw new Error("Failed to get webhook");
 
       // Prepare webhook message with forced username
       const messageOptions: any = {
@@ -636,18 +590,111 @@ export class DiscordBot {
         messageOptions.content = message;
       }
 
-      // Send message via webhook
-      const messageSent = await webhook.send(messageOptions);
+      // Send message with retries
+      let retries = 0;
+      const maxRetries = 3;
+      while (retries < maxRetries) {
+        try {
+          const sentMessage = await webhook.send(messageOptions);
+          log(`Successfully sent message to Discord channel ${channelId}`);
 
-      // Pin if it's a ticket message
-      if (message.embeds?.[0]?.title?.includes('New Ticket')) {
-        await messageSent.pin();
+          // Pin if it's a ticket message
+          if (message.embeds?.[0]?.title?.includes('New Ticket')) {
+            await sentMessage.pin();
+          }
+          return;
+        } catch (error) {
+          retries++;
+          if (retries === maxRetries) throw error;
+          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+        }
       }
-
-      log(`Successfully sent message to Discord channel ${channelId}`);
     } catch (error) {
       log(`Error sending message to Discord: ${error}`, "error");
       throw error;
+    }
+  }
+
+  private async getWebhookForChannel(channel: TextChannel): Promise<WebhookClient | null> {
+    try {
+      // Prevent concurrent webhook creation for same channel
+      if (this.webhookCreationLock.has(channel.id)) {
+        log(`Waiting for webhook creation lock on channel ${channel.id}`);
+        while (this.webhookCreationLock.has(channel.id)) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      // Check existing webhooks first
+      let webhooks = this.webhooks.get(channel.id) || [];
+      webhooks = webhooks.filter(w => w.failures < this.MAX_WEBHOOK_FAILURES);
+
+      // Use existing webhook if available
+      if (webhooks.length > 0) {
+        const webhook = webhooks[0];
+        webhook.lastUsed = Date.now();
+        return webhook.webhook;
+      }
+
+      // Set creation lock
+      this.webhookCreationLock.add(channel.id);
+
+      try {
+        // Check for existing webhook first
+        const existingWebhooks = await channel.fetchWebhooks();
+        let webhook = existingWebhooks.find(w => w.name === "Message Relay");
+
+        if (!webhook) {
+          // Add delay to avoid rate limits
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          webhook = await channel.createWebhook({
+            name: "Message Relay", // This name doesn't matter as it's overridden per message
+            reason: 'For message bridging'
+          });
+        }
+
+        const webhookClient = new WebhookClient({ url: webhook.url });
+        const webhookPool: WebhookPool = {
+          webhook: webhookClient,
+          lastUsed: Date.now(),
+          failures: 0
+        };
+
+        this.webhooks.set(channel.id, [webhookPool]);
+        log(`Using webhook: ${webhook.id} for channel ${channel.id}`);
+        return webhookClient;
+      } finally {
+        // Always release lock
+        this.webhookCreationLock.delete(channel.id);
+      }
+    } catch (error) {
+      log(`Error getting/creating webhook: ${error}`, "error");
+      return null;
+    }
+  }
+
+  private cleanupWebhooks() {
+    const now = Date.now();
+    for (const [channelId, webhooks] of this.webhooks.entries()) {
+      // Only cleanup webhooks that haven't been used in a while
+      const activeWebhooks = webhooks.filter(pool => {
+        const isActive = now - pool.lastUsed < this.WEBHOOK_TIMEOUT && 
+                        pool.failures < this.MAX_WEBHOOK_FAILURES;
+        if (!isActive) {
+          try {
+            pool.webhook.destroy();
+          } catch (error) {
+            log(`Error destroying webhook: ${error}`, "error");
+          }
+        }
+        return isActive;
+      });
+
+      if (activeWebhooks.length === 0) {
+        this.webhooks.delete(channelId);
+      } else {
+        this.webhooks.set(channelId, activeWebhooks);
+      }
     }
   }
 
@@ -740,11 +787,13 @@ export class DiscordBot {
   async stop() {
     try {
       // Destroy all webhooks
-      for (const [_, webhook] of this.webhooks) {
-        try {
-          await webhook.delete();
-        } catch (error) {
-          log(`Error deleting webhook: ${error}`, "error");
+      for (const [_, webhooks] of this.webhooks) {
+        for (const pool of webhooks) {
+          try {
+            await pool.webhook.destroy();
+          } catch (error) {
+            log(`Error deleting webhook: ${error}`, "error");
+          }
         }
       }
       this.webhooks.clear();
