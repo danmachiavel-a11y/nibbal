@@ -63,48 +63,99 @@ export class DiscordBot {
       const webhookClient = await this.getWebhookForChannel(channelId);
       if (!webhookClient) throw new Error("Failed to get webhook");
 
-      const webhookMessage: any = {};
+      // Create the message payload
+      const webhookMessage: any = {
+        content: String(message.content || " ").trim() || " ",
+        username: message.username, // This will override the webhook's default name
+        avatarURL: message.avatarURL,
+        allowedMentions: message.allowedMentions,
+      };
 
-      // Handle content - ensure it's always a string
-      webhookMessage.content = String(message.content || " ").trim() || " ";
-
-      // Username must be set for each message
-      if (message.username) {
-        webhookMessage.username = message.username;
-      }
-
-      // Avatar URL is optional
-      if (message.avatarURL) {
-        webhookMessage.avatarURL = message.avatarURL;
-      }
-
-      // Files array is optional
-      if (message.files) {
+      // Add files if present
+      if (message.files && Array.isArray(message.files)) {
         webhookMessage.files = message.files;
       }
 
-      // Allowed mentions for role pings
-      if (message.allowedMentions) {
-        webhookMessage.allowedMentions = message.allowedMentions;
-      }
+      // Log the actual username being sent
+      log(`Sending webhook message with username: ${webhookMessage.username}`);
 
-      log(`Sending webhook message as: ${webhookMessage.username}`);
-      const sentMessage = await webhookClient.send(webhookMessage);
-      log(`Successfully sent message to Discord channel ${channelId}`);
-      return sentMessage;
+      // Send the message with retries
+      let retries = 0;
+      const maxRetries = 3;
+      while (retries < maxRetries) {
+        try {
+          const sentMessage = await webhookClient.send(webhookMessage);
+          log(`Successfully sent message to Discord channel ${channelId}`);
+          return sentMessage;
+        } catch (error) {
+          retries++;
+          if (retries === maxRetries) throw error;
+          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+        }
+      }
     } catch (error) {
       log(`Error sending message to Discord: ${error}`, "error");
       throw error;
     }
   }
 
+  private async getWebhookForChannel(channelId: string): Promise<WebhookClient | null> {
+    try {
+      // Check existing webhooks first
+      let webhooks = this.webhookPool.get(channelId) || [];
+      webhooks = webhooks.filter(w => w.failures < this.MAX_WEBHOOK_FAILURES);
+
+      // Use existing webhook if available
+      if (webhooks.length > 0) {
+        const webhook = webhooks[0]; // Always use the first webhook
+        webhook.lastUsed = Date.now();
+        return webhook.webhook;
+      }
+
+      // Create new webhook if needed
+      const channel = await this.client.channels.fetch(channelId) as TextChannel;
+      if (!channel?.isTextBased()) return null;
+
+      try {
+        // Create a webhook that will be overridden by message usernames
+        const webhook = await channel.createWebhook({
+          name: 'Message Relay', // This will be overridden by message usernames
+          reason: 'For message bridging'
+        });
+
+        const webhookClient = new WebhookClient({ url: webhook.url });
+        const webhookPool: WebhookPool = {
+          webhook: webhookClient,
+          lastUsed: Date.now(),
+          failures: 0
+        };
+
+        this.webhookPool.set(channelId, [webhookPool]);
+        log(`Created new webhook for channel ${channelId}`);
+        return webhookClient;
+      } catch (error) {
+        log(`Error creating webhook: ${error}`, "error");
+        return null;
+      }
+    } catch (error) {
+      log(`Error getting webhook: ${error}`, "error");
+      return null;
+    }
+  }
+
   private async cleanupWebhooks() {
+    const now = Date.now();
     for (const [channelId, webhooks] of this.webhookPool.entries()) {
-      const now = Date.now();
+      // Only cleanup webhooks that haven't been used in a while
       const activeWebhooks = webhooks.filter(pool => {
-        const isActive = now - pool.lastUsed < this.WEBHOOK_TIMEOUT && pool.failures < this.MAX_WEBHOOK_FAILURES;
+        const isActive = now - pool.lastUsed < this.WEBHOOK_TIMEOUT && 
+                        pool.failures < this.MAX_WEBHOOK_FAILURES;
         if (!isActive) {
-          pool.webhook.destroy();
+          try {
+            pool.webhook.destroy();
+          } catch (error) {
+            log(`Error destroying webhook: ${error}`, "error");
+          }
         }
         return isActive;
       });
@@ -114,57 +165,6 @@ export class DiscordBot {
       } else {
         this.webhookPool.set(channelId, activeWebhooks);
       }
-    }
-  }
-
-  private async getWebhookForChannel(channelId: string): Promise<WebhookClient | null> {
-    try {
-      let webhooks = this.webhookPool.get(channelId) || [];
-
-      // Filter out failed webhooks
-      webhooks = webhooks.filter(w => w.failures < this.MAX_WEBHOOK_FAILURES);
-
-      // If we have working webhooks, use the least recently used one
-      if (webhooks.length > 0) {
-        const webhook = webhooks.reduce((prev, curr) =>
-          prev.lastUsed < curr.lastUsed ? prev : curr
-        );
-        webhook.lastUsed = Date.now();
-        return webhook.webhook;
-      }
-
-      // Create new webhook if needed
-      if (webhooks.length < this.MAX_WEBHOOKS_PER_CHANNEL) {
-        const channel = await this.client.channels.fetch(channelId) as TextChannel;
-        if (!channel?.isTextBased()) return null;
-
-        try {
-          // Create webhook with minimal configuration
-          const webhook = await channel.createWebhook({
-            name: 'Message Bridge',
-            reason: 'For message bridging'
-          });
-
-          const webhookClient = new WebhookClient({ url: webhook.url });
-          webhooks.push({
-            webhook: webhookClient,
-            lastUsed: Date.now(),
-            failures: 0
-          });
-
-          this.webhookPool.set(channelId, webhooks);
-          log(`Created new webhook for channel ${channelId}`);
-          return webhookClient;
-        } catch (error) {
-          log(`Error creating webhook: ${error}`, "error");
-          return null;
-        }
-      }
-
-      return null;
-    } catch (error) {
-      log(`Error getting webhook: ${error}`, "error");
-      return null;
     }
   }
 
