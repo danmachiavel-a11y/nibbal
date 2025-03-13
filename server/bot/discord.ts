@@ -13,7 +13,6 @@ import {
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
-import { rateLimiter } from './discord/RateLimiter';
 
 interface WebhookPool {
   webhook: WebhookClient;
@@ -21,11 +20,34 @@ interface WebhookPool {
   failures: number;
 }
 
+interface RateLimitBucket {
+  tokens: number;
+  lastRefill: number;
+  capacity: number;
+  refillRate: number;
+  queue: Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }>;
+}
+
 export class DiscordBot {
   private client: Client;
   private bridge: BridgeManager;
   private webhooks: Map<string, WebhookPool[]> = new Map();
   private webhookCreationLock: Set<string> = new Set();
+  private rateLimitBuckets: Map<string, RateLimitBucket> = new Map();
+
+  // Rate limit configurations
+  private readonly LIMITS = {
+    global: { capacity: 45, refillTime: 1000 }, // 45 per second
+    webhook: { capacity: 4, refillTime: 5000 }, // 4 per 5 seconds
+    channelCreate: { capacity: 9, refillTime: 10000 }, // 9 per 10 seconds
+    channelEdit: { capacity: 4, refillTime: 10000 }, // 4 per 10 seconds
+    messagesFetch: { capacity: 45, refillTime: 1000 }, // 45 per second
+  };
+
+  // Webhook management constants
   private readonly MAX_WEBHOOK_FAILURES = 3;
   private readonly WEBHOOK_TIMEOUT = 300000; // 5 minutes
   private readonly MAX_WEBHOOKS_PER_CHANNEL = 5;
@@ -45,6 +67,81 @@ export class DiscordBot {
     setInterval(() => this.cleanupWebhooks(), 300000);
 
     this.setupHandlers();
+    this.setupRateLimitBuckets();
+  }
+
+  private setupRateLimitBuckets() {
+    Object.entries(this.LIMITS).forEach(([key, limit]) => {
+      this.rateLimitBuckets.set(key, {
+        tokens: limit.capacity,
+        lastRefill: Date.now(),
+        capacity: limit.capacity,
+        refillRate: limit.capacity / limit.refillTime,
+        queue: []
+      });
+    });
+  }
+
+  private async checkRateLimit(type: string, id: string = 'global'): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const bucket = this.getBucket(type);
+      this.refillBucket(bucket);
+
+      if (bucket.tokens < 1) {
+        bucket.queue.push({ resolve, reject });
+
+        setTimeout(() => {
+          const index = bucket.queue.indexOf({ resolve, reject });
+          if (index > -1) {
+            bucket.queue.splice(index, 1);
+            reject(new Error("Rate limit wait timeout"));
+          }
+        }, 30000);
+        return;
+      }
+
+      bucket.tokens -= 1;
+      resolve();
+
+      while (bucket.queue.length > 0 && bucket.tokens >= 1) {
+        const next = bucket.queue.shift();
+        if (next) {
+          bucket.tokens -= 1;
+          next.resolve();
+        }
+      }
+    });
+  }
+
+  private getBucket(key: string): RateLimitBucket {
+    if (!this.rateLimitBuckets.has(key)) {
+      const limit = this.LIMITS[key as keyof typeof this.LIMITS];
+      this.rateLimitBuckets.set(key, {
+        tokens: limit.capacity,
+        lastRefill: Date.now(),
+        capacity: limit.capacity,
+        refillRate: limit.capacity / limit.refillTime,
+        queue: []
+      });
+    }
+    return this.rateLimitBuckets.get(key)!;
+  }
+
+  private refillBucket(bucket: RateLimitBucket) {
+    const now = Date.now();
+    const timePassed = now - bucket.lastRefill;
+    const tokensToAdd = timePassed * bucket.refillRate;
+    bucket.tokens = Math.min(bucket.capacity, bucket.tokens + tokensToAdd);
+    bucket.lastRefill = now;
+  }
+
+  // Convenience methods for rate limiting
+  private async globalCheck(): Promise<void> {
+    return this.checkRateLimit('global');
+  }
+
+  private async webhookCheck(webhookId: string): Promise<void> {
+    return this.checkRateLimit('webhook', webhookId);
   }
 
   private async registerSlashCommands() {
@@ -531,6 +628,8 @@ export class DiscordBot {
     try {
       log(`Creating ticket channel ${name} in category ${categoryId}`);
 
+      await this.checkRateLimit('channelCreate'); // Added rate limit check
+
       const category = await this.client.channels.fetch(categoryId);
       if (!category || category.type !== ChannelType.GuildCategory) {
         throw new Error(`Invalid category ${categoryId}`);
@@ -551,13 +650,15 @@ export class DiscordBot {
   }
 
 
+
   async sendMessage(channelId: string, message: any, username: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 
       // Check rate limits
-      await rateLimiter.webhookCheck(channelId);
-      await rateLimiter.globalCheck();
+      await this.globalCheck();
+      await this.webhookCheck(channelId);
+
 
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
@@ -702,6 +803,8 @@ export class DiscordBot {
     try {
       log(`Moving channel ${channelId} to category ${categoryId}`);
 
+      await this.checkRateLimit('channelEdit'); //Added rate limit check
+
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
         throw new Error(`Invalid channel type for channel ${channelId}`);
@@ -723,6 +826,7 @@ export class DiscordBot {
   async getCategories() {
     try {
       // Get the first guild (server) the bot is in
+      await this.globalCheck(); // Added rate limit check
       const guilds = await this.client.guilds.fetch();
       const firstGuild = guilds.first();
       if (!firstGuild) {
@@ -751,6 +855,7 @@ export class DiscordBot {
   async getRoles() {
     try {
       // Get the first guild (server) the bot is in
+      await this.globalCheck(); // Added rate limit check
       const guilds = await this.client.guilds.fetch();
       const firstGuild = guilds.first();
       if (!firstGuild) {
