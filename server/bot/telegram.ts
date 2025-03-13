@@ -570,7 +570,7 @@ export class TelegramBot {
 
         try {
           await this.bridge.forwardPingToDiscord(activeTicket.id, displayName);
-          await ctx.reply("✅ Ping sent to Discord support team!");
+          await ctx.reply("✅ Staff has been successfully notified.");
         } catch (error) {
           log(`Error sending ping: ${error}`, "error");
           await ctx.reply("❌ Failed to send ping. Please try again.");
@@ -1307,7 +1307,7 @@ export class TelegramBot {
 
         try {
           await this.bridge.forwardPingToDiscord(activeTicket.id, displayName);
-          await ctx.reply("✅ Ping sent to Discord support team!");
+          await ctx.reply("✅ Staff has been successfully notified.");
         } catch (error) {
           log(`Error sending ping: ${error}`, "error");
           await ctx.reply("❌ Failed to send ping. Please try again.");
