@@ -146,12 +146,8 @@ export class DiscordBot {
 
   private async registerSlashCommands() {
     try {
-      // Check if commands are already registered
-      const existingCommands = await this.client.application?.commands.fetch();
-      if (existingCommands && existingCommands.size > 0) {
-        log("Slash commands already registered, skipping registration");
-        return;
-      }
+      // Remove the check for existing commands to force re-registration
+      log("Registering slash commands...");
 
       // Add delay to avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 1000));
