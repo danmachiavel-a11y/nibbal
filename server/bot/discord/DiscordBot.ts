@@ -63,23 +63,26 @@ export class DiscordBot {
       const webhookClient = await this.getWebhookForChannel(channelId);
       if (!webhookClient) throw new Error("Failed to get webhook");
 
-      // Create the message payload
-      const webhookMessage: any = {
+      // Create webhook message with forced username
+      const webhookMessage = {
         content: String(message.content || " ").trim() || " ",
-        username: message.username, // This will override the webhook's default name
-        avatarURL: message.avatarURL,
-        allowedMentions: message.allowedMentions,
+        username: message.username, // Pass username directly without any fallback
+        avatarURL: message.avatarURL
       };
 
       // Add files if present
-      if (message.files && Array.isArray(message.files)) {
+      if (message.files) {
         webhookMessage.files = message.files;
       }
 
-      // Log the actual username being sent
-      log(`Sending webhook message with username: ${webhookMessage.username}`);
+      // Add allowed mentions if present
+      if (message.allowedMentions) {
+        webhookMessage.allowedMentions = message.allowedMentions;
+      }
 
-      // Send the message with retries
+      log(`Sending message as user: ${webhookMessage.username}`);
+
+      // Send message with retries
       let retries = 0;
       const maxRetries = 3;
       while (retries < maxRetries) {
@@ -107,7 +110,7 @@ export class DiscordBot {
 
       // Use existing webhook if available
       if (webhooks.length > 0) {
-        const webhook = webhooks[0]; // Always use the first webhook
+        const webhook = webhooks[0];
         webhook.lastUsed = Date.now();
         return webhook.webhook;
       }
@@ -117,9 +120,8 @@ export class DiscordBot {
       if (!channel?.isTextBased()) return null;
 
       try {
-        // Create a webhook that will be overridden by message usernames
         const webhook = await channel.createWebhook({
-          name: 'Message Relay', // This will be overridden by message usernames
+          name: 'Message Relay', // This name doesn't matter as it's overridden per message
           reason: 'For message bridging'
         });
 
