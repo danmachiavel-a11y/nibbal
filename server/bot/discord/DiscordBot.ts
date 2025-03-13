@@ -63,16 +63,16 @@ export class DiscordBot {
       const webhookClient = await this.getWebhookForChannel(channelId);
       if (!webhookClient) throw new Error("Failed to get webhook");
 
-      // Ensure content is always a valid string and username is set
+      // Ensure message options are properly set
       const webhookMessage = {
         content: String(message.content || " ").trim(),
-        username: message.username,
+        username: message.username, // Don't provide a fallback, let Discord handle it
         avatarURL: message.avatarURL,
         files: message.files,
         allowedMentions: message.allowedMentions
       };
 
-      log(`Sending webhook message with username: ${webhookMessage.username}`);
+      log(`Sending webhook message for user: ${webhookMessage.username}`);
       const sentMessage = await webhookClient.send(webhookMessage);
       log(`Successfully sent message to Discord channel ${channelId}`);
       return sentMessage;
@@ -123,9 +123,9 @@ export class DiscordBot {
         if (!channel?.isTextBased()) return null;
 
         try {
-          // Create webhook without a default name - let it be controlled by message options
+          // Create a neutral webhook that will be overridden by message options
           const webhook = await channel.createWebhook({
-            name: 'Message Relay', // This will be overridden by message username
+            name: 'Message Relay',
             reason: 'For message bridging'
           });
 
