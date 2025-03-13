@@ -1,7 +1,6 @@
 import { Client, TextChannel, WebhookClient } from 'discord.js';
 import { log } from "../../vite";
 import { rateLimiter } from './RateLimiter';
-import { imageHandler } from '../handlers/ImageHandler';
 
 interface WebhookPool {
   webhook: WebhookClient;
@@ -28,10 +27,6 @@ export class DiscordBot {
 
     // Start webhook cleanup interval
     setInterval(() => this.cleanupWebhooks(), 300000);
-  }
-
-  getClient(): Client {
-    return this.client;
   }
 
   async start() {
@@ -68,23 +63,16 @@ export class DiscordBot {
       const webhookClient = await this.getWebhookForChannel(channelId);
       if (!webhookClient) throw new Error("Failed to get webhook");
 
-      let webhookMessage: any = {
-        username: message.username || "Unknown User",
-        avatarURL: message.avatarURL
+      // Ensure content is always a valid string and username is set
+      const webhookMessage = {
+        content: String(message.content || " ").trim(),
+        username: message.username,
+        avatarURL: message.avatarURL,
+        files: message.files,
+        allowedMentions: message.allowedMentions
       };
 
-      // Handle content - ensure it's always a valid string
-      if (message.content !== undefined && message.content !== null) {
-        webhookMessage.content = String(message.content).trim() || " ";
-      } else {
-        webhookMessage.content = " "; // Default to space if no content
-      }
-
-      // Handle files if present
-      if (message.files && Array.isArray(message.files)) {
-        webhookMessage.files = message.files;
-      }
-
+      log(`Sending webhook message with username: ${webhookMessage.username}`);
       const sentMessage = await webhookClient.send(webhookMessage);
       log(`Successfully sent message to Discord channel ${channelId}`);
       return sentMessage;
@@ -135,9 +123,10 @@ export class DiscordBot {
         if (!channel?.isTextBased()) return null;
 
         try {
+          // Create webhook without a default name - let it be controlled by message options
           const webhook = await channel.createWebhook({
-            name: 'Bridge Bot Webhook',
-            reason: 'Created for message bridging'
+            name: 'Message Relay', // This will be overridden by message username
+            reason: 'For message bridging'
           });
 
           const webhookClient = new WebhookClient({ url: webhook.url });
@@ -160,20 +149,6 @@ export class DiscordBot {
     } catch (error) {
       log(`Error getting webhook: ${error}`, "error");
       return null;
-    }
-  }
-
-  async editChannel(channelId: string, options: any): Promise<void> {
-    try {
-      await rateLimiter.channelEditCheck(channelId);
-      await rateLimiter.globalCheck();
-
-      const channel = await this.client.channels.fetch(channelId);
-      if (channel?.isTextBased()) {
-        await (channel as TextChannel).edit(options);
-      }
-    } catch (error) {
-      log(`Error editing channel: ${error}`, "error");
     }
   }
 
