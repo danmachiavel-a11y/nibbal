@@ -146,7 +146,6 @@ export class DiscordBot {
 
   private async registerSlashCommands() {
     try {
-      // Remove the check for existing commands to force re-registration
       log("Registering slash commands...");
 
       // Add delay to avoid rate limits
@@ -171,6 +170,11 @@ export class DiscordBot {
         {
           name: 'ping',
           description: 'Ping the Telegram user of this ticket',
+          type: ApplicationCommandType.ChatInput
+        },
+        {
+          name: 'info',
+          description: 'Get Telegram user information (Owner only)',
           type: ApplicationCommandType.ChatInput
         },
         {
@@ -247,7 +251,65 @@ export class DiscordBot {
     this.client.on('interactionCreate', async (interaction) => {
       if (!interaction.isChatInputCommand()) return;
 
-      // Add ping command handler
+      // Add info command handler
+      if (interaction.commandName === 'info') {
+        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+
+        if (!ticket) {
+          await interaction.reply({
+            content: "This command can only be used in ticket channels!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        // Check if user is guild owner
+        const guild = interaction.guild;
+        if (!guild || interaction.user.id !== guild.ownerId) {
+          await interaction.reply({
+            content: "This command can only be used by the server owner!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Get ticket creator's info
+          const user = await storage.getUser(ticket.userId!);
+          if (!user || !user.telegramId) {
+            await interaction.reply({
+              content: "Could not find Telegram information for this ticket's creator.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          // Get paid tickets count
+          const allTickets = await storage.getTicketsByUserId(user.id);
+          const paidTickets = allTickets.filter(t => t.amount && t.amount > 0);
+
+          // Create a nice embed with the information
+          const embed = new EmbedBuilder()
+            .setColor(0x0099FF)
+            .setTitle('Ticket Creator Information')
+            .addFields(
+              { name: 'Telegram Username', value: `@${user.username}`, inline: true },
+              { name: 'Telegram ID', value: user.telegramId, inline: true },
+              { name: 'Full Name', value: user.fullName || 'Not Available', inline: true},
+              { name: 'Total Paid Tickets', value: paidTickets.length.toString(), inline: false }
+            )
+            .setTimestamp();
+
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+        } catch (error) {
+          log(`Error getting ticket creator info: ${error}`, "error");
+          await interaction.reply({
+            content: "An error occurred while fetching user information.",
+            ephemeral: true
+          });
+        }
+      }
+
       if (interaction.commandName === 'ping') {
         const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
 
@@ -955,7 +1017,7 @@ export class DiscordBot {
     } catch (error) {
       log(`Error stopping Discord bot: ${error}`, "error");
       throw error;
-    }
+        }
   }
 
   isReady() {
