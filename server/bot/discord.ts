@@ -733,11 +733,30 @@ export class DiscordBot {
     });
   }
 
+  private async sendTicketMessage(channelId: string, embed: any): Promise<void> {
+    try {
+      // First send formatted message via webhook
+      await this.sendMessage(channelId, embed, "Ticket Bot");
+
+      // Then send and pin a native message
+      const channel = await this.client.channels.fetch(channelId);
+      if (channel instanceof TextChannel) {
+        const message = await channel.send({ embeds: embed.embeds });
+        await message.pin();
+        log(`Successfully pinned ticket message in channel ${channelId}`);
+      }
+    } catch (error) {
+      log(`Error sending/pinning ticket message: ${error}`, "error");
+      throw error;
+    }
+  }
+
+
   async createTicketChannel(categoryId: string, name: string): Promise<string> {
     try {
       log(`Creating ticket channel ${name} in category ${categoryId}`);
 
-      await this.checkRateLimit('channelCreate'); // Added rate limit check
+      await this.checkRateLimit('channelCreate');
 
       const category = await this.client.channels.fetch(categoryId);
       if (!category || category.type !== ChannelType.GuildCategory) {

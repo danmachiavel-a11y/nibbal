@@ -352,7 +352,7 @@ export class BridgeManager {
       const updatedTicket = await storage.getTicket(ticket.id);
       log(`Updated ticket status: ${JSON.stringify(updatedTicket)}`);
 
-      // Send only one embed for the ticket creation
+      // Send only one embed for the ticket creation with pinning
       const embed = {
         username: "Ticket Bot",
         embeds: [{
@@ -367,12 +367,8 @@ export class BridgeManager {
         }]
       };
 
-      // Send the formatted embed once
-      await this.discordBot.sendMessage(
-        channelId,
-        embed,
-        "Ticket Bot"
-      );
+      // Send and pin the ticket message
+      await this.discordBot.sendTicketMessage(channelId, embed);
 
       // Send role ping if category has a role
       if (category.discordRoleId) {
