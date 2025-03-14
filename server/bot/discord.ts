@@ -735,15 +735,14 @@ export class DiscordBot {
 
   private async sendTicketMessage(channelId: string, embed: any): Promise<void> {
     try {
-      // First send formatted message via webhook
-      await this.sendMessage(channelId, embed, "Ticket Bot");
-
-      // Then send and pin a native message
+      // Send only through the bot's native message functionality
       const channel = await this.client.channels.fetch(channelId);
       if (channel instanceof TextChannel) {
         const message = await channel.send({ embeds: embed.embeds });
         await message.pin();
-        log(`Successfully pinned ticket message in channel ${channelId}`);
+        log(`Successfully sent and pinned ticket message in channel ${channelId}`);
+      } else {
+        throw new Error(`Invalid channel type for channel ${channelId}`);
       }
     } catch (error) {
       log(`Error sending/pinning ticket message: ${error}`, "error");
@@ -1014,7 +1013,7 @@ export class DiscordBot {
     try {
       // Destroy all webhooks
       for (const [_, webhooks] of this.webhooks) {
-        for (const pool of webhooks) {
+                for (const pool of webhooks) {
           try {
             await pool.webhook.destroy();
           } catch (error) {
