@@ -420,10 +420,10 @@ export class DiscordBot {
                              interaction.user.displayName ||
                              interaction.user.username;
 
-            // Send a more detailed notification
+            // Send notification
             await this.bridge.getTelegramBot().sendMessage(
               parseInt(user.telegramId),
-              `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.\nThe ticket has been moved to our transcripts category for record keeping.`
+              `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
             );
           }
 
@@ -609,7 +609,7 @@ export class DiscordBot {
                       if (user?.telegramId) {
                         await this.bridge.getTelegramBot().sendMessage(
                           parseInt(user.telegramId),
-                          `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName} as part of bulk ticket management.\nThe ticket has been moved to our transcripts category for record keeping.`
+                          `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
                         );
                       }
 
@@ -1006,7 +1006,7 @@ export class DiscordBot {
       const guilds = await this.client.guilds.fetch();
       const guild = await guilds.first()?.fetch();      if (!guild) throw new Error("No guild found");
 
-      return guild.roles.cache.sort((roleA, roleB) => {
+      return guild.roles.cache.sort((roleA, roleB) =>{
         return (roleB?.position || 0) - (roleA?.position || 0);
       }).map(role => ({
         id: role.id,
