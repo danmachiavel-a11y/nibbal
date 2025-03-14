@@ -154,6 +154,11 @@ export class DiscordBot {
       // Commands to register
       const commands = [
         {
+          name: 'close',
+          description: 'Close the ticket and move it to transcripts',
+          type: ApplicationCommandType.ChatInput
+        },
+        {
           name: 'paid',
           description: 'Mark a ticket as paid with the specified amount',
           type: ApplicationCommandType.ChatInput,
@@ -175,11 +180,6 @@ export class DiscordBot {
         {
           name: 'info',
           description: 'Get Telegram user information (Owner only)',
-          type: ApplicationCommandType.ChatInput
-        },
-        {
-          name: 'close',
-          description: 'Close the ticket and move it to transcripts',
           type: ApplicationCommandType.ChatInput
         },
         {
@@ -412,6 +412,21 @@ export class DiscordBot {
             return;
           }
 
+          // Get ticket creator's info for notification
+          const user = await storage.getUser(ticket.userId!);
+          if (user?.telegramId) {
+            // Get staff member's display name
+            const staffName = interaction.member?.displayName || 
+                             interaction.user.displayName ||
+                             interaction.user.username;
+
+            // Send a more detailed notification
+            await this.bridge.getTelegramBot().sendMessage(
+              parseInt(user.telegramId),
+              `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.\nThe ticket has been moved to our transcripts category for record keeping.`
+            );
+          }
+
           // Mark ticket as closed
           await storage.updateTicketStatus(ticket.id, "closed");
 
@@ -574,6 +589,11 @@ export class DiscordBot {
             ephemeral: true
           });
 
+          // Get staff member's display name
+          const staffName = interaction.member?.displayName || 
+                           interaction.user.displayName ||
+                           interaction.user.username;
+
           // Process all channels
           for (const [_, channel] of channels) {
             if (channel instanceof TextChannel) {
@@ -584,6 +604,15 @@ export class DiscordBot {
                   if (category?.transcriptCategoryId) {
                     const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
                     if (transcriptCategory instanceof CategoryChannel) {
+                      // Notify Telegram user before moving the channel
+                      const user = await storage.getUser(ticket.userId!);
+                      if (user?.telegramId) {
+                        await this.bridge.getTelegramBot().sendMessage(
+                          parseInt(user.telegramId),
+                          `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName} as part of bulk ticket management.\nThe ticket has been moved to our transcripts category for record keeping.`
+                        );
+                      }
+
                       await channel.setParent(transcriptCategory.id);
                       await storage.updateTicketStatus(ticket.id, "closed");
                       moveCount++;
@@ -600,8 +629,8 @@ export class DiscordBot {
           // Send final status
           await interaction.followUp({
             content: `✅ Processed ${channels.size} tickets:\n` +
-                      `• ${moveCount} tickets moved to transcripts\n` +
-                      `• ${errorCount} errors encountered`,
+                     `• ${moveCount} tickets moved to transcripts\n` +
+                     `• ${errorCount} errors encountered`,
             ephemeral: true
           });
         } catch (error) {
@@ -972,33 +1001,18 @@ export class DiscordBot {
     }
   }
 
-  async getRoles() {
+  private async getRoles() {
     try {
-      // Get the first guild (server) the bot is in
-      await this.globalCheck(); // Added rate limit check
       const guilds = await this.client.guilds.fetch();
-      const firstGuild = guilds.first();
-      if (!firstGuild) {
-        throw new Error("Bot is not in any servers");
-      }
+      const guild = await guilds.first()?.fetch();      if (!guild) throw new Error("No guild found");
 
-      // Fetch the complete guild object
-      const guild = await firstGuild.fetch();
-
-      // Get all roles in the guild
-      const roles = await guild.roles.fetch();
-      const roleList = roles.map(role => ({
+      return guild.roles.cache.sort((roleA, roleB) => {
+        return (roleB?.position || 0) - (roleA?.position || 0);
+      }).map(role => ({
         id: role.id,
         name: role.name,
         color: role.hexColor
       }));
-
-      // Sort roles by position (higher roles first)
-      return roleList.sort((a, b) => {
-        const roleA = roles.get(a.id);
-        const roleB = roles.get(b.id);
-        return (roleB?.position || 0) - (roleA?.position || 0);
-      });
     } catch (error) {
       log(`Error getting Discord roles: ${error}`, "error");
       throw error;
@@ -1013,7 +1027,7 @@ export class DiscordBot {
     try {
       // Destroy all webhooks
       for (const [_, webhooks] of this.webhooks) {
-                for (const pool of webhooks) {
+        for (const pool of webhooks) {
           try {
             await pool.webhook.destroy();
           } catch (error) {
