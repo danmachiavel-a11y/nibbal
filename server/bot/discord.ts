@@ -767,7 +767,6 @@ export class DiscordBot {
       await this.globalCheck();
       await this.webhookCheck(channelId);
 
-
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
         throw new Error(`Invalid channel type for channel ${channelId}`);
@@ -806,11 +805,6 @@ export class DiscordBot {
         try {
           const sentMessage = await webhook.send(messageOptions);
           log(`Successfully sent message to Discord channel ${channelId}`);
-
-          // Pin if it's a ticket message
-          if (message.embeds?.[0]?.title?.includes('New Ticket')) {
-            await sentMessage.pin();
-          }
           return;
         } catch (error) {
           retries++;
@@ -1017,7 +1011,7 @@ export class DiscordBot {
     } catch (error) {
       log(`Error stopping Discord bot: ${error}`, "error");
       throw error;
-        }
+    }
   }
 
   isReady() {

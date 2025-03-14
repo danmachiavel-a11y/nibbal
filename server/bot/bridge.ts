@@ -352,10 +352,9 @@ export class BridgeManager {
       const updatedTicket = await storage.getTicket(ticket.id);
       log(`Updated ticket status: ${JSON.stringify(updatedTicket)}`);
 
-      // Create embed for Q&A
+      // Send only one embed for the ticket creation
       const embed = {
         username: "Ticket Bot",
-        content: undefined, // We'll handle role ping separately
         embeds: [{
           title: "🎫 New Ticket",
           description: "A new support ticket has been created",
@@ -368,7 +367,7 @@ export class BridgeManager {
         }]
       };
 
-      // Send the formatted embed
+      // Send the formatted embed once
       await this.discordBot.sendMessage(
         channelId,
         embed,
@@ -387,7 +386,7 @@ export class BridgeManager {
       // Check if error is due to channel limit
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('Maximum number of channels in category') ||
-        errorMessage.includes('channel limit')) {
+          errorMessage.includes('channel limit')) {
         // Update ticket status to pending
         await storage.updateTicketStatus(ticket.id, "pending");
         throw new Error("Category is at maximum channel limit. Please try again later or contact an administrator.");
@@ -638,6 +637,8 @@ export class BridgeManager {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
   }
+
+
 
 
 
