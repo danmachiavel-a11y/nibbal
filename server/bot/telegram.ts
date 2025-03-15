@@ -1,8 +1,65 @@
 import { Telegraf, Context } from "telegraf";
+import { Update, Message, PhotoSize } from 'telegraf/types';
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
-import fetch from 'node-fetch';
+import fetch, { Response } from 'node-fetch';
+
+// Extend existing types
+interface TelegramUser {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+}
+
+// Helper types for Telegram messages
+interface BaseTelegramMessage {
+  message_id: number;
+  from?: TelegramUser;
+  chat: {
+    id: number;
+    type: string;
+  };
+  date: number;
+}
+
+interface TextTelegramMessage extends BaseTelegramMessage {
+  text: string;
+}
+
+interface PhotoTelegramMessage extends BaseTelegramMessage {
+  photo: Array<{
+    file_id: string;
+    file_size?: number;
+    width: number;
+    height: number;
+  }>;
+  caption?: string;
+}
+
+type TelegramMessage = TextTelegramMessage | PhotoTelegramMessage;
+
+interface TelegramCallbackQuery {
+  id: string;
+  from: TelegramUser;
+  message?: TelegramMessage;
+  chat_instance: string;
+  data?: string;
+}
+
+interface TelegramCategory {
+  id: number;
+  name: string;
+  isSubmenu?: boolean;
+  parentId?: number;
+  isClosed?: boolean;
+  newRow?: boolean;
+  serviceSummary?: string;
+  serviceImageUrl?: string;
+  questions?: string[];
+  transcriptCategoryId?: number;
+}
 
 interface CommandCooldown {
   lastUsed: number;
@@ -111,14 +168,14 @@ export class TelegramBot {
 
   private cleanupStaleStates() {
     const now = Date.now();
-    for (const [userId, cleanup] of this.stateCleanups) {
+    Array.from(this.stateCleanups.entries()).forEach(([userId, cleanup]) => {
       if (now - cleanup.createdAt > this.STATE_TIMEOUT) {
         this.userStates.delete(userId);
         this.stateCleanups.delete(userId);
         this.activeUsers.delete(userId);
         log(`Cleaned up stale state for user ${userId}`);
       }
-    }
+    });
   }
 
   private setState(userId: number, state: UserState) {
@@ -165,7 +222,13 @@ export class TelegramBot {
     try {
       if (!this._isConnected || this.isStarting) return;
 
-      const me = await this.bot?.telegram.getMe();
+      if (!this.bot) {
+        this.failedHeartbeats++;
+        log('Bot instance not found during heartbeat', 'warn');
+        return;
+      }
+
+      const me = await this.bot.telegram.getMe();
       if (!me) {
         this.failedHeartbeats++;
         log(`Heartbeat check failed (attempt ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}): Bot returned null`, "warn");
@@ -181,14 +244,20 @@ export class TelegramBot {
       // Reset failed heartbeats counter on successful check
       this.failedHeartbeats = 0;
     } catch (error) {
-      log(`Heartbeat check failed: ${error}`, "warn");
-      this.failedHeartbeats++;
+      if (error instanceof Error) {
+        const errorMessage = error.message;
+        log(`Heartbeat check failed: ${errorMessage}`, "warn");
+        this.failedHeartbeats++;
 
-      // Only disconnect on critical errors or after multiple failures
-      if ((error.message?.includes('restart') || error.message?.includes('unauthorized')) ||
-        this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
-        this._isConnected = false;
-        await this.handleDisconnect();
+        // Only disconnect on critical errors or after multiple failures
+        if ((errorMessage.includes('restart') || errorMessage.includes('unauthorized')) ||
+          this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
+          this._isConnected = false;
+          await this.handleDisconnect();
+        }
+      } else {
+        log(`Unknown error during heartbeat: ${error}`, "error");
+        this.failedHeartbeats++;
       }
     }
   }
@@ -413,16 +482,18 @@ export class TelegramBot {
 
   private async checkActiveUsers(userId: number): Promise<boolean> {
     // Clean up disconnected users first
-    for (const activeId of this.activeUsers) {
+    await Promise.all(Array.from(this.activeUsers).map(async (activeId) => {
       try {
-        await this.bot?.telegram.getChat(activeId);
+        if (this.bot) {
+          await this.bot.telegram.getChat(activeId);
+        }
       } catch (error) {
         this.activeUsers.delete(activeId);
         this.userStates.delete(activeId);
         this.stateCleanups.delete(activeId);
         log(`Removed inactive user ${activeId}`);
       }
-    }
+    }));
 
     // Check if we can add new user
     if (!this.activeUsers.has(userId)) {
@@ -434,41 +505,50 @@ export class TelegramBot {
     return true;
   }
 
-  private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
-    if (!ctx.message || !('text' in ctx.message)) return;
+  private async handleTicketMessage(ctx: Context) {
+    const message = ctx.message as TelegramMessage | undefined;
+    if (!message || !('text' in message)) return;
 
     const userId = ctx.from?.id;
     if (!userId) return;
 
     try {
-      // Check if user still has an active ticket
+      // Check for active ticket 
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
       const activeTicket = await storage.getActiveTicketByUserId(user.id);
-      if (!activeTicket || activeTicket.id !== ticket.id) {
-        await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets.");
         return;
       }
 
       // Process message
       await storage.createMessage({
-        ticketId: ticket.id,
-        content: ctx.message.text,
+        ticketId: activeTicket.id,
+        content: message.text,
         authorId: user.id,
         platform: "telegram",
         timestamp: new Date()
       });
 
       let avatarUrl: string | undefined;
-      try {
-        const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
-        if (photos && photos.total_count > 0) {
-          const fileId = photos.photos[0][0].file_id;
-          const file = await this.bot?.telegram.getFile(fileId);
-          if (file?.file_path) {
-            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+      if (this.bot) {
+        try {
+          const photos = await this.bot.telegram.getUserProfilePhotos(userId, 0, 1);
+          if (photos?.total_count > 0) {
+            const fileId = photos.photos[0][0].file_id;
+            const file = await this.bot.telegram.getFile(fileId);
+            if (file?.file_path) {
+              avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+            }
           }
+        } catch (error) {
+          log(`Error getting Telegram user avatar: ${error}`, "error");
         }
-      } catch (error) {
-        log(`Error getting Telegram user avatar: ${error}`, "error");
       }
 
       // Get user's first and last name
@@ -477,8 +557,8 @@ export class TelegramBot {
       const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
       await this.bridge.forwardToDiscord(
-        ctx.message.text,
-        ticket.id,
+        message.text,
+        activeTicket.id,
         displayName,
         avatarUrl,
         undefined, // photo parameter
@@ -486,9 +566,10 @@ export class TelegramBot {
         lastName
       );
 
-      log(`Message processed successfully for ticket ${ticket.id}`);
+      log(`Message processed successfully for ticket ${activeTicket.id}`);
     } catch (error) {
-      log(`Error in handleTicketMessage: ${error}`, "error");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error in handleTicketMessage: ${errorMessage}`, "error");
       await ctx.reply("Sorry, there was an error processing your message. Please try again.");
     }
   }
@@ -1014,80 +1095,8 @@ export class TelegramBot {
 
       log(`Started questionnaire for category ${categoryId}`);
     } catch (error) {
-      log(`Error in handleCategorySelection: ${error}`, "error");
-      await ctx.reply("❌ There was an error processing your selection. Please try again.");
-    }
-  }
-
-  private async handleCategorySelection(ctx: Context, categoryId: number) {
-    try {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      const category = await storage.getCategory(categoryId);
-      log(`Retrieved category: ${JSON.stringify(category, null, 2)}`);
-      
-      if (!category) {
-        await ctx.reply("❌ Invalid category selected.");
-        return;
-      }
-
-      if (category.isClosed) {
-        await ctx.reply("❌ This service is currently unavailable.");
-        return;
-      }
-
-      // Display service summary first
-      const serviceSummary = category.serviceSummary || "Our team is ready to assist you!";
-      log(`Service summary before escape: ${serviceSummary}`);
-      const summaryMessage = escapeMarkdown(serviceSummary);
-      log(`Service summary after escape: ${summaryMessage}`);
-
-      // Send summary message with image if available
-      if (category.serviceImageUrl) {
-        try {
-          await ctx.replyWithPhoto(
-            category.serviceImageUrl,
-            {
-              caption: summaryMessage,
-              parse_mode: "MarkdownV2",
-            }
-          );
-        } catch (error) {
-          log(`Error sending service image: ${error}`, "warn");
-          await ctx.reply(summaryMessage, { parse_mode: "MarkdownV2" });
-        }
-      } else {
-        await ctx.reply(summaryMessage, { parse_mode: "MarkdownV2" });
-      }
-
-      // Wait for the summary message to be sent
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Verify questions array
-      if (!category.questions || category.questions.length === 0) {
-        await ctx.reply("❌ This category is not properly configured.");
-        return;
-      }
-
-      // Start questionnaire
-      this.setState(userId, {
-        categoryId,
-        currentQuestion: 0,
-        answers: [],
-        inQuestionnaire: true
-      });
-
-      // Send first question with formatting
-      const question = category.questions[0];
-      await ctx.reply(
-        escapeMarkdown(`*Question 1/${category.questions.length}*:\n\n${question}`),
-        { parse_mode: "MarkdownV2" }
-      );
-
-      log(`Started questionnaire for category ${categoryId}`);
-    } catch (error) {
-      log(`Error in handleCategorySelection: ${error}`, "error");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error in handleCategorySelection: ${errorMessage}`, "error");
       await ctx.reply("❌ There was an error processing your selection. Please try again.");
     }
   }

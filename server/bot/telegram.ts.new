@@ -1,0 +1,674 @@
+import { Telegraf, Context } from "telegraf";
+import { storage } from "../storage";
+import { BridgeManager } from "./bridge";
+import { log } from "../vite";
+import fetch from 'node-fetch';
+
+interface CommandCooldown {
+  lastUsed: number;
+  count: number;
+}
+
+interface UserState {
+  categoryId: number;
+  currentQuestion: number;
+  answers: string[];
+  inQuestionnaire: boolean;
+}
+
+interface MessageRateLimit {
+  messages: number;
+  windowStart: number;
+  blockedUntil?: number;
+}
+
+interface StateCleanup {
+  timeout: NodeJS.Timeout;
+  createdAt: number;
+}
+
+function escapeMarkdown(text: string): string {
+  if (!text) return '';
+
+  // First, preserve existing markdown formatting
+  const preserveFormatting = [
+    { pattern: /\*\*(.*?)\*\*/g, placeholder: '§§BOLD§§' },
+    { pattern: /\*(.*?)\*/g, placeholder: '§§ITALIC§§' },
+    { pattern: /`(.*?)`/g, placeholder: '§§CODE§§' },
+    { pattern: /\[(.*?)\]\((.*?)\)/g, placeholder: '§§LINK§§' }
+  ];
+
+  let processedText = text;
+  const savedFormats: { placeholder: string, original: string }[] = [];
+
+  // Save formatted parts
+  preserveFormatting.forEach(({ pattern, placeholder }) => {
+    processedText = processedText.replace(pattern, (match) => {
+      savedFormats.push({ placeholder: `${placeholder}${savedFormats.length}`, original: match });
+      return `${placeholder}${savedFormats.length - 1}`;
+    });
+  });
+
+  // Escape special characters
+  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+  specialChars.forEach(char => {
+    processedText = processedText.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+  });
+
+  // Restore formatted parts
+  savedFormats.reverse().forEach(({ placeholder, original }) => {
+    processedText = processedText.replace(placeholder, original);
+  });
+
+  return processedText;
+}
+
+export class TelegramBot {
+  private bot: Telegraf | null = null;
+  private bridge: BridgeManager;
+  private userStates: Map<number, UserState> = new Map();
+  private stateCleanups: Map<number, StateCleanup> = new Map();
+  private _isConnected: boolean = false;
+  private isStarting: boolean = false;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private reconnectAttempts: number = 0;
+  private readonly MAX_RECONNECT_ATTEMPTS = 3;
+  private readonly CLEANUP_DELAY = 10000; // 10 seconds
+  private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes
+  private readonly STATE_TIMEOUT = 900000; // 15 minutes
+  private readonly RECONNECT_COOLDOWN = 30000; // 30 seconds
+  private readonly MAX_FAILED_HEARTBEATS = 3;
+  private failedHeartbeats = 0;
+
+  // Rate limiting and cooldown functionality
+  private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
+  private readonly COOLDOWN_WINDOW = 60000;
+  private readonly MAX_COMMANDS = 5;
+  private messageRateLimits: Map<number, MessageRateLimit> = new Map();
+  private readonly MESSAGE_WINDOW = 2000;
+  private readonly MAX_MESSAGES = 10;
+  private readonly SPAM_BLOCK_DURATION = 300000;
+  private readonly MAX_CONCURRENT_USERS = 500;
+  private activeUsers: Set<number> = new Set();
+
+  constructor(bridge: BridgeManager) {
+    try {
+      if (!process.env.TELEGRAM_BOT_TOKEN?.trim()) {
+        throw new Error("Invalid Telegram bot token");
+      }
+
+      this.bridge = bridge;
+
+      // Start cleanup interval for stale states
+      setInterval(() => this.cleanupStaleStates(), 60000);
+
+      log("Telegram bot instance created successfully");
+    } catch (error) {
+      log(`Error creating Telegram bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  private cleanupStaleStates() {
+    const now = Date.now();
+    for (const [userId, cleanup] of this.stateCleanups) {
+      if (now - cleanup.createdAt > this.STATE_TIMEOUT) {
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+        log(`Cleaned up stale state for user ${userId}`);
+      }
+    }
+  }
+
+  private setState(userId: number, state: UserState) {
+    // Clear existing timeout if any
+    const existing = this.stateCleanups.get(userId);
+    if (existing?.timeout) {
+      clearTimeout(existing.timeout);
+    }
+
+    // Set new state with timeout
+    this.userStates.set(userId, state);
+    const timeout = setTimeout(() => {
+      this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
+      log(`State timeout for user ${userId}`);
+    }, this.STATE_TIMEOUT);
+
+    this.stateCleanups.set(userId, {
+      timeout,
+      createdAt: Date.now()
+    });
+  }
+
+  private stopHeartbeat = (): void => {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  };
+
+  private startHeartbeat = (): void => {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+
+    this.heartbeatInterval = setInterval(
+      () => this.handleHeartbeat(),
+      this.HEARTBEAT_INTERVAL
+    );
+  };
+
+  private async handleHeartbeat() {
+    try {
+      if (!this._isConnected || this.isStarting) return;
+
+      const me = await this.bot?.telegram.getMe();
+      if (!me) {
+        this.failedHeartbeats++;
+        log(`Heartbeat check failed (attempt ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}): Bot returned null`, "warn");
+
+        // Only disconnect after multiple consecutive failures
+        if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
+          this._isConnected = false;
+          await this.handleDisconnect();
+        }
+        return;
+      }
+
+      // Reset failed heartbeats counter on successful check
+      this.failedHeartbeats = 0;
+    } catch (error) {
+      log(`Heartbeat check failed: ${error}`, "warn");
+      this.failedHeartbeats++;
+
+      // Only disconnect on critical errors or after multiple failures
+      if ((error.message?.includes('restart') || error.message?.includes('unauthorized')) ||
+        this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
+        this._isConnected = false;
+        await this.handleDisconnect();
+      }
+    }
+  }
+
+  async start() {
+    if (this.isStarting) {
+      log("Bot is already starting, waiting...");
+      return;
+    }
+
+    this.isStarting = true;
+
+    try {
+      log("Starting Telegram bot...");
+
+      // Stop existing bot if any
+      if (this.bot) {
+        await this.stop();
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY));
+      }
+
+      this._isConnected = false;
+      this.stopHeartbeat();
+      this.failedHeartbeats = 0;
+
+      // Create new bot instance
+      log("Creating new Telegram bot instance");
+      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+
+      // Add handlers
+      await this.setupHandlers();
+
+      // Add delay before launching
+      await new Promise(resolve => setTimeout(resolve, 5000));
+
+      // Launch with conservative options
+      await this.bot.launch({
+        dropPendingUpdates: true,
+        allowedUpdates: ["message", "callback_query"]
+      });
+
+      const botInfo = await this.bot.telegram.getMe();
+      log(`Connected as @${botInfo.username}`);
+
+      this._isConnected = true;
+      this.startHeartbeat();
+      this.reconnectAttempts = 0;
+
+      log("Telegram bot started successfully");
+    } catch (error) {
+      log(`Error starting Telegram bot: ${error}`, "error");
+      this._isConnected = false;
+      this.failedHeartbeats = 0;
+
+      if (error instanceof Error && error.message.includes("409: Conflict")) {
+        log("409 Conflict detected - another bot instance is already running", "error");
+        await this.stop();
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 2));
+      }
+
+      throw error;
+    } finally {
+      this.isStarting = false;
+    }
+  }
+
+  async stop() {
+    try {
+      log("Stopping Telegram bot...");
+      this.stopHeartbeat();
+
+      if (this.bot) {
+        try {
+          await this.bot.stop();
+        } catch (error) {
+          log(`Error during bot stop: ${error}`, "warn");
+        } finally {
+          this.bot = null;
+        }
+      }
+
+      this._isConnected = false;
+      this.isStarting = false;
+      this.userStates.clear();
+      this.stateCleanups.clear();
+      this.reconnectAttempts = 0;
+      this.commandCooldowns.clear();
+      this.messageRateLimits.clear();
+      this.activeUsers.clear();
+      this.failedHeartbeats = 0;
+
+      log("Telegram bot stopped successfully");
+    } catch (error) {
+      log(`Error stopping Telegram bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  getIsConnected(): boolean {
+    return this._isConnected && this.bot !== null;
+  }
+
+
+  private async handleDisconnect() {
+    if (this.isStarting) return;
+
+    log("Bot disconnected, attempting to reconnect...");
+    await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN));
+
+    try {
+      if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+        log("Max reconnection attempts reached, waiting for longer cooldown", "warn");
+        this.reconnectAttempts = 0;
+        await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN * 2));
+      }
+
+      log(`Attempting to reconnect (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
+
+      // Stop existing bot instance gracefully
+      if (this.bot) {
+        try {
+          await this.bot.stop();
+        } catch (error) {
+          log(`Error stopping bot during reconnect: ${error}`, "warn");
+        }
+      }
+
+      await this.start();
+      this.reconnectAttempts = 0;
+      log("Reconnection successful");
+    } catch (error) {
+      this.reconnectAttempts++;
+      log(`Reconnection attempt failed: ${error}`, "error");
+
+      if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+        await this.handleDisconnect();
+      } else {
+        log("Max reconnection attempts reached", "error");
+        this.reconnectAttempts = 0;
+      }
+    }
+  }
+
+  async sendMessage(chatId: number, text: string) {
+    try {
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
+      }
+
+      await this.bot.telegram.sendMessage(chatId, escapeMarkdown(text), {
+        parse_mode: "MarkdownV2"
+      });
+    } catch (error) {
+      log(`Error sending message: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async sendPhoto(chatId: number, photo: Buffer | string, caption?: string): Promise<string | undefined> {
+    try {
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
+      }
+
+      log(`Sending photo to chat ${chatId}`);
+      let sentMessage;
+
+      // If photo is a URL, download it first
+      if (typeof photo === 'string' && photo.startsWith('http')) {
+        const response = await fetch(photo);
+        const buffer = await response.buffer();
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: buffer }, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      } else if (photo instanceof Buffer) {
+        // Handle buffer by using InputFile format
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: photo }, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      } else {
+        // Handle file_id string
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, photo, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      }
+
+      // Return the file_id for caching
+      if (sentMessage?.photo && sentMessage.photo.length > 0) {
+        const fileId = sentMessage.photo[sentMessage.photo.length - 1].file_id;
+        log(`Got file_id ${fileId} for photo`);
+        return fileId;
+      }
+
+      log(`Successfully sent photo to chat ${chatId}`);
+      return undefined;
+    } catch (error) {
+      log(`Error sending photo: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  async sendCachedPhoto(chatId: number, fileId: string, caption?: string): Promise<void> {
+    try {
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
+      }
+
+      await this.bot.telegram.sendPhoto(chatId, fileId, {
+        caption: caption ? escapeMarkdown(caption) : undefined,
+        parse_mode: "MarkdownV2"
+      });
+
+      log(`Successfully sent cached photo (${fileId}) to chat ${chatId}`);
+    } catch (error) {
+      log(`Error sending cached photo: ${error}`, "error");
+      throw error;
+    }
+  }
+
+  private async checkActiveUsers(userId: number): Promise<boolean> {
+    // Clean up disconnected users first
+    for (const activeId of this.activeUsers) {
+      try {
+        await this.bot?.telegram.getChat(activeId);
+      } catch (error) {
+        this.activeUsers.delete(activeId);
+        this.userStates.delete(activeId);
+        this.stateCleanups.delete(activeId);
+        log(`Removed inactive user ${activeId}`);
+      }
+    }
+
+    // Check if we can add new user
+    if (!this.activeUsers.has(userId)) {
+      if (this.activeUsers.size >= this.MAX_CONCURRENT_USERS) {
+        return false;
+      }
+      this.activeUsers.add(userId);
+    }
+    return true;
+  }
+
+  private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    try {
+      // Check if user still has an active ticket
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket || activeTicket.id !== ticket.id) {
+        await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
+        return;
+      }
+
+      // Process message
+      await storage.createMessage({
+        ticketId: ticket.id,
+        content: ctx.message.text,
+        authorId: user.id,
+        platform: "telegram",
+        timestamp: new Date()
+      });
+
+      let avatarUrl: string | undefined;
+      try {
+        const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+        if (photos && photos.total_count > 0) {
+          const fileId = photos.photos[0][0].file_id;
+          const file = await this.bot?.telegram.getFile(fileId);
+          if (file?.file_path) {
+            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+          }
+        }
+      } catch (error) {
+        log(`Error getting Telegram user avatar: ${error}`, "error");
+      }
+
+      // Get user's first and last name
+      const firstName = ctx.from?.first_name || "";
+      const lastName = ctx.from?.last_name || "";
+      const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
+
+      await this.bridge.forwardToDiscord(
+        ctx.message.text,
+        ticket.id,
+        displayName,
+        avatarUrl,
+        undefined, // photo parameter
+        firstName,
+        lastName
+      );
+
+      log(`Message processed successfully for ticket ${ticket.id}`);
+    } catch (error) {
+      log(`Error in handleTicketMessage: ${error}`, "error");
+      await ctx.reply("Sorry, there was an error processing your message. Please try again.");
+    }
+  }
+
+  private async handleCategoryMenu(ctx: Context) {
+    const botConfig = await storage.getBotConfig();
+    const categories = await storage.getCategories();
+
+    const submenus = categories.filter(cat => cat.isSubmenu);
+    const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
+
+    const keyboard: { text: string; callback_data: string; }[][] = [];
+    let currentRow: { text: string; callback_data: string; }[] = [];
+
+    for (const submenu of submenus) {
+      const button = {
+        text: submenu.isClosed ? `🔴 ${submenu.name}` : submenu.name,
+        callback_data: `submenu_${submenu.id}`
+      };
+
+      if (submenu.newRow && currentRow.length > 0) {
+        keyboard.push([...currentRow]);
+        currentRow = [button];
+      } else {
+        currentRow.push(button);
+        if (currentRow.length >= 2) {
+          keyboard.push([...currentRow]);
+          currentRow = [];
+        }
+      }
+    }
+
+    for (const category of rootCategories) {
+      const button = {
+        text: category.isClosed ? `🔴 ${category.name}` : category.name,
+        callback_data: `category_${category.id}`
+      };
+
+      if (category.newRow && currentRow.length > 0) {
+        keyboard.push([...currentRow]);
+        currentRow = [button];
+      } else {
+        currentRow.push(button);
+        if (currentRow.length >= 2) {
+          keyboard.push([...currentRow]);
+          currentRow = [];
+        }
+      }
+    }
+
+    if (currentRow.length > 0) {
+      keyboard.push(currentRow);
+    }
+
+    const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
+
+    if (botConfig?.welcomeImageUrl) {
+      try {
+        await ctx.replyWithPhoto(
+          botConfig.welcomeImageUrl,
+          {
+            caption: welcomeMessage,
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          }
+        );
+      } catch (error) {
+            log(`Failed to send welcome image: ${error}`, "error");
+            await ctx.reply(welcomeMessage, {
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            });
+      }
+    } else {
+      await ctx.reply(welcomeMessage, {
+        parse_mode: "MarkdownV2",
+        reply_markup: { inline_keyboard: keyboard }
+      });
+    }
+  }
+
+  private async handlePhotoMessage(ctx: Context, user: User, ticket: Ticket) {
+    try {
+      if (!ctx.message || !('photo' in ctx.message) || !ctx.message.photo) {
+        return;
+      }
+
+      const photo = ctx.message.photo[ctx.message.photo.length - 1];
+      const caption = 'caption' in ctx.message ? ctx.message.caption : undefined;
+
+      await this.bridge.forwardToDiscord(
+        caption || '',
+        ticket.id,
+        user.username || 'Unknown',
+        undefined,
+        photo.file_id,
+        ctx.from?.first_name,
+        ctx.from?.last_name
+      );
+
+      log(`Successfully forwarded photo from Telegram user ${user.id} to Discord`);
+    } catch (error) {
+      log(`Error handling photo message: ${error}`, "error");
+    }
+  }
+
+  private async handleTicketMessage(ctx: Context, user: User, ticket: Ticket) {
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    try {
+      await this.bridge.forwardToDiscord(
+        ctx.message.text,
+        ticket.id,
+        user.username || 'Unknown',
+        undefined,
+        undefined,
+        ctx.from?.first_name,
+        ctx.from?.last_name
+      );
+
+      log(`Successfully forwarded message from Telegram user ${user.id} to Discord`);
+    } catch (error) {
+      log(`Error forwarding message to Discord: ${error}`, "error");
+    }
+  }
+
+  async sendMessage(chatId: number, message: string) {
+    try {
+      await this.bot.telegram.sendMessage(chatId, message);
+      return true;
+    } catch (error) {
+      log(`Error sending Telegram message: ${error}`, "error");
+      return false;
+    }
+  }
+
+  async sendPhoto(chatId: number, photo: Buffer | string, caption?: string) {
+    try {
+      const response = await this.bot.telegram.sendPhoto(chatId, photo, {
+        caption
+      });
+      return response.photo[response.photo.length - 1].file_id;
+    } catch (error) {
+      log(`Error sending photo to Telegram: ${error}`, "error");
+      return null;
+    }
+  }
+
+  async sendCachedPhoto(chatId: number, fileId: string, caption?: string) {
+    try {
+      await this.bot.telegram.sendPhoto(chatId, fileId, {
+        caption
+      });
+      return true;
+    } catch (error) {
+      log(`Error sending cached photo to Telegram: ${error}`, "error");
+      return false;
+    }
+  }
+
+  getIsConnected(): boolean {
+    return this.isConnected;
+  }
+
+  private setState(userId: number, state: UserState) {
+    this.userStates.set(userId, state);
+
+    // Clear any existing cleanup
+    const existingCleanup = this.stateCleanups.get(userId);
+    if (existingCleanup) {
+      clearTimeout(existingCleanup);
+    }
+
+    // Set new cleanup
+    const cleanup = setTimeout(() => {
+      this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
+    }, this.STATE_TIMEOUT);
+
+    this.stateCleanups.set(userId, cleanup);
+  }
+}
