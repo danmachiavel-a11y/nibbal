@@ -1,9 +1,36 @@
 import { Telegraf, Context } from "telegraf";
-import { Update, Message, PhotoSize } from 'telegraf/types';
+import { Update, Message, PhotoSize, CallbackQuery } from 'telegraf/types';
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
 import { log } from "../vite";
-import fetch, { Response } from 'node-fetch';
+import * as nodeFetch from 'node-fetch';
+declare module 'node-fetch' {}
+const fetch = (nodeFetch.default || nodeFetch) as typeof nodeFetch.default;
+
+// Fix Context type
+interface TelegramContext extends Context<Update> {
+  from: {
+    id: number;
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+  };
+  message?: Message.TextMessage | Message.PhotoMessage;
+  callbackQuery?: {
+    data: string;
+    message: Message;
+    id: string;
+    from: {
+      id: number;
+      username?: string;
+      first_name?: string;
+      last_name?: string;
+    };
+  };
+  reply: (text: string, extra?: any) => Promise<Message>;
+  editMessageText: (text: string, extra?: any) => Promise<true | Message>;
+  answerCbQuery: (text?: string) => Promise<true>;
+};
 
 // Extend existing types
 interface TelegramUser {
@@ -505,7 +532,162 @@ export class TelegramBot {
     return true;
   }
 
-  private async handleTicketMessage(ctx: Context) {
+  private async handleStart(ctx: TelegramContext) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    if (!await this.checkCommandCooldown(userId, 'start')) {
+      await ctx.reply("⚠️ Please wait before using this command again.");
+      return;
+    }
+
+    try {
+      // Check for existing active ticket
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          const category = await storage.getCategory(activeTicket.categoryId);
+          const categoryName = escapeMarkdown(category?.name || "Unknown");
+          await ctx.reply(
+            `❌ You already have an active ticket in *${categoryName}* category\\.\n\n` +
+            "You cannot create a new ticket while you have an active one\\.\n" +
+            "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket\\.",
+            { parse_mode: "MarkdownV2" }
+          );
+          return;
+        }
+      }
+
+      await this.showWelcomeMenu(ctx);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error in start command: ${errorMessage}`, "error");
+      await ctx.reply("❌ There was an error processing your request. Please try again.");
+    }
+  }
+
+  private async handleCancel(ctx: TelegramContext) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    try {
+      // Clear questionnaire state if exists
+      const state = this.userStates.get(userId);
+      if (state?.inQuestionnaire) {
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+      }
+
+      // Force close any active ticket
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          await storage.updateTicketStatus(activeTicket.id, "closed");
+          if (activeTicket.discordChannelId) {
+            try {
+              await this.bridge.moveToTranscripts(activeTicket.id);
+            } catch (error) {
+              log(`Failed to move ticket to transcripts during cancel: ${error}`, "warn");
+            }
+          }
+        }
+      }
+
+      await ctx.reply("✅ All operations cancelled. Use /start when you're ready to begin again.");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error in cancel command: ${errorMessage}`, "error");
+      // Even if there's an error, try to clear states
+      this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
+      await ctx.reply("✅ Reset completed. Use /start to begin again.");
+    }
+  }
+
+  private async handleClose(ctx: TelegramContext) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    try {
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets to close.");
+        return;
+      }
+
+      const category = await storage.getCategory(activeTicket.categoryId);
+      if (!category?.transcriptCategoryId) {
+        await ctx.reply(
+          "❌ Cannot close ticket: No transcript category set for this service. " +
+          "Please contact an administrator."
+        );
+        return;
+      }
+
+      await storage.updateTicketStatus(activeTicket.id, "closed");
+
+      if (activeTicket.discordChannelId) {
+        try {
+          await this.bridge.moveToTranscripts(activeTicket.id);
+          await ctx.reply(
+            "✅ Your ticket has been closed and moved to transcripts.\n" +
+            "Use /start to create a new ticket if needed."
+          );
+        } catch (error) {
+          log(`Error moving ticket to transcripts: ${error}`, "error");
+          await ctx.reply("❌ Error moving ticket to transcripts. Please try again or contact an administrator.");
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error in close command: ${errorMessage}`, "error");
+      await ctx.reply("❌ There was an error closing your ticket. Please try again.");
+    }
+  }
+
+  private async handleStatus(ctx: TelegramContext) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    try {
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets.");
+        return;
+      }
+
+      const category = await storage.getCategory(activeTicket.categoryId);
+      await ctx.reply(
+        `Your active ticket:\n\n` +
+        `Category: *${category?.name || "Unknown"}*\n` +
+        `Status: *${activeTicket.status}*\n` +
+        `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
+        { parse_mode: "Markdown" }
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error in status command: ${errorMessage}`, "error");
+      await ctx.reply("❌ There was an error checking your ticket status. Please try again.");
+    }
+  }
+
+  private async handleTicketMessage(ctx: TelegramContext) {
     const message = ctx.message as TelegramMessage | undefined;
     if (!message || !('text' in message)) return;
 
@@ -1033,8 +1215,6 @@ export class TelegramBot {
       if (!userId) return;
 
       const category = await storage.getCategory(categoryId);
-      log(`Retrieved category: ${JSON.stringify(category, null, 2)}`);
-      
       if (!category) {
         await ctx.reply("❌ Invalid category selected.");
         return;
@@ -1044,33 +1224,6 @@ export class TelegramBot {
         await ctx.reply("❌ This service is currently unavailable.");
         return;
       }
-
-      // Display service summary first
-      const serviceSummary = category.serviceSummary || "Our team is ready to assist you!";
-      log(`Service summary before escape: ${serviceSummary}`);
-      const summaryMessage = escapeMarkdown(serviceSummary);
-      log(`Service summary after escape: ${summaryMessage}`);
-
-      // Send summary message with image if available
-      if (category.serviceImageUrl) {
-        try {
-          await ctx.replyWithPhoto(
-            category.serviceImageUrl,
-            {
-              caption: summaryMessage,
-              parse_mode: "MarkdownV2",
-            }
-          );
-        } catch (error) {
-          log(`Error sending service image: ${error}`, "warn");
-          await ctx.reply(summaryMessage, { parse_mode: "MarkdownV2" });
-        }
-      } else {
-        await ctx.reply(summaryMessage, { parse_mode: "MarkdownV2" });
-      }
-
-      // Wait for the summary message to be sent
-      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Verify questions array
       if (!category.questions || category.questions.length === 0) {
@@ -1101,69 +1254,117 @@ export class TelegramBot {
     }
   }
 
-  private async handlePhotoMessage(ctx: Context, user: any, ticket: any) {
+  private async handlePhotoMessage(ctx: Context, user: any, ticket: { id: number }) {
+    if (!ctx.message || !('photo' in ctx.message) || !ctx.message.photo) {
+      return;
+    }
+
     try {
-      const photos = ctx.message?.photo;
-      if (!photos) return;
-      
-      const bestPhoto = photos[photos.length - 1];
-      const file = await ctx.telegram.getFile(bestPhoto.file_id);
-      const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+      const photo = ctx.message.photo[ctx.message.photo.length - 1];
+      const caption = 'caption' in ctx.message ? ctx.message.caption : undefined;
 
-      let avatarUrl: string | undefined;
-      try {
-        const userPhotos = await ctx.telegram.getUserProfilePhotos(ctx.from!.id, 0, 1);
-        if (userPhotos && userPhotos.total_count > 0) {
-          const fileId = userPhotos.photos[0][0].file_id;
-          const avatarFile = await ctx.telegram.getFile(fileId);
-          avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${avatarFile.file_path}`;
-        }
-      } catch (error) {
-        log(`Error getting Telegram user avatar: ${error}`, "error");
-      }
-
-      // Create message record
-      await storage.createMessage({
-        ticketId: ticket.id,
-        content: ctx.message?.caption || "Image sent",
-        authorId: user.id,
-        platform: "telegram",
-        timestamp: new Date()
-      });
-
-      // Forward to Discord
-      const firstName = ctx.from?.first_name || "";
-      const lastName = ctx.from?.last_name || "";
-      const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
-
-      // Send caption if exists
-      if (ctx.message?.caption) {
-        await this.bridge.forwardToDiscord(
-          ctx.message.caption,
-          ticket.id,
-          displayName,
-          avatarUrl,
-          undefined,
-          firstName,
-          lastName
-        );
-      }
-
-      // Send the image
       await this.bridge.forwardToDiscord(
-        "",
+        caption || '',
         ticket.id,
-        displayName,
-        avatarUrl,
-        imageUrl,
-        firstName,
-        lastName
+        user.username || 'Unknown',
+        undefined,
+        photo.file_id,
+        user.first_name,
+        user.last_name
       );
 
-      log(`Successfully processed photo message for ticket ${ticket.id}`);
+      log(`Successfully forwarded photo from Telegram user ${user.id} to Discord`);
     } catch (error) {
-      log(`Error handling photo message: ${error}`, "error");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error handling photo message: ${errorMessage}`, "error");
       await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
+    }
+  }
+
+  private async handleQuestionnaireMessage(ctx: Context) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const state = this.userStates.get(userId);
+    if (!state?.inQuestionnaire) return;
+
+    try {
+      const category = await storage.getCategory(state.categoryId);
+      if (!category?.questions) {
+        await ctx.reply("❌ There was an error with the questionnaire. Please try /start again.");
+        this.userStates.delete(userId);
+        return;
+      }
+
+      // Add answer to state
+      if ('text' in ctx.message) {
+        state.answers.push(ctx.message.text);
+      } else {
+        await ctx.reply("❌ Please provide a text response.");
+        return;
+      }
+
+      // Check if more questions
+      if (state.currentQuestion < category.questions.length - 1) {
+        state.currentQuestion++;
+        this.setState(userId, state);
+
+        // Send next question
+        const nextQuestion = category.questions[state.currentQuestion];
+        await ctx.reply(
+          escapeMarkdown(`*Question ${state.currentQuestion + 1}/${category.questions.length}*:\n\n${nextQuestion}`),
+          { parse_mode: "MarkdownV2" }
+        );
+      } else {
+        // Create user if not exists
+        let user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          user = await storage.createUser({
+            telegramId: userId.toString(),
+            username: ctx.from.username || undefined,
+            platform: "telegram"
+          });
+        }
+
+        // Create ticket
+        const ticket = await storage.createTicket({
+          userId: user.id,
+          categoryId: state.categoryId,
+          status: "open",
+          answers: state.answers
+        });
+
+        // Clear questionnaire state
+        this.userStates.delete(userId);
+
+        // Notify success
+        await ctx.reply(
+          "✅ Your support ticket has been created!\n\n" +
+          "You can now continue chatting here to update your ticket.\n" +
+          "Use /status to check your ticket status\n" +
+          "Use /close when your issue is resolved\n" +
+          "Use /ping to notify staff if you need attention"
+        );
+
+        // Forward to Discord
+        const category = await storage.getCategory(state.categoryId);
+        await this.bridge.createDiscordChannel(
+          ticket.id,
+          category?.name || "Unknown",
+          ctx.from.username || "Unknown",
+          state.answers,
+          undefined,
+          ctx.from.first_name,
+          ctx.from.last_name
+        );
+
+        log(`Created ticket ${ticket.id} for user ${user.id}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error in handleQuestionnaireMessage: ${errorMessage}`, "error");
+      await ctx.reply("❌ There was an error processing your response. Please try /start again.");
+      this.userStates.delete(userId);
     }
   }
 

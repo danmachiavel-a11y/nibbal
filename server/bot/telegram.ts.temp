@@ -386,7 +386,6 @@ export class TelegramBot {
     return this._isConnected && this.bot !== null;
   }
 
-
   private async handleDisconnect() {
     if (this.isStarting) return;
 
@@ -546,4 +545,90 @@ export class TelegramBot {
         return;
       }
 
-      const activeTicket = await storage.getActiveTic
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets.");
+        return;
+      }
+
+      const category = await storage.getCategory(activeTicket.categoryId);
+      await ctx.reply(
+        `Your active ticket:\n\n` +
+        `Category: *${category?.name || "Unknown"}*\n` +
+        `Status: *${activeTicket.status}*\n` +
+        `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
+        { parse_mode: "Markdown" }
+      );
+    } catch (error) {
+      log(`Error sending message: ${error}`, "error");
+      await ctx.reply("❌ There was an error processing your message. Please try again.");
+    }
+  }
+
+  private checkCommandCooldown(userId: number, command: string): boolean {
+    const now = Date.now();
+    let userCooldowns = this.commandCooldowns.get(userId);
+    
+    if (!userCooldowns) {
+      userCooldowns = new Map();
+      this.commandCooldowns.set(userId, userCooldowns);
+    }
+
+    const cooldown = userCooldowns.get(command);
+    if (!cooldown) {
+      userCooldowns.set(command, { lastUsed: now, count: 1 });
+      return true;
+    }
+
+    if (now - cooldown.lastUsed > this.COOLDOWN_WINDOW) {
+      userCooldowns.set(command, { lastUsed: now, count: 1 });
+      return true;
+    }
+
+    if (cooldown.count >= this.MAX_COMMANDS) {
+      return false;
+    }
+
+    cooldown.count++;
+    cooldown.lastUsed = now;
+    return true;
+  }
+
+  private checkMessageRateLimit(userId: number): boolean {
+    const now = Date.now();
+    const rateLimit = this.messageRateLimits.get(userId);
+
+    if (!rateLimit) {
+      this.messageRateLimits.set(userId, {
+        messages: 1,
+        windowStart: now
+      });
+      return true;
+    }
+
+    if (rateLimit.blockedUntil && now < rateLimit.blockedUntil) {
+      return false;
+    }
+
+    if (now - rateLimit.windowStart > this.MESSAGE_WINDOW) {
+      this.messageRateLimits.set(userId, {
+        messages: 1,
+        windowStart: now
+      });
+      return true;
+    }
+
+    if (rateLimit.messages >= this.MAX_MESSAGES) {
+      this.messageRateLimits.set(userId, {
+        ...rateLimit,
+        blockedUntil: now + this.SPAM_BLOCK_DURATION
+      });
+      return false;
+    }
+
+    rateLimit.messages++;
+    return true;
+  }
+}
+
+export { TelegramBot };
