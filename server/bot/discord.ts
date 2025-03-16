@@ -764,17 +764,29 @@ export class DiscordBot {
 
   private async sendTicketMessage(channelId: string, embed: any): Promise<void> {
     try {
+      log(`Attempting to send and pin ticket message in channel ${channelId}`);
+
       // Send only through the bot's native message functionality
       const channel = await this.client.channels.fetch(channelId);
-      if (channel instanceof TextChannel) {
-        const message = await channel.send({ embeds: embed.embeds });
-        await message.pin();
-        log(`Successfully sent and pinned ticket message in channel ${channelId}`);
-      } else {
+      if (!(channel instanceof TextChannel)) {
         throw new Error(`Invalid channel type for channel ${channelId}`);
       }
+
+      // Send the message first
+      const message = await channel.send({ embeds: embed.embeds });
+
+      try {
+        // Pin the message using the pinnable interface
+        await message.pin();
+        log(`Successfully pinned message in channel ${channelId}`);
+      } catch (pinError) {
+        log(`Error pinning message: ${pinError}`, "error");
+        // Don't throw here - the message was sent successfully even if pinning failed
+      }
+
+      log(`Successfully sent ticket message in channel ${channelId}`);
     } catch (error) {
-      log(`Error sending/pinning ticket message: ${error}`, "error");
+      log(`Error sending ticket message: ${error}`, "error");
       throw error;
     }
   }
