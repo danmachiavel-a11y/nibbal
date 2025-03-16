@@ -82,14 +82,39 @@ export class BridgeManager {
   // Image processing methods
   private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
     try {
-      const file = await this.telegramBot.bot?.telegram.getFile(fileId);
-      if (!file?.file_path) return null;
+      if (!this.telegramBot.bot?.telegram) {
+        throw new Error("Telegram bot not initialized");
+      }
 
-      const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-      const response = await fetch(fileUrl);
-      if (!response.ok) return null;
+      const file = await this.telegramBot.bot.telegram.getFile(fileId);
+      if (!file?.file_path) {
+        log(`No file path found for file ID: ${fileId}`, "error");
+        return null;
+      }
 
-      return Buffer.from(await response.arrayBuffer());
+      // Add retry mechanism for file fetching
+      let retries = 0;
+      const maxRetries = 3;
+
+      while (retries < maxRetries) {
+        try {
+          const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+          const response = await fetch(fileUrl);
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          return Buffer.from(await response.arrayBuffer());
+        } catch (error) {
+          retries++;
+          if (retries === maxRetries) throw error;
+          // Exponential backoff
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retries)));
+        }
+      }
+
+      throw new Error("Max retries reached");
     } catch (error) {
       log(`Error processing Telegram image: ${error}`, "error");
       return null;
@@ -382,7 +407,7 @@ export class BridgeManager {
       // Check if error is due to channel limit
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('Maximum number of channels in category') ||
-          errorMessage.includes('channel limit')) {
+        errorMessage.includes('channel limit')) {
         // Update ticket status to pending
         await storage.updateTicketStatus(ticket.id, "pending");
         throw new Error("Category is at maximum channel limit. Please try again later or contact an administrator.");
@@ -553,7 +578,7 @@ export class BridgeManager {
       // Handle photo if present
       if (photo) {
         try {
-          log(`Processing photo`);
+          log(`Processing photo with ID: ${photo}`);
           const buffer = await this.processTelegramToDiscord(photo);
           if (!buffer) {
             throw new Error("Failed to process image");
@@ -571,17 +596,19 @@ export class BridgeManager {
                 },
                 displayName
               );
+              // Add delay between messages to prevent rate limiting
+              await new Promise(resolve => setTimeout(resolve, 1000));
             } catch (error) {
               log(`Error sending text message: ${error}`, "error");
             }
           }
 
-          // Then send the photo
+          // Then send the photo with proper error handling
           try {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: " ", // Ensure content is always a valid string
+                content: " ",
                 avatarURL: avatarUrl,
                 files: [{
                   attachment: buffer,
@@ -593,6 +620,7 @@ export class BridgeManager {
             log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
           } catch (error) {
             log(`Error sending photo: ${error}`, "error");
+            throw error; // Propagate error for proper handling
           }
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
@@ -602,7 +630,7 @@ export class BridgeManager {
               await this.discordBot.sendMessage(
                 ticket.discordChannelId,
                 {
-                  content: String(content).trim(),
+                  content: `${String(content).trim()}\n\n⚠️ Failed to send attached image.`,
                   avatarURL: avatarUrl
                 },
                 displayName
@@ -633,8 +661,6 @@ export class BridgeManager {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
   }
-
-
 
 
 
