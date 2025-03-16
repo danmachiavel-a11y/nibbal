@@ -97,10 +97,7 @@ export class BridgeManager {
       while (retries < maxRetries) {
         try {
           file = await this.telegramBot.bot.telegram.getFile(fileId);
-          if (file?.file_path) break;
-
-          retries++;
-          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retries)));
+          break;
         } catch (error) {
           log(`Attempt ${retries + 1}/${maxRetries} failed: ${error}`, "warn");
           retries++;
@@ -695,7 +692,7 @@ export class BridgeManager {
         }
       }
 
-      log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
+      log(`Successfully forwarded message to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
