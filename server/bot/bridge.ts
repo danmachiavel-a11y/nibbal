@@ -96,6 +96,11 @@ export class BridgeManager {
 
       while (retries < maxRetries) {
         try {
+          // Only try to get file if fileId is not a URL
+          if (fileId.startsWith('http')) {
+            throw new Error("Invalid file ID format: Received URL instead of file ID");
+          }
+
           file = await this.telegramBot.bot.telegram.getFile(fileId);
           break;
         } catch (error) {
@@ -599,6 +604,11 @@ export class BridgeManager {
       // Handle photo if present
       if (photo) {
         try {
+          // Verify that photo is a valid file_id and not a URL
+          if (photo.startsWith('http')) {
+            throw new Error("Invalid photo format: Received URL instead of file ID");
+          }
+
           log(`Processing photo with ID: ${photo}`);
 
           // Add delay before processing to avoid rate limits
