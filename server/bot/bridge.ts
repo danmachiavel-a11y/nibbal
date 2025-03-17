@@ -561,14 +561,14 @@ export class BridgeManager {
       // Handle photo if present
       if (photo) {
         try {
-          log(`Processing photo`);
+          log(`Processing photo with ID: ${photo}`);
           const buffer = await this.processTelegramToDiscord(photo);
           if (!buffer) {
             throw new Error("Failed to process image");
           }
 
           // Send text content first if exists
-          if (content && content.trim()) {
+          if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
@@ -579,15 +579,16 @@ export class BridgeManager {
             );
           }
 
-          // Then send the photo in a separate message
+          // Send photo in a separate message
           await this.discordBot.sendMessage(
             ticket.discordChannelId,
             {
-              content: "\u200B", // Zero-width space as content
+              content: "\u200B",
               files: [{
                 attachment: buffer,
                 name: 'image.jpg'
-              }]
+              }],
+              avatarURL: avatarUrl
             },
             displayName
           );
@@ -596,7 +597,7 @@ export class BridgeManager {
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
           // If photo fails, still try to send the text content
-          if (content && content.trim()) {
+          if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
