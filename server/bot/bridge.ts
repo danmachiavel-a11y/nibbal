@@ -86,63 +86,21 @@ export class BridgeManager {
         throw new Error("Telegram bot not initialized");
       }
 
-      // Add detailed logging
-      log(`Processing Telegram file ID: ${fileId}`);
-
-      // Get file info with retries
-      let file;
-      let retries = 0;
-      const maxRetries = 3;
-
-      while (retries < maxRetries) {
-        try {
-          // Only try to get file if fileId is not a URL
-          if (fileId.startsWith('http')) {
-            throw new Error("Invalid file ID format: Received URL instead of file ID");
-          }
-
-          file = await this.telegramBot.bot.telegram.getFile(fileId);
-          break;
-        } catch (error) {
-          log(`Attempt ${retries + 1}/${maxRetries} failed: ${error}`, "warn");
-          retries++;
-          if (retries === maxRetries) throw error;
-          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retries)));
-        }
-      }
-
+      const file = await this.telegramBot.bot.telegram.getFile(fileId);
       if (!file?.file_path) {
         throw new Error(`Could not get file path for ID: ${fileId}`);
       }
 
-      log(`Got file path: ${file.file_path}`);
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+      const response = await fetch(fileUrl);
 
-      // Download file with retries
-      retries = 0;
-      while (retries < maxRetries) {
-        try {
-          const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-          const response = await fetch(fileUrl);
-
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const buffer = Buffer.from(await response.arrayBuffer());
-          log(`Successfully downloaded file, size: ${buffer.length} bytes`);
-          return buffer;
-        } catch (error) {
-          log(`Download attempt ${retries + 1}/${maxRetries} failed: ${error}`, "warn");
-          retries++;
-          if (retries === maxRetries) throw error;
-          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retries)));
-        }
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      throw new Error("Max retries reached");
+      return Buffer.from(await response.arrayBuffer());
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      log(`Error processing Telegram image: ${errorMessage}`, "error");
+      log(`Error processing Telegram image: ${error}`, "error");
       return null;
     }
   }
@@ -604,102 +562,66 @@ export class BridgeManager {
       // Handle photo if present
       if (photo) {
         try {
-          // Verify that photo is a valid file_id and not a URL
-          if (photo.startsWith('http')) {
-            throw new Error("Invalid photo format: Received URL instead of file ID");
+          const imageUrl = photo; // Use photo URL directly if provided
+          const response = await fetch(imageUrl);
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
           }
 
-          log(`Processing photo with ID: ${photo}`);
-
-          // Add delay before processing to avoid rate limits
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-          const buffer = await this.processTelegramToDiscord(photo);
-          if (!buffer) {
-            throw new Error("Failed to process image");
-          }
-          log(`Successfully processed image, size: ${buffer.length} bytes`);
+          const buffer = Buffer.from(await response.arrayBuffer());
 
           // Send text content first if exists
           if (content?.trim()) {
-            try {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: String(content).trim(),
-                  avatarURL: avatarUrl
-                },
-                displayName
-              );
-              // Add delay between messages
-              await new Promise(resolve => setTimeout(resolve, 1000));
-            } catch (error) {
-              log(`Error sending text message: ${error}`, "error");
-            }
-          }
-
-          // Send the photo
-          try {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: " ",
-                avatarURL: avatarUrl,
-                files: [{
-                  attachment: buffer,
-                  name: 'image.jpg'
-                }]
+                content: String(content).trim(),
+                avatarURL: avatarUrl
               },
               displayName
             );
-            log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
-          } catch (error) {
-            log(`Error sending photo: ${error}`, "error");
-            // If photo fails, at least try to send a notification about the failure
-            if (content?.trim()) {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: `${String(content).trim()}\n\n⚠️ Failed to send attached image.`,
-                  avatarURL: avatarUrl
-                },
-                displayName
-              );
-            }
           }
+
+          // Send the photo
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              content: " ",
+              avatarURL: avatarUrl,
+              files: [{
+                attachment: buffer,
+                name: 'image.jpg'
+              }]
+            },
+            displayName
+          );
+
+          log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          log(`Error processing photo: ${errorMessage}`, "error");
+          log(`Error processing photo: ${error}`, "error");
           // Still try to send the text content if available
           if (content?.trim()) {
-            try {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: `${String(content).trim()}\n\n⚠️ Failed to send attached image.`,
-                  avatarURL: avatarUrl
-                },
-                displayName
-              );
-            } catch (msgError) {
-              log(`Error sending fallback message: ${msgError}`, "error");
-            }
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              {
+                content: String(content).trim(),
+                avatarURL: avatarUrl
+              },
+              displayName
+            );
           }
         }
       } else {
         // Regular text message
-        try {
-          await this.discordBot.sendMessage(
-            ticket.discordChannelId,
-            {
-              content: String(content || " ").trim(),
-              avatarURL: avatarUrl
-            },
-            displayName
-          );
-        } catch (error) {
-          log(`Error sending text message: ${error}`, "error");
-        }
+        await this.discordBot.sendMessage(
+          ticket.discordChannelId,
+          {
+            content: String(content || " ").trim(),
+            avatarURL: avatarUrl
+          },
+          displayName
+        );
       }
 
       log(`Successfully forwarded message to Discord channel: ${ticket.discordChannelId}`);
@@ -707,7 +629,6 @@ export class BridgeManager {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
   }
-
 
 
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {
