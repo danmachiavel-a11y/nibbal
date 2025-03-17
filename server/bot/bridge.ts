@@ -562,48 +562,61 @@ export class BridgeManager {
       // Handle photo if present
       if (photo) {
         try {
+          log(`Processing photo`);
           const buffer = await this.processTelegramToDiscord(photo);
           if (!buffer) {
             throw new Error("Failed to process image");
           }
 
-          // Send text content first if exists
+          // If there's text content, send it first
           if (content?.trim()) {
+            try {
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: String(content).trim(),
+                  avatarURL: avatarUrl
+                },
+                displayName
+              );
+            } catch (error) {
+              log(`Error sending text message: ${error}`, "error");
+            }
+          }
+
+          // Then send the photo
+          try {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: String(content).trim(),
-                avatarURL: avatarUrl
+                files: [{
+                  attachment: buffer,
+                  name: 'image.jpg'
+                }]
               },
               displayName
             );
+          } catch (error) {
+            log(`Error sending photo: ${error}`, "error");
           }
-
-          // Send the photo
-          await this.discordBot.sendMessage(
-            ticket.discordChannelId,
-            {
-              files: [{
-                attachment: buffer,
-                name: 'image.jpg'
-              }]
-            },
-            displayName
-          );
 
           log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
-          // Still try to send the text content if available
+          // Send text content even if image fails
           if (content?.trim()) {
-            await this.discordBot.sendMessage(
-              ticket.discordChannelId,
-              {
-                content: String(content).trim(),
-                avatarURL: avatarUrl
-              },
-              displayName
-            );
+            try {
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: String(content).trim(),
+                  avatarURL: avatarUrl
+                },
+                displayName
+              );
+            } catch (msgError) {
+              log(`Error sending fallback message: ${msgError}`, "error");
+            }
           }
         }
       } else {
@@ -611,7 +624,7 @@ export class BridgeManager {
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
-            content: String(content || "").trim() || "No message content",
+            content: String(content || "").trim() || " ",
             avatarURL: avatarUrl
           },
           displayName
