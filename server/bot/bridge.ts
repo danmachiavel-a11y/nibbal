@@ -554,7 +554,6 @@ export class BridgeManager {
         return;
       }
 
-      // Construct display name from firstName and lastName, fallback to username
       const displayName = [firstName, lastName]
         .filter(Boolean)
         .join(' ') || username;
@@ -568,55 +567,44 @@ export class BridgeManager {
             throw new Error("Failed to process image");
           }
 
-          // If there's text content, send it first
-          if (content?.trim()) {
-            try {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: String(content).trim(),
-                  avatarURL: avatarUrl
-                },
-                displayName
-              );
-            } catch (error) {
-              log(`Error sending text message: ${error}`, "error");
-            }
-          }
-
-          // Then send the photo
-          try {
+          // Send text content first if exists
+          if (content && content.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                files: [{
-                  attachment: buffer,
-                  name: 'image.jpg'
-                }]
+                content: content.toString().trim(),
+                avatarURL: avatarUrl
               },
               displayName
             );
-          } catch (error) {
-            log(`Error sending photo: ${error}`, "error");
           }
+
+          // Then send the photo in a separate message
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              content: "\u200B", // Zero-width space as content
+              files: [{
+                attachment: buffer,
+                name: 'image.jpg'
+              }]
+            },
+            displayName
+          );
 
           log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
-          // Send text content even if image fails
-          if (content?.trim()) {
-            try {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: String(content).trim(),
-                  avatarURL: avatarUrl
-                },
-                displayName
-              );
-            } catch (msgError) {
-              log(`Error sending fallback message: ${msgError}`, "error");
-            }
+          // If photo fails, still try to send the text content
+          if (content && content.trim()) {
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              {
+                content: content.toString().trim(),
+                avatarURL: avatarUrl
+              },
+              displayName
+            );
           }
         }
       } else {
@@ -624,7 +612,7 @@ export class BridgeManager {
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
-            content: String(content || "").trim() || " ",
+            content: content ? content.toString().trim() : "\u200B",
             avatarURL: avatarUrl
           },
           displayName
