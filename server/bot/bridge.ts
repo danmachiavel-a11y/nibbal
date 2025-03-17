@@ -587,7 +587,7 @@ export class BridgeManager {
           await this.discordBot.sendMessage(
             ticket.discordChannelId,
             {
-              content: " ",
+              content: "📎 Image sent",
               avatarURL: avatarUrl,
               files: [{
                 attachment: buffer,
@@ -617,7 +617,7 @@ export class BridgeManager {
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
-            content: String(content || " ").trim(),
+            content: String(content || "No message content").trim(),
             avatarURL: avatarUrl
           },
           displayName
