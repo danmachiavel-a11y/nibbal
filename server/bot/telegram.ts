@@ -937,9 +937,16 @@ export class TelegramBot {
 
       try {
         const photos = ctx.message.photo;
-        const bestPhoto = photos[photos.length - 1];
+        const bestPhoto = photos[photos.length - 1]; // Get highest quality photo
         const file = await ctx.telegram.getFile(bestPhoto.file_id);
-        const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+
+        await storage.createMessage({
+          ticketId: activeTicket.id,
+          content: ctx.message.caption || "Image sent",
+          authorId: user.id,
+          platform: "telegram",
+          timestamp: new Date()
+        });
 
         let avatarUrl: string | undefined;
         try {
@@ -952,14 +959,6 @@ export class TelegramBot {
         } catch (error) {
           log(`Error getting Telegram user avatar: ${error}`, "error");
         }
-
-        await storage.createMessage({
-          ticketId: activeTicket.id,
-          content: ctx.message.caption || "Image sent",
-          authorId: user.id,
-          platform: "telegram",
-          timestamp: new Date()
-        });
 
         // Get user's first and last name
         const firstName = ctx.from?.first_name || "";
@@ -979,13 +978,13 @@ export class TelegramBot {
           );
         }
 
-        // Send the image
+        // Forward the photo using the file_id
         await this.bridge.forwardToDiscord(
           "",
           activeTicket.id,
           displayName,
           avatarUrl,
-          imageUrl,
+          bestPhoto.file_id, // Pass the file_id directly
           firstName,
           lastName
         );
@@ -1153,6 +1152,7 @@ export class TelegramBot {
       await this.createTicket({ from: { id: userId, first_name: user.telegramName, username: user.telegramUsername }, reply: this.sendMessage.bind(this, userId) });
     }
   }
+
 
 
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
@@ -1674,9 +1674,16 @@ export class TelegramBot {
 
       try {
         const photos = ctx.message.photo;
-        const bestPhoto = photos[photos.length - 1];
+        const bestPhoto = photos[photos.length - 1]; // Get highest quality photo
         const file = await ctx.telegram.getFile(bestPhoto.file_id);
-        const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+
+        await storage.createMessage({
+          ticketId: activeTicket.id,
+          content: ctx.message.caption || "Image sent",
+          authorId: user.id,
+          platform: "telegram",
+          timestamp: new Date()
+        });
 
         let avatarUrl: string | undefined;
         try {
@@ -1689,14 +1696,6 @@ export class TelegramBot {
         } catch (error) {
           log(`Error getting Telegram user avatar: ${error}`, "error");
         }
-
-        await storage.createMessage({
-          ticketId: activeTicket.id,
-          content: ctx.message.caption || "Image sent",
-          authorId: user.id,
-          platform: "telegram",
-          timestamp: new Date()
-        });
 
         // Get user's first and last name
         const firstName = ctx.from?.first_name || "";
@@ -1716,13 +1715,13 @@ export class TelegramBot {
           );
         }
 
-        // Send the image
+        // Forward the photo using the file_id
         await this.bridge.forwardToDiscord(
           "",
           activeTicket.id,
           displayName,
           avatarUrl,
-          imageUrl,
+          bestPhoto.file_id, // Pass the file_id directly
           firstName,
           lastName
         );

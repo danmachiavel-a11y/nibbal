@@ -562,14 +562,10 @@ export class BridgeManager {
       // Handle photo if present
       if (photo) {
         try {
-          const imageUrl = photo; // Use photo URL directly if provided
-          const response = await fetch(imageUrl);
-
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+          const buffer = await this.processTelegramToDiscord(photo);
+          if (!buffer) {
+            throw new Error("Failed to process image");
           }
-
-          const buffer = Buffer.from(await response.arrayBuffer());
 
           // Send text content first if exists
           if (content?.trim()) {
@@ -587,8 +583,6 @@ export class BridgeManager {
           await this.discordBot.sendMessage(
             ticket.discordChannelId,
             {
-              content: "📎 Image sent",
-              avatarURL: avatarUrl,
               files: [{
                 attachment: buffer,
                 name: 'image.jpg'
@@ -617,7 +611,7 @@ export class BridgeManager {
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
-            content: String(content || "No message content").trim(),
+            content: String(content || "").trim() || "No message content",
             avatarURL: avatarUrl
           },
           displayName
