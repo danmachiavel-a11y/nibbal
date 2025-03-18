@@ -664,7 +664,10 @@ export class BridgeManager {
           if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
-              content.toString().trim(),
+              {
+                content: content.toString().trim(),
+                avatarURL: avatarUrl
+              },
               displayName
             );
           }
@@ -685,7 +688,10 @@ export class BridgeManager {
           if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
-              content.toString().trim(),
+              {
+                content: content.toString().trim(),
+                avatarURL: avatarUrl
+              },
               displayName
             );
           }
@@ -694,7 +700,10 @@ export class BridgeManager {
         // Regular text message
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
-          content ? content.toString().trim() : "\u200B",
+          {
+            content: content ? content.toString().trim() : "\u200B",
+            avatarURL: avatarUrl
+          },
           displayName
         );
       }
@@ -704,7 +713,6 @@ export class BridgeManager {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
   }
-
 
 
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {

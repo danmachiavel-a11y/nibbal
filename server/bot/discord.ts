@@ -836,7 +836,7 @@ export class DiscordBot {
       // Prepare webhook message
       const messageOptions: any = {
         username: username,
-        avatarURL: message.avatarURL // Fix: Ensure correct case for avatarURL
+        avatarURL: message.avatarURL // This is case sensitive for Discord webhooks
       };
 
       // Handle different types of content
@@ -844,7 +844,6 @@ export class DiscordBot {
         // Embed message (for images)
         messageOptions.embeds = message.embeds;
         messageOptions.content = message.content || "\u200B";
-        log(`Sending embed message with ${messageOptions.embeds.length} embeds`);
       } else if (message.files && message.files.length > 0) {
         // Message with file attachments
         messageOptions.files = message.files.map((file: any) => ({
@@ -995,7 +994,7 @@ export class DiscordBot {
     } catch (error) {
       log(`Error moving channel to category: ${error}`, "error");
       throw error;
-    }
+        }
   }
 
   async getCategories() {
