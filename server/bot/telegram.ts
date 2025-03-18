@@ -948,25 +948,24 @@ export class TelegramBot {
           timestamp: new Date()
         });
 
-        // Get avatar URL if possible
-        let avatarUrl: string | undefined;
-          try {
-            const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
-            if (photos && photos.total_count > 0) {
-              const fileId = photos.photos[0][0].file_id;
-              const file = await ctx.telegram.getFile(fileId);
-              if (file?.file_path) {
-                avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-              }
+        // Get avatar URL if possible        let avatarUrl: string | undefined;
+        try {
+          const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+          if (photos && photos.total_count > 0) {
+            const fileId = photos.photos[0][0].file_id;
+            const file = await ctx.telegram.getFile(fileId);
+            if (file?.file_path) {
+              avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
             }
-          } catch (error) {
-            log(`Error getting Telegram user avatar: ${error}`, "error");
           }
+        } catch (error) {
+          log(`Error getting Telegram user avatar: ${error}`, "error");
+        }
 
-          // Get user's first and last name
-          const firstName = ctx.from?.first_name || "";
-          const lastName = ctx.from?.last_name || "";
-          const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
+        // Get user's first and last name
+        const firstName = ctx.from?.first_name || "";
+        const lastName = ctx.from?.last_name || "";
+        const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
         // Send caption if exists
         if (ctx.message.caption) {
@@ -1738,127 +1737,31 @@ export class TelegramBot {
         await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
       }
     });
-  }
 
-  private async handleQuestionnaireResponse(ctx: Context, state: UserState) {
-    const category = await storage.getCategory(state.categoryId);
-    if (!category) {
-      console.error(`Category ${state.categoryId} not found`);
-      return;
-    }
-
-    const userId = ctx.from?.id;
-    if (!userId || !ctx.message || !('text' in ctx.message)) return;
-
-    console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
-
-    // Store the answer
-    state.answers.push(ctx.message.text);
-
-    // Check if we have more questions
-    if (state.currentQuestion < category.questions.length - 1) {
-      // Move to next question
-      state.currentQuestion++;
-
-      // Update state before sending next question
-      this.setState(userId, {
-        ...state,
-        currentQuestion: state.currentQuestion,
-        inQuestionnaire: true
-      });
-
-      // Add shorter delay before next question
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Send next question
-      await ctx.reply(category.questions[state.currentQuestion]);
-    } else {
-      try {
-        // Create ticket with raw answers
-        await this.createTicket(ctx);
-      } catch (error) {
-        log(`Error creating ticket: ${error}`, "error");
-        await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
-
-        // Clean up state on error
-        this.userStates.delete(userId);
-        this.stateCleanups.delete(userId);
-        this.activeUsers.delete(userId);
-      }
-    }
-  }
-
-  private async createTicket(ctx: Context) {
-    const userId = ctx.from?.id;
-    if (!userId) return;
-
-    const state = this.userStates.get(userId);
-    if (!state) {
-      await ctx.reply("❌ Something went wrong. Please try /start to begin again.");
-      return;
-    }
-
-    try {
-      // Create or get user
-      let user = await storage.getUserByTelegramId(userId.toString());
-      if (!user) {
-        user = await storage.createUser({
-          username: ctx.from.username || "Unknown",
-          telegramId: userId.toString(),
-          telegramUsername: ctx.from.username,
-          telegramName: ctx.from.first_name,
-          discordId: null,
-          isBanned: false
-        });
-      }
-
-      // Create ticket with raw answers
-      const ticket = await storage.createTicket({
-        userId: user.id,
-        categoryId: state.categoryId,
-        status: "open",
-        discordChannelId: null,
-        claimedBy: null,
-        amount: null,
-        answers: state.answers,
-        completedAt: null
-      });
+    this.bot.command("refresh", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
 
       try {
-        // Create Discord channel first
-        await this.bridge.createTicketChannel(ticket);
-        await ctx.reply("✅ Ticket created! A staff member will be with you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-
-        if (errorMessage.includes('maximum channel limit')) {
-          await ctx.reply(
-            "❌ Sorry, our support channels are currently at maximum capacity.\n" +
-            "Your ticket has been created but is in a pending state."
-          );
-        } else {
-          await ctx.reply(
-            "❌ There was an error creating your Discord channel. Please try again or contact an administrator."
-          );
-          log(`Failed to create Discord channel for ticket ${ticket.id}: ${errorMessage}`, "error");
+        // Clear questionnaire state if exists
+        const state = this.userStates.get(userId);
+        if (state?.inQuestionnaire) {
+          this.userStates.delete(userId);
+          this.stateCleanups.delete(userId);
+          this.activeUsers.delete(userId);
         }
-      } finally {
-        // Clean up state after ticket creation (success or failure)
+
+        await ctx.reply("✅ Bot state refreshed. Use /start to begin a new conversation.");
+      } catch (error) {
+        log(`Error in refresh command: ${error}`, "error");
+        // Even if there's an error, try to clear states
         this.userStates.delete(userId);
         this.stateCleanups.delete(userId);
         this.activeUsers.delete(userId);
+        await ctx.reply("✅ Reset completed. Use /start to begin again.");
       }
-    } catch (error) {
-      log(`Error creating ticket: ${error}`, "error");
-      await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
-
-      // Clean up state on error
-      this.userStates.delete(userId);
-      this.stateCleanups.delete(userId);
-      this.activeUsers.delete(userId);
-    }
+    });
   }
-
 }
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
