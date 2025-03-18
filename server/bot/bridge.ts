@@ -179,19 +179,20 @@ export class BridgeManager {
     }
   }
   private startHealthCheck() {
-    // Run health check every 5 minutes
+    // Run health check every 15 minutes (matching Telegram bot's heartbeat)
     this.healthCheckInterval = setInterval(async () => {
       try {
         const health = await this.healthCheck();
         if (!health.telegram || !health.discord) {
           log("Bot disconnected, attempting to reconnect...");
+          // Add delay before reconnection attempt
           await new Promise(resolve => setTimeout(resolve, 5000));
           await this.reconnectDisconnectedBots(health);
         }
       } catch (error) {
         handleBridgeError(error as BridgeError, "healthCheck");
       }
-    }, 300000); // 5 minutes
+    }, 900000); // 15 minutes to match Telegram bot's heartbeat
   }
 
   async start() {

@@ -85,15 +85,16 @@ export class TelegramBot {
   private isStarting: boolean = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
-  private readonly MAX_RECONNECT_ATTEMPTS = 3;
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly CLEANUP_DELAY = 10000; // 10 seconds
-  private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes
+  private readonly HEARTBEAT_INTERVAL = 900000; // 15 minutes
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private readonly RECONNECT_COOLDOWN = 30000; // 30 seconds
   private readonly MAX_FAILED_HEARTBEATS = 3;
   private failedHeartbeats = 0;
   private readonly MAX_CONCURRENT_USERS = 500;
   private activeUsers: Set<number> = new Set();
+  private lastHeartbeatSuccess: number = Date.now();
 
   constructor(bridge: BridgeManager) {
     if (!process.env.TELEGRAM_BOT_TOKEN?.trim()) {
@@ -104,6 +105,87 @@ export class TelegramBot {
     this.startCleanupInterval();
     log("Telegram bot instance created successfully");
   }
+
+  private async verifyConnection(): Promise<boolean> {
+    try {
+      if (!this.bot?.telegram) return false;
+
+      const me = await this.bot.telegram.getMe();
+      const now = Date.now();
+
+      // If we haven't had a successful heartbeat in 20 minutes, consider disconnected
+      if (now - this.lastHeartbeatSuccess > 1200000) {
+        log("No successful heartbeat in 20 minutes, considering disconnected", "warn");
+        return false;
+      }
+
+      if (!me) {
+        log("Bot verification failed - null response", "warn");
+        return false;
+      }
+
+      this.lastHeartbeatSuccess = now;
+      return true;
+    } catch (error) {
+      log(`Bot verification failed: ${error}`, "error");
+      return false;
+    }
+  }
+
+  private async handleHeartbeat() {
+    try {
+      if (!this._isConnected || this.isStarting) return;
+
+      const isConnected = await this.verifyConnection();
+      if (!isConnected) {
+        this.failedHeartbeats++;
+        log(`Heartbeat check failed (attempt ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}): Bot verification failed`, "warn");
+
+        // Only disconnect after multiple consecutive failures
+        if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
+          this._isConnected = false;
+          await this.handleDisconnect();
+        }
+        return;
+      }
+
+      // Reset failed heartbeats counter on successful check
+      this.failedHeartbeats = 0;
+      this.lastHeartbeatSuccess = Date.now();
+      log("Heartbeat successful");
+    } catch (error) {
+      log(`Heartbeat check failed: ${error}`, "warn");
+      this.failedHeartbeats++;
+
+      // Only disconnect on critical errors or after multiple failures
+      if ((error.message?.includes('restart') || error.message?.includes('unauthorized')) ||
+        this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
+        this._isConnected = false;
+        await this.handleDisconnect();
+      }
+    }
+  }
+
+  private startHeartbeat = (): void => {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+
+    this.heartbeatInterval = setInterval(
+      () => this.handleHeartbeat(),
+      this.HEARTBEAT_INTERVAL
+    );
+
+    log("Started heartbeat monitoring");
+  };
+
+  private stopHeartbeat = (): void => {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    log("Stopped heartbeat monitoring");
+  };
 
   private startCleanupInterval(): void {
     setInterval(() => this.cleanupStaleStates(), 60000);
@@ -226,52 +308,43 @@ export class TelegramBot {
     });
   }
 
-  private stopHeartbeat = (): void => {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-  };
 
-  private startHeartbeat = (): void => {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-    }
+  private async handleDisconnect() {
+    if (this.isStarting) return;
 
-    this.heartbeatInterval = setInterval(
-      () => this.handleHeartbeat(),
-      this.HEARTBEAT_INTERVAL
-    );
-  };
+    log("Bot disconnected, attempting to reconnect...");
+    await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN));
 
-  private async handleHeartbeat() {
     try {
-      if (!this._isConnected || this.isStarting) return;
-
-      const me = await this.bot?.telegram.getMe();
-      if (!me) {
-        this.failedHeartbeats++;
-        log(`Heartbeat check failed (attempt ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}): Bot returned null`, "warn");
-
-        // Only disconnect after multiple consecutive failures
-        if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
-          this._isConnected = false;
-          await this.handleDisconnect();
-        }
-        return;
+      if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+        log("Max reconnection attempts reached, waiting for longer cooldown", "warn");
+        this.reconnectAttempts = 0;
+        await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN * 2));
       }
 
-      // Reset failed heartbeats counter on successful check
-      this.failedHeartbeats = 0;
-    } catch (error) {
-      log(`Heartbeat check failed: ${error}`, "warn");
-      this.failedHeartbeats++;
+      log(`Attempting to reconnect (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
 
-      // Only disconnect on critical errors or after multiple failures
-      if ((error.message?.includes('restart') || error.message?.includes('unauthorized')) ||
-        this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
-        this._isConnected = false;
+      // Stop existing bot instance gracefully
+      if (this.bot) {
+        try {
+          await this.bot.stop();
+        } catch (error) {
+          log(`Error stopping bot during reconnect: ${error}`, "warn");
+        }
+      }
+
+      await this.start();
+      this.reconnectAttempts = 0;
+      log("Reconnection successful");
+    } catch (error) {
+      this.reconnectAttempts++;
+      log(`Reconnection attempt failed: ${error}`, "error");
+
+      if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
         await this.handleDisconnect();
+      } else {
+        log("Max reconnection attempts reached", "error");
+        this.reconnectAttempts = 0;
       }
     }
   }
@@ -370,47 +443,6 @@ export class TelegramBot {
 
   getIsConnected(): boolean {
     return this._isConnected && this.bot !== null;
-  }
-
-
-  private async handleDisconnect() {
-    if (this.isStarting) return;
-
-    log("Bot disconnected, attempting to reconnect...");
-    await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN));
-
-    try {
-      if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
-        log("Max reconnection attempts reached, waiting for longer cooldown", "warn");
-        this.reconnectAttempts = 0;
-        await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN * 2));
-      }
-
-      log(`Attempting to reconnect (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
-
-      // Stop existing bot instance gracefully
-      if (this.bot) {
-        try {
-          await this.bot.stop();
-        } catch (error) {
-          log(`Error stopping bot during reconnect: ${error}`, "warn");
-        }
-      }
-
-      await this.start();
-      this.reconnectAttempts = 0;
-      log("Reconnection successful");
-    } catch (error) {
-      this.reconnectAttempts++;
-      log(`Reconnection attempt failed: ${error}`, "error");
-
-      if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
-        await this.handleDisconnect();
-      } else {
-        log("Max reconnection attempts reached", "error");
-        this.reconnectAttempts = 0;
-      }
-    }
   }
 
   async sendMessage(chatId: number, text: string) {
