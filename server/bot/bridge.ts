@@ -13,6 +13,35 @@ interface ImageCacheEntry {
   timestamp: number;
 }
 
+async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
+  try {
+    const formData = new URLSearchParams();
+    formData.append('image', buffer.toString('base64'));
+
+    const response = await fetch('https://api.imgbb.com/1/upload', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      query: {
+        key: process.env.IMGBB_API_KEY
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`ImgBB API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    log(`Successfully uploaded image to ImgBB: ${data.data.url}`);
+    return data.data.url;
+  } catch (error) {
+    log(`Error uploading to ImgBB: ${error}`, "error");
+    return null;
+  }
+}
+
 export class BridgeManager {
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
@@ -97,15 +126,13 @@ export class BridgeManager {
       log(`Downloading file from: ${fileUrl}`);
 
       const response = await fetch(fileUrl);
-      log(`Response status: ${response.status}, Content-Type: ${response.headers.get('content-type')}`);
+      log(`Response status: ${response.status}`);
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
+      const buffer = Buffer.from(await response.arrayBuffer());
       if (!buffer || buffer.length === 0) {
         throw new Error("Received empty buffer");
       }
@@ -583,6 +610,12 @@ export class BridgeManager {
 
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
+          // Upload to ImgBB
+          const imageUrl = await uploadToImgbb(buffer);
+          if (!imageUrl) {
+            throw new Error("Failed to upload image to ImgBB");
+          }
+
           // Send text content first if exists
           if (content?.trim()) {
             await this.discordBot.sendMessage(
@@ -592,13 +625,14 @@ export class BridgeManager {
             );
           }
 
-          // Send photo as a separate message
+          // Send photo as embed with ImgBB URL
           const messageData = {
             content: "\u200B",
-            files: [{
-              attachment: buffer,
-              name: `telegram_photo_${Date.now()}.jpg`,
-              description: 'Photo from Telegram'
+            embeds: [{
+              image: {
+                url: imageUrl
+              },
+              description: content ? content.toString().trim() : "Photo from Telegram"
             }],
             avatarURL: avatarUrl
           };
@@ -635,7 +669,6 @@ export class BridgeManager {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
   }
-
 
 
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {

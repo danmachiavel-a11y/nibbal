@@ -816,8 +816,7 @@ export class DiscordBot {
     }
   }
 
-
-  async sendMessage(channelId: string, message: any, username: string): Promise<void> {
+  private async sendMessage(channelId: string, message: any, username: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 
@@ -841,28 +840,19 @@ export class DiscordBot {
       };
 
       // Handle different types of content
-      if (message.files && message.files.length > 0) {
-        log(`Processing message with ${message.files.length} files`);
-
+      if (message.embeds) {
+        // Embed message (for images)
+        messageOptions.embeds = message.embeds;
+        messageOptions.content = message.content || "\u200B";
+        log(`Sending embed message with ${messageOptions.embeds.length} embeds`);
+      } else if (message.files && message.files.length > 0) {
         // Message with file attachments
         messageOptions.files = message.files.map((file: any) => ({
           attachment: file.attachment,
           name: file.name || 'file.jpg',
           description: file.description || 'File attachment'
         }));
-
-        // Ensure content is a string and not empty
-        messageOptions.content = typeof message.content === 'string' ? 
-          message.content.trim() || "\u200B" : "\u200B";
-
-        log(`Prepared file message: ${JSON.stringify({
-          ...messageOptions,
-          files: `${messageOptions.files.length} files`,
-          content: messageOptions.content
-        })}`);
-      } else if (message.embeds) {
-        // Embed message
-        messageOptions.embeds = message.embeds;
+        messageOptions.content = message.content || "\u200B";
       } else {
         // Regular text message
         messageOptions.content = typeof message === 'string' ? 
@@ -875,6 +865,12 @@ export class DiscordBot {
 
       while (retries < maxRetries) {
         try {
+          log(`Sending message with options: ${JSON.stringify({
+            ...messageOptions,
+            files: messageOptions.files ? `${messageOptions.files.length} files` : 'no files',
+            embeds: messageOptions.embeds ? `${messageOptions.embeds.length} embeds` : 'no embeds'
+          })}`);
+
           await webhook.send(messageOptions);
           log(`Successfully sent message to Discord channel ${channelId}`);
           return;
