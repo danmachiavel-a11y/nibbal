@@ -82,14 +82,36 @@ export class BridgeManager {
   // Image processing methods
   private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
     try {
-      const file = await this.telegramBot.bot?.telegram.getFile(fileId);
-      if (!file?.file_path) return null;
+      if (!this.telegramBot.bot?.telegram) {
+        throw new Error("Telegram bot not initialized");
+      }
+
+      log(`Processing Telegram file ID: ${fileId}`);
+
+      const file = await this.telegramBot.bot.telegram.getFile(fileId);
+      if (!file?.file_path) {
+        throw new Error(`Could not get file path for ID: ${fileId}`);
+      }
 
       const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-      const response = await fetch(fileUrl);
-      if (!response.ok) return null;
+      log(`Downloading file from: ${fileUrl}`);
 
-      return Buffer.from(await response.arrayBuffer());
+      const response = await fetch(fileUrl);
+      log(`Response status: ${response.status}, Content-Type: ${response.headers.get('content-type')}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      if (!buffer || buffer.length === 0) {
+        throw new Error("Received empty buffer");
+      }
+
+      log(`Successfully downloaded file, size: ${buffer.length} bytes`);
+      return buffer;
     } catch (error) {
       log(`Error processing Telegram image: ${error}`, "error");
       return null;
@@ -352,10 +374,9 @@ export class BridgeManager {
       const updatedTicket = await storage.getTicket(ticket.id);
       log(`Updated ticket status: ${JSON.stringify(updatedTicket)}`);
 
-      // Create embed for Q&A
+      // Send only one embed for the ticket creation with pinning
       const embed = {
         username: "Ticket Bot",
-        content: undefined, // We'll handle role ping separately
         embeds: [{
           title: "🎫 New Ticket",
           description: "A new support ticket has been created",
@@ -368,12 +389,8 @@ export class BridgeManager {
         }]
       };
 
-      // Send the formatted embed
-      await this.discordBot.sendMessage(
-        channelId,
-        embed,
-        "Ticket Bot"
-      );
+      // Send and pin the ticket message
+      await this.discordBot.sendTicketMessage(channelId, embed);
 
       // Send role ping if category has a role
       if (category.discordRoleId) {
@@ -550,7 +567,6 @@ export class BridgeManager {
         return;
       }
 
-      // Construct display name from firstName and lastName, fallback to username
       const displayName = [firstName, lastName]
         .filter(Boolean)
         .join(' ') || username;
@@ -558,86 +574,68 @@ export class BridgeManager {
       // Handle photo if present
       if (photo) {
         try {
-          log(`Processing photo`);
+          log(`Processing photo with ID: ${photo}`);
           const buffer = await this.processTelegramToDiscord(photo);
+
           if (!buffer) {
             throw new Error("Failed to process image");
           }
+
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          // If there's text content, send it first
+          // Send text content first if exists
           if (content?.trim()) {
-            try {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: String(content).trim(),
-                  avatarURL: avatarUrl
-                },
-                displayName
-              );
-            } catch (error) {
-              log(`Error sending text message: ${error}`, "error");
-            }
-          }
-
-          // Then send the photo
-          try {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
-              {
-                content: " ", // Ensure content is always a valid string
-                avatarURL: avatarUrl,
-                files: [{
-                  attachment: buffer,
-                  name: 'image.jpg'
-                }]
-              },
+              content.toString().trim(),
               displayName
             );
-            log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
-          } catch (error) {
-            log(`Error sending photo: ${error}`, "error");
           }
+
+          // Send photo as a separate message
+          const messageData = {
+            content: "\u200B",
+            files: [{
+              attachment: buffer,
+              name: `telegram_photo_${Date.now()}.jpg`,
+              description: 'Photo from Telegram'
+            }],
+            avatarURL: avatarUrl
+          };
+
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            messageData,
+            displayName
+          );
+
+          log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
-          // Send text content even if image fails
+          // If photo fails, still try to send the text content
           if (content?.trim()) {
-            try {
-              await this.discordBot.sendMessage(
-                ticket.discordChannelId,
-                {
-                  content: String(content).trim(),
-                  avatarURL: avatarUrl
-                },
-                displayName
-              );
-            } catch (msgError) {
-              log(`Error sending fallback message: ${msgError}`, "error");
-            }
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              content.toString().trim(),
+              displayName
+            );
           }
         }
       } else {
         // Regular text message
-        try {
-          await this.discordBot.sendMessage(
-            ticket.discordChannelId,
-            {
-              content: String(content || " ").trim(),
-              avatarURL: avatarUrl
-            },
-            displayName
-          );
-        } catch (error) {
-          log(`Error sending text message: ${error}`, "error");
-        }
+        await this.discordBot.sendMessage(
+          ticket.discordChannelId,
+          content ? content.toString().trim() : "\u200B",
+          displayName
+        );
       }
 
-      log(`Message forwarded to Discord channel: ${ticket.discordChannelId}`);
+      log(`Successfully forwarded message to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
   }
+
 
 
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {
@@ -652,10 +650,10 @@ export class BridgeManager {
         throw new Error("Could not find Telegram information for ticket creator");
       }
 
-      // Send ping notification to Telegram user
+      // Send ping notification to Telegram user with @ mention
       await this.telegramBot.sendMessage(
         parseInt(user.telegramId),
-        `🔔 You've been pinged by ${discordUsername} in ticket #${ticketId}`
+        `🔔 @${user.username} You've been pinged by ${discordUsername} in ticket #${ticketId}`
       );
 
       log(`Successfully sent ping to Telegram user ${user.telegramId}`);
@@ -681,11 +679,11 @@ export class BridgeManager {
         throw new Error("No Discord channel found for ticket");
       }
 
-      // Send role ping
+      // Send role ping with improved formatting
       await this.discordBot.sendMessage(
         ticket.discordChannelId,
         {
-          content: `<@&${category.discordRoleId}> - You've been pinged by ${telegramUsername} from Telegram`,
+          content: `🔔 <@&${category.discordRoleId}> You've been pinged by @${telegramUsername} in ticket #${ticketId}`,
           allowedMentions: { roles: [category.discordRoleId] }
         },
         "Ticket Bot"
@@ -702,7 +700,7 @@ export class BridgeManager {
     return this.telegramBot;
   }
 
-  getDiscordBot(): DiscordBot {
+  getDiscordBot(): TelegramBot {
     return this.discordBot;
   }
 }
