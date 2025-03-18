@@ -417,8 +417,8 @@ export class DiscordBot {
           if (user?.telegramId) {
             // Get staff member's display name
             const staffName = interaction.member?.displayName || 
-                             interaction.user.displayName ||
-                             interaction.user.username;
+                              interaction.user.displayName ||
+                              interaction.user.username;
 
             // Send notification
             await this.bridge.getTelegramBot().sendMessage(
@@ -797,7 +797,6 @@ export class DiscordBot {
       log(`Creating ticket channel ${name} in category ${categoryId}`);
 
       await this.checkRateLimit('channelCreate');
-
       const category = await this.client.channels.fetch(categoryId);
       if (!category || category.type !== ChannelType.GuildCategory) {
         throw new Error(`Invalid category ${categoryId}`);
@@ -831,42 +830,58 @@ export class DiscordBot {
         throw new Error(`Invalid channel type for channel ${channelId}`);
       }
 
-      // Get or create webhook with proper caching
+      // Get webhook
       const webhook = await this.getWebhookForChannel(channel);
       if (!webhook) throw new Error("Failed to get webhook");
 
-      // Prepare webhook message with forced username
+      // Prepare webhook message
       const messageOptions: any = {
-        username: username, // Use the provided username directly without any fallbacks
+        username: username,
+        avatarURL: message.avatarURL
       };
 
       // Handle different types of content
-      if (message && typeof message === 'object') {
-        if (message.embeds) {
-          // This is an embed message (for ticket creation)
-          messageOptions.embeds = message.embeds;
-        } else {
-          // This is a forwarded message
-          messageOptions.content = message.content || message;
-          if (message.avatarURL) {
-            messageOptions.avatarURL = message.avatarURL;
-          }
-        }
+      if (message.files && message.files.length > 0) {
+        log(`Processing message with ${message.files.length} files`);
+
+        // Message with file attachments
+        messageOptions.files = message.files.map((file: any) => ({
+          attachment: file.attachment,
+          name: file.name || 'file.jpg',
+          description: file.description || 'File attachment'
+        }));
+
+        // Ensure content is a string and not empty
+        messageOptions.content = typeof message.content === 'string' ? 
+          message.content.trim() || "\u200B" : "\u200B";
+
+        log(`Prepared file message: ${JSON.stringify({
+          ...messageOptions,
+          files: `${messageOptions.files.length} files`,
+          content: messageOptions.content
+        })}`);
+      } else if (message.embeds) {
+        // Embed message
+        messageOptions.embeds = message.embeds;
       } else {
         // Regular text message
-        messageOptions.content = message;
+        messageOptions.content = typeof message === 'string' ? 
+          message : (message.content || "\u200B");
       }
 
       // Send message with retries
       let retries = 0;
       const maxRetries = 3;
+
       while (retries < maxRetries) {
         try {
-          const sentMessage = await webhook.send(messageOptions);
+          await webhook.send(messageOptions);
           log(`Successfully sent message to Discord channel ${channelId}`);
           return;
         } catch (error) {
           retries++;
+          log(`Attempt ${retries}/${maxRetries} failed: ${error}`, "error");
+
           if (retries === maxRetries) throw error;
           await new Promise(resolve => setTimeout(resolve, 1000 * retries));
         }

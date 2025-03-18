@@ -950,7 +950,7 @@ export class TelegramBot {
 
         let avatarUrl: string | undefined;
         try {
-          const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+          const photos = await ctx.telegram`.getUserProfilePhotos(ctx.from.id, 0, 1);
           if (photos && photos.total_count > 0) {
             const fileId = photos.photos[0][0].file_id;
             const file = await ctx.telegram.getFile(fileId);

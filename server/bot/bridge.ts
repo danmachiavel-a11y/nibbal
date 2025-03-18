@@ -86,7 +86,8 @@ export class BridgeManager {
         throw new Error("Telegram bot not initialized");
       }
 
-      log(`Getting file info for file ID: ${fileId}`);
+      log(`Processing Telegram file ID: ${fileId}`);
+
       const file = await this.telegramBot.bot.telegram.getFile(fileId);
       if (!file?.file_path) {
         throw new Error(`Could not get file path for ID: ${fileId}`);
@@ -95,12 +96,8 @@ export class BridgeManager {
       const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
       log(`Downloading file from: ${fileUrl}`);
 
-      const response = await fetch(fileUrl, {
-        headers: {
-          'User-Agent': 'TelegramBot'
-        },
-        timeout: 10000
-      });
+      const response = await fetch(fileUrl);
+      log(`Response status: ${response.status}, Content-Type: ${response.headers.get('content-type')}`);
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -108,6 +105,11 @@ export class BridgeManager {
 
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
+
+      if (!buffer || buffer.length === 0) {
+        throw new Error("Received empty buffer");
+      }
+
       log(`Successfully downloaded file, size: ${buffer.length} bytes`);
       return buffer;
     } catch (error) {
@@ -574,22 +576,36 @@ export class BridgeManager {
         try {
           log(`Processing photo with ID: ${photo}`);
           const buffer = await this.processTelegramToDiscord(photo);
+
           if (!buffer) {
             throw new Error("Failed to process image");
           }
+
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          // Send photo message
+          // Send text content first if exists
+          if (content?.trim()) {
+            await this.discordBot.sendMessage(
+              ticket.discordChannelId,
+              content.toString().trim(),
+              displayName
+            );
+          }
+
+          // Send photo as a separate message
+          const messageData = {
+            content: "\u200B",
+            files: [{
+              attachment: buffer,
+              name: `telegram_photo_${Date.now()}.jpg`,
+              description: 'Photo from Telegram'
+            }],
+            avatarURL: avatarUrl
+          };
+
           await this.discordBot.sendMessage(
             ticket.discordChannelId,
-            {
-              content: content ? content.toString().trim() : "\u200B",
-              files: [{
-                attachment: buffer,
-                name: 'photo.jpg'
-              }],
-              avatarURL: avatarUrl
-            },
+            messageData,
             displayName
           );
 
@@ -600,10 +616,7 @@ export class BridgeManager {
           if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
-              {
-                content: content.toString().trim(),
-                avatarURL: avatarUrl
-              },
+              content.toString().trim(),
               displayName
             );
           }
@@ -612,10 +625,7 @@ export class BridgeManager {
         // Regular text message
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
-          {
-            content: content ? content.toString().trim() : "\u200B",
-            avatarURL: avatarUrl
-          },
+          content ? content.toString().trim() : "\u200B",
           displayName
         );
       }
@@ -625,6 +635,7 @@ export class BridgeManager {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
   }
+
 
 
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {
@@ -689,7 +700,7 @@ export class BridgeManager {
     return this.telegramBot;
   }
 
-  getDiscordBot(): DiscordBot {
+  getDiscordBot(): TelegramBot {
     return this.discordBot;
   }
 }
