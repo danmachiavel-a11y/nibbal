@@ -104,8 +104,6 @@ export interface IStorage {
   }>>;
   // Add new method for getting active tickets
   getActiveTicketByUserId(userId: number): Promise<Ticket | undefined>;
-  // Add new method for getting tickets by user ID
-  getTicketsByUserId(userId: number): Promise<Ticket[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -545,13 +543,6 @@ export class DatabaseStorage implements IStorage {
         )
       );
     return ticket;
-  }
-  async getTicketsByUserId(userId: number): Promise<Ticket[]> {
-    return db
-      .select()
-      .from(tickets)
-      .where(eq(tickets.userId, userId))
-      .orderBy(desc(tickets.id));
   }
 }
 

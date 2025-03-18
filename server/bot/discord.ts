@@ -146,18 +146,18 @@ export class DiscordBot {
 
   private async registerSlashCommands() {
     try {
-      log("Registering slash commands...");
+      // Check if commands are already registered
+      const existingCommands = await this.client.application?.commands.fetch();
+      if (existingCommands && existingCommands.size > 0) {
+        log("Slash commands already registered, skipping registration");
+        return;
+      }
 
       // Add delay to avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Commands to register
       const commands = [
-        {
-          name: 'close',
-          description: 'Close the ticket and move it to transcripts',
-          type: ApplicationCommandType.ChatInput
-        },
         {
           name: 'paid',
           description: 'Mark a ticket as paid with the specified amount',
@@ -173,13 +173,8 @@ export class DiscordBot {
           ]
         },
         {
-          name: 'ping',
-          description: 'Ping the Telegram user of this ticket',
-          type: ApplicationCommandType.ChatInput
-        },
-        {
-          name: 'info',
-          description: 'Get Telegram user information (Owner only)',
+          name: 'close',
+          description: 'Close the ticket and move it to transcripts',
           type: ApplicationCommandType.ChatInput
         },
         {
@@ -251,110 +246,6 @@ export class DiscordBot {
     this.client.on('interactionCreate', async (interaction) => {
       if (!interaction.isChatInputCommand()) return;
 
-      // Add info command handler
-      if (interaction.commandName === 'info') {
-        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
-
-        if (!ticket) {
-          await interaction.reply({
-            content: "This command can only be used in ticket channels!",
-            ephemeral: true
-          });
-          return;
-        }
-
-        // Check if user is guild owner
-        const guild = interaction.guild;
-        if (!guild || interaction.user.id !== guild.ownerId) {
-          await interaction.reply({
-            content: "This command can only be used by the server owner!",
-            ephemeral: true
-          });
-          return;
-        }
-
-        try {
-          // Get ticket creator's info
-          const user = await storage.getUser(ticket.userId!);
-          if (!user || !user.telegramId) {
-            await interaction.reply({
-              content: "Could not find Telegram information for this ticket's creator.",
-              ephemeral: true
-            });
-            return;
-          }
-
-          // Get paid tickets count
-          const allTickets = await storage.getTicketsByUserId(user.id);
-          const paidTickets = allTickets.filter(t => t.amount && t.amount > 0);
-
-          // Create a nice embed with the information
-          const embed = new EmbedBuilder()
-            .setColor(0x0099FF)
-            .setTitle('Ticket Creator Information')
-            .addFields(
-              { name: 'Telegram Username', value: `@${user.username}`, inline: true },
-              { name: 'Telegram ID', value: user.telegramId, inline: true },
-              { name: 'Full Name', value: user.fullName || 'Not Available', inline: true},
-              { name: 'Total Paid Tickets', value: paidTickets.length.toString(), inline: false }
-            )
-            .setTimestamp();
-
-          await interaction.reply({ embeds: [embed], ephemeral: true });
-        } catch (error) {
-          log(`Error getting ticket creator info: ${error}`, "error");
-          await interaction.reply({
-            content: "An error occurred while fetching user information.",
-            ephemeral: true
-          });
-        }
-      }
-
-      if (interaction.commandName === 'ping') {
-        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
-
-        if (!ticket) {
-          await interaction.reply({
-            content: "This command can only be used in ticket channels!",
-            ephemeral: true
-          });
-          return;
-        }
-
-        try {
-          // Get ticket creator's info
-          const user = await storage.getUser(ticket.userId!);
-          if (!user || !user.telegramId) {
-            await interaction.reply({
-              content: "Could not find Telegram information for this ticket's creator.",
-              ephemeral: true
-            });
-            return;
-          }
-
-          // Use member's display name if available, fallback to username
-          const displayName = interaction.member?.displayName || 
-                             interaction.user.displayName ||
-                             interaction.user.username ||
-                             "Discord User";
-
-          // Forward ping through bridge
-          await this.bridge.forwardPingToTelegram(ticket.id, displayName);
-
-          // Send confirmation
-          await interaction.reply({
-            content: "✅ The ticket creator has been successfully notified.",
-            ephemeral: true
-          });
-        } catch (error) {
-          log(`Error sending ping: ${error}`, "error");
-          await interaction.reply({
-            content: "Failed to send ping. Please try again.",
-            ephemeral: true
-          });
-        }
-      }
-
       if (interaction.commandName === 'paid') {
         const amount = interaction.options.getInteger('amount', true);
         const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
@@ -410,21 +301,6 @@ export class DiscordBot {
               ephemeral: true
             });
             return;
-          }
-
-          // Get ticket creator's info for notification
-          const user = await storage.getUser(ticket.userId!);
-          if (user?.telegramId) {
-            // Get staff member's display name
-            const staffName = interaction.member?.displayName || 
-                              interaction.user.displayName ||
-                              interaction.user.username;
-
-            // Send notification
-            await this.bridge.getTelegramBot().sendMessage(
-              parseInt(user.telegramId),
-              `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-            );
           }
 
           // Mark ticket as closed
@@ -589,11 +465,6 @@ export class DiscordBot {
             ephemeral: true
           });
 
-          // Get staff member's display name
-          const staffName = interaction.member?.displayName || 
-                           interaction.user.displayName ||
-                           interaction.user.username;
-
           // Process all channels
           for (const [_, channel] of channels) {
             if (channel instanceof TextChannel) {
@@ -604,15 +475,6 @@ export class DiscordBot {
                   if (category?.transcriptCategoryId) {
                     const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
                     if (transcriptCategory instanceof CategoryChannel) {
-                      // Notify Telegram user before moving the channel
-                      const user = await storage.getUser(ticket.userId!);
-                      if (user?.telegramId) {
-                        await this.bridge.getTelegramBot().sendMessage(
-                          parseInt(user.telegramId),
-                          `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-                        );
-                      }
-
                       await channel.setParent(transcriptCategory.id);
                       await storage.updateTicketStatus(ticket.id, "closed");
                       moveCount++;
@@ -629,8 +491,8 @@ export class DiscordBot {
           // Send final status
           await interaction.followUp({
             content: `✅ Processed ${channels.size} tickets:\n` +
-                     `• ${moveCount} tickets moved to transcripts\n` +
-                     `• ${errorCount} errors encountered`,
+                      `• ${moveCount} tickets moved to transcripts\n` +
+                      `• ${errorCount} errors encountered`,
             ephemeral: true
           });
         } catch (error) {
@@ -762,41 +624,12 @@ export class DiscordBot {
     });
   }
 
-  private async sendTicketMessage(channelId: string, embed: any): Promise<void> {
-    try {
-      log(`Attempting to send and pin ticket message in channel ${channelId}`);
-
-      // Send only through the bot's native message functionality
-      const channel = await this.client.channels.fetch(channelId);
-      if (!(channel instanceof TextChannel)) {
-        throw new Error(`Invalid channel type for channel ${channelId}`);
-      }
-
-      // Send the message first
-      const message = await channel.send({ embeds: embed.embeds });
-
-      try {
-        // Pin the message using the pinnable interface
-        await message.pin();
-        log(`Successfully pinned message in channel ${channelId}`);
-      } catch (pinError) {
-        log(`Error pinning message: ${pinError}`, "error");
-        // Don't throw here - the message was sent successfully even if pinning failed
-      }
-
-      log(`Successfully sent ticket message in channel ${channelId}`);
-    } catch (error) {
-      log(`Error sending ticket message: ${error}`, "error");
-      throw error;
-    }
-  }
-
-
   async createTicketChannel(categoryId: string, name: string): Promise<string> {
     try {
       log(`Creating ticket channel ${name} in category ${categoryId}`);
 
-      await this.checkRateLimit('channelCreate');
+      await this.checkRateLimit('channelCreate'); // Added rate limit check
+
       const category = await this.client.channels.fetch(categoryId);
       if (!category || category.type !== ChannelType.GuildCategory) {
         throw new Error(`Invalid category ${categoryId}`);
@@ -817,6 +650,7 @@ export class DiscordBot {
   }
 
 
+
   async sendMessage(channelId: string, message: any, username: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
@@ -825,63 +659,53 @@ export class DiscordBot {
       await this.globalCheck();
       await this.webhookCheck(channelId);
 
+
       const channel = await this.client.channels.fetch(channelId);
       if (!(channel instanceof TextChannel)) {
         throw new Error(`Invalid channel type for channel ${channelId}`);
       }
 
-      // Get webhook
+      // Get or create webhook with proper caching
       const webhook = await this.getWebhookForChannel(channel);
       if (!webhook) throw new Error("Failed to get webhook");
 
-      // Prepare webhook message
+      // Prepare webhook message with forced username
       const messageOptions: any = {
-        username: username,
-        avatarURL: message.avatarURL
+        username: username, // Use the provided username directly without any fallbacks
       };
 
       // Handle different types of content
-      if (message.files && message.files.length > 0) {
-        log(`Processing message with ${message.files.length} files`);
-
-        // Message with file attachments
-        messageOptions.files = message.files.map((file: any) => ({
-          attachment: file.attachment,
-          name: file.name || 'file.jpg',
-          description: file.description || 'File attachment'
-        }));
-
-        // Ensure content is a string and not empty
-        messageOptions.content = typeof message.content === 'string' ? 
-          message.content.trim() || "\u200B" : "\u200B";
-
-        log(`Prepared file message: ${JSON.stringify({
-          ...messageOptions,
-          files: `${messageOptions.files.length} files`,
-          content: messageOptions.content
-        })}`);
-      } else if (message.embeds) {
-        // Embed message
-        messageOptions.embeds = message.embeds;
+      if (message && typeof message === 'object') {
+        if (message.embeds) {
+          // This is an embed message (for ticket creation)
+          messageOptions.embeds = message.embeds;
+        } else {
+          // This is a forwarded message
+          messageOptions.content = message.content || message;
+          if (message.avatarURL) {
+            messageOptions.avatarURL = message.avatarURL;
+          }
+        }
       } else {
         // Regular text message
-        messageOptions.content = typeof message === 'string' ? 
-          message : (message.content || "\u200B");
+        messageOptions.content = message;
       }
 
       // Send message with retries
       let retries = 0;
       const maxRetries = 3;
-
       while (retries < maxRetries) {
         try {
-          await webhook.send(messageOptions);
+          const sentMessage = await webhook.send(messageOptions);
           log(`Successfully sent message to Discord channel ${channelId}`);
+
+          // Pin if it's a ticket message
+          if (message.embeds?.[0]?.title?.includes('New Ticket')) {
+            await sentMessage.pin();
+          }
           return;
         } catch (error) {
           retries++;
-          log(`Attempt ${retries}/${maxRetries} failed: ${error}`, "error");
-
           if (retries === maxRetries) throw error;
           await new Promise(resolve => setTimeout(resolve, 1000 * retries));
         }
@@ -1028,18 +852,33 @@ export class DiscordBot {
     }
   }
 
-  private async getRoles() {
+  async getRoles() {
     try {
+      // Get the first guild (server) the bot is in
+      await this.globalCheck(); // Added rate limit check
       const guilds = await this.client.guilds.fetch();
-      const guild = await guilds.first()?.fetch();      if (!guild) throw new Error("No guild found");
+      const firstGuild = guilds.first();
+      if (!firstGuild) {
+        throw new Error("Bot is not in any servers");
+      }
 
-      return guild.roles.cache.sort((roleA, roleB) =>{
-        return (roleB?.position || 0) - (roleA?.position || 0);
-      }).map(role => ({
+      // Fetch the complete guild object
+      const guild = await firstGuild.fetch();
+
+      // Get all roles in the guild
+      const roles = await guild.roles.fetch();
+      const roleList = roles.map(role => ({
         id: role.id,
         name: role.name,
         color: role.hexColor
       }));
+
+      // Sort roles by position (higher roles first)
+      return roleList.sort((a, b) => {
+        const roleA = roles.get(a.id);
+        const roleB = roles.get(b.id);
+        return (roleB?.position || 0) - (roleA?.position || 0);
+      });
     } catch (error) {
       log(`Error getting Discord roles: ${error}`, "error");
       throw error;
