@@ -12,15 +12,7 @@ interface BridgeError extends Error {
   context?: string;
 }
 
-interface ImageCacheEntry {
-  telegramFileId?: string;
-  discordUrl?: string;
-  buffer?: Buffer;
-  timestamp: number;
-  size: number;
-}
-
-// Centralized error handler with better context
+// Centralized error handler
 const handleBridgeError = (error: BridgeError, context: string): void => {
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorDetails = {
@@ -32,6 +24,14 @@ const handleBridgeError = (error: BridgeError, context: string): void => {
   log(`Error in ${context}: ${errorMessage}`, "error");
   log(`Error details: ${JSON.stringify(errorDetails)}`, "error");
 };
+
+interface ImageCacheEntry {
+  telegramFileId?: string;
+  discordUrl?: string;
+  buffer?: Buffer;
+  timestamp: number;
+  size: number;  // Track size in bytes
+}
 
 export class BridgeManager {
   private telegramBot: TelegramBot;
@@ -46,9 +46,6 @@ export class BridgeManager {
   private imageCache: Map<string, ImageCacheEntry> = new Map();
   private roleCache: Map<number, string> = new Map();
   private readonly imageCacheCleanupInterval = 3600000; // 1 hour
-  private readonly ticketCleanupInterval = 24 * 60 * 60 * 1000; // 24 hours
-  private readonly maxWebhookRetries = 3;
-  private readonly webhookTimeout = 5000; // 5 seconds
 
   constructor() {
     log("Initializing Bridge Manager");
@@ -56,33 +53,10 @@ export class BridgeManager {
     this.discordBot = new DiscordBot(this);
     this.startHealthCheck();
     this.startImageCacheCleanup();
-    this.startTicketCleanup();
   }
 
   private startImageCacheCleanup(): void {
     setInterval(() => this.cleanupImageCache(), this.imageCacheCleanupInterval);
-  }
-
-  private startTicketCleanup(): void {
-    setInterval(() => this.cleanupOldTickets(), this.ticketCleanupInterval);
-  }
-
-  private async cleanupOldTickets(): Promise<void> {
-    try {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-      const tickets = await storage.getClosedTickets();
-      for (const ticket of tickets) {
-        if (ticket.completedAt && new Date(ticket.completedAt) < thirtyDaysAgo) {
-          // Archive ticket data if needed
-          log(`Archiving old ticket: ${ticket.id}`);
-          await storage.archiveTicket(ticket.id); // Assuming an archiveTicket function exists
-        }
-      }
-    } catch (error) {
-      handleBridgeError(error as BridgeError, "cleanupOldTickets");
-    }
   }
 
   private cleanupImageCache(): void {
@@ -157,7 +131,6 @@ export class BridgeManager {
 
     return entry;
   }
-
   private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
     try {
       if (!this.telegramBot.bot?.telegram) {
@@ -788,6 +761,55 @@ export class BridgeManager {
     }
   }
 
+  // Image processing methods
+  private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
+    try {
+      if (!this.telegramBot.bot?.telegram) {
+        throw new BridgeError("Telegram bot not initialized", { context: "processTelegramToDiscord" });
+      }
+
+      log(`Processing Telegram file ID: ${fileId}`);
+
+      const file = await this.telegramBot.bot.telegram.getFile(fileId);
+      if (!file?.file_path) {
+        throw new BridgeError(`Could not get file path for ID: ${fileId}`, { context: "processTelegramToDiscord" });
+      }
+
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+      log(`Downloading file from: ${fileUrl}`);
+
+      const response = await fetch(fileUrl);
+      log(`Response status: ${response.status}`);
+
+      if (!response.ok) {
+        throw new BridgeError(`HTTP error! status: ${response.status}`, { context: "processTelegramToDiscord" });
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (!buffer || buffer.length === 0) {
+        throw new BridgeError("Received empty buffer", { context: "processTelegramToDiscord" });
+      }
+
+      log(`Successfully downloaded file, size: ${buffer.length} bytes`);
+      return buffer;
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "processTelegramToDiscord");
+      return null;
+    }
+  }
+
+  private async processDiscordToTelegram(url: string): Promise<Buffer | null> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "processDiscordToTelegram");
+      return null;
+    }
+  }
+
   getTelegramBot(): TelegramBot {
     return this.telegramBot;
   }
@@ -802,7 +824,9 @@ async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
     const formData = new URLSearchParams();
     formData.append('image', buffer.toString('base64'));
     formData.append('name', `telegram_photo_${Date.now()}`);
+    // Preserve image quality
     formData.append('quality', '100');
+    // Don't auto-resize
     formData.append('width', '0');
     formData.append('height', '0');
 
@@ -819,6 +843,8 @@ async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
     }
 
     const data = await response.json();
+
+    // Log detailed image information
     log(`Successfully uploaded image to ImgBB:
     Original size: ${buffer.length} bytes
     URL: ${data.data.url}
@@ -828,6 +854,7 @@ async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
     Height: ${data.data.height}px
     Type: ${data.data.image.mime}`);
 
+    // Use display_url which provides full resolution
     return data.data.display_url || data.data.url;
   } catch (error) {
     handleBridgeError(error as BridgeError, "uploadToImgbb");
@@ -835,18 +862,13 @@ async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
   }
 }
 
-async function forwardImageToDiscord(
-  bridge: BridgeManager,
-  channelId: string,
-  buffer: Buffer,
-  content: string | null,
-  username: string,
-  avatarUrl?: string
-): Promise<void> {
+async function forwardImageToDiscord(bridge: BridgeManager, channelId: string, buffer: Buffer, content: string | null, username: string, avatarUrl?: string): Promise<void> {
   try {
+    // Try ImgBB first
     const imageUrl = await uploadToImgbb(buffer);
 
     if (imageUrl) {
+      // Send as regular message with content and image URL
       const messageData = {
         content: `${content ? content.toString().trim() + '\n' : ''}${imageUrl}`,
         avatarURL: avatarUrl
@@ -855,8 +877,9 @@ async function forwardImageToDiscord(
       await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
       log(`Successfully sent image via ImgBB URL: ${imageUrl}`);
     } else {
+      // Fallback to direct buffer upload
       log("Falling back to direct buffer upload");
-      const messageData = {
+      const messageData= {
         content: content ? content.toString().trim() : "\u200B",
         files: [{
           attachment: buffer,
