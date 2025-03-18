@@ -485,8 +485,6 @@ export class TelegramBot {
     }
   }
 
-
-
   private async handleCategoryMenu(ctx: Context) {
     const botConfig = await storage.getBotConfig();
     const categories = await storage.getCategories();
@@ -547,6 +545,42 @@ export class TelegramBot {
   }
 
   private setupHandlers() {
+    this.bot.command("ping", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      try {
+        // Check for active ticket first
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          await ctx.reply("You haven't created any tickets yet.");
+          return;
+        }
+
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (!activeTicket) {
+          await ctx.reply("You don't have any active tickets to ping.");
+          return;
+        }
+
+        // Get user's display name
+        const displayName = [ctx.from.first_name, ctx.from.last_name]
+          .filter(Boolean)
+          .join(' ') || ctx.from.username || "Telegram User";
+
+        try {
+          await this.bridge.forwardPingToDiscord(activeTicket.id, displayName);
+          await ctx.reply("✅ Staff has been successfully notified.");
+        } catch (error) {
+          log(`Error sending ping: ${error}`, "error");
+          await ctx.reply("❌ Failed to send ping. Please try again.");
+        }
+      } catch (error) {
+        log(`Error in ping command: ${error}`, "error");
+        await ctx.reply("❌ There was an error processing your request. Please try again.");
+      }
+    });
+
     this.bot.command("start", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -903,21 +937,8 @@ export class TelegramBot {
 
       try {
         const photos = ctx.message.photo;
-        const bestPhoto = photos[photos.length - 1];
+        const bestPhoto = photos[photos.length - 1]; // Get highest quality photo
         const file = await ctx.telegram.getFile(bestPhoto.file_id);
-        const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-
-        let avatarUrl: string | undefined;
-        try {
-          const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
-          if (photos && photos.total_count > 0) {
-            const fileId = photos.photos[0][0].file_id;
-            const file = await ctx.telegram.getFile(fileId);
-            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-          }
-        } catch (error) {
-          log(`Error getting Telegram user avatar: ${error}`, "error");
-        }
 
         await storage.createMessage({
           ticketId: activeTicket.id,
@@ -926,6 +947,18 @@ export class TelegramBot {
           platform: "telegram",
           timestamp: new Date()
         });
+
+        let avatarUrl: string | undefined;
+        try {
+          const photos = await ctx.telegram`.getUserProfilePhotos(ctx.from.id, 0, 1);
+          if (photos && photos.total_count > 0) {
+            const fileId = photos.photos[0][0].file_id;
+            const file = await ctx.telegram.getFile(fileId);
+            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+          }
+        } catch (error) {
+          log(`Error getting Telegram user avatar: ${error}`, "error");
+        }
 
         // Get user's first and last name
         const firstName = ctx.from?.first_name || "";
@@ -945,13 +978,13 @@ export class TelegramBot {
           );
         }
 
-        // Send the image
+        // Forward the photo using the file_id
         await this.bridge.forwardToDiscord(
           "",
           activeTicket.id,
           displayName,
           avatarUrl,
-          imageUrl,
+          bestPhoto.file_id, // Pass the file_id directly
           firstName,
           lastName
         );
@@ -1121,6 +1154,7 @@ export class TelegramBot {
   }
 
 
+
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
     if (!this.commandCooldowns.has(userId)) {
       this.commandCooldowns.set(userId, new Map());
@@ -1248,6 +1282,42 @@ export class TelegramBot {
   }
 
   private setupHandlers() {
+    this.bot.command("ping", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      try {
+        // Check for active ticket first
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          await ctx.reply("You haven't created any tickets yet.");
+          return;
+        }
+
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (!activeTicket) {
+          await ctx.reply("You don't have any active tickets to ping.");
+          return;
+        }
+
+        // Get user's display name
+        const displayName = [ctx.from.first_name, ctx.from.last_name]
+          .filter(Boolean)
+          .join(' ') || ctx.from.username || "Telegram User";
+
+        try {
+          await this.bridge.forwardPingToDiscord(activeTicket.id, displayName);
+          await ctx.reply("✅ Staff has been successfully notified.");
+        } catch (error) {
+          log(`Error sending ping: ${error}`, "error");
+          await ctx.reply("❌ Failed to send ping. Please try again.");
+        }
+      } catch (error) {
+        log(`Error in ping command: ${error}`, "error");
+        await ctx.reply("❌ There was an error processing your request. Please try again.");
+      }
+    });
+
     this.bot.command("start", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -1604,9 +1674,16 @@ export class TelegramBot {
 
       try {
         const photos = ctx.message.photo;
-        const bestPhoto = photos[photos.length - 1];
+        const bestPhoto = photos[photos.length - 1]; // Get highest quality photo
         const file = await ctx.telegram.getFile(bestPhoto.file_id);
-        const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+
+        await storage.createMessage({
+          ticketId: activeTicket.id,
+          content: ctx.message.caption || "Image sent",
+          authorId: user.id,
+          platform: "telegram",
+          timestamp: new Date()
+        });
 
         let avatarUrl: string | undefined;
         try {
@@ -1619,14 +1696,6 @@ export class TelegramBot {
         } catch (error) {
           log(`Error getting Telegram user avatar: ${error}`, "error");
         }
-
-        await storage.createMessage({
-          ticketId: activeTicket.id,
-          content: ctx.message.caption || "Image sent",
-          authorId: user.id,
-          platform: "telegram",
-          timestamp: new Date()
-        });
 
         // Get user's first and last name
         const firstName = ctx.from?.first_name || "";
@@ -1646,13 +1715,13 @@ export class TelegramBot {
           );
         }
 
-        // Send the image
+        // Forward the photo using the file_id
         await this.bridge.forwardToDiscord(
           "",
           activeTicket.id,
           displayName,
           avatarUrl,
-          imageUrl,
+          bestPhoto.file_id, // Pass the file_id directly
           firstName,
           lastName
         );
@@ -1783,6 +1852,7 @@ export class TelegramBot {
       this.activeUsers.delete(userId);
     }
   }
+
 }
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
