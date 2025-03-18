@@ -18,14 +18,11 @@ async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
     const formData = new URLSearchParams();
     formData.append('image', buffer.toString('base64'));
 
-    const response = await fetch('https://api.imgbb.com/1/upload', {
+    const response = await fetch(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, {
       method: 'POST',
       body: formData,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      query: {
-        key: process.env.IMGBB_API_KEY
       }
     });
 
@@ -39,6 +36,46 @@ async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
   } catch (error) {
     log(`Error uploading to ImgBB: ${error}`, "error");
     return null;
+  }
+}
+
+async function forwardImageToDiscord(bridge: BridgeManager, channelId: string, buffer: Buffer, content: string | null, username: string, avatarUrl?: string): Promise<void> {
+  try {
+    // Try ImgBB first
+    const imageUrl = await uploadToImgbb(buffer);
+
+    if (imageUrl) {
+      // Send as embed with ImgBB URL
+      const messageData = {
+        content: content ? content.toString().trim() : "\u200B",
+        embeds: [{
+          image: { url: imageUrl },
+          description: "Photo from Telegram"
+        }],
+        avatarURL: avatarUrl
+      };
+
+      await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
+      log(`Successfully sent image via ImgBB URL: ${imageUrl}`);
+    } else {
+      // Fallback to direct buffer upload
+      log("Falling back to direct buffer upload");
+      const messageData = {
+        content: content ? content.toString().trim() : "\u200B",
+        files: [{
+          attachment: buffer,
+          name: `telegram_photo_${Date.now()}.jpg`,
+          description: 'Photo from Telegram'
+        }],
+        avatarURL: avatarUrl
+      };
+
+      await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
+      log("Successfully sent image via direct buffer upload");
+    }
+  } catch (error) {
+    log(`Error forwarding image to Discord: ${error}`, "error");
+    throw error;
   }
 }
 
@@ -610,12 +647,6 @@ export class BridgeManager {
 
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          // Upload to ImgBB
-          const imageUrl = await uploadToImgbb(buffer);
-          if (!imageUrl) {
-            throw new Error("Failed to upload image to ImgBB");
-          }
-
           // Send text content first if exists
           if (content?.trim()) {
             await this.discordBot.sendMessage(
@@ -625,25 +656,16 @@ export class BridgeManager {
             );
           }
 
-          // Send photo as embed with ImgBB URL
-          const messageData = {
-            content: "\u200B",
-            embeds: [{
-              image: {
-                url: imageUrl
-              },
-              description: content ? content.toString().trim() : "Photo from Telegram"
-            }],
-            avatarURL: avatarUrl
-          };
-
-          await this.discordBot.sendMessage(
+          // Forward the image using our helper function
+          await forwardImageToDiscord(
+            this,
             ticket.discordChannelId,
-            messageData,
-            displayName
+            buffer,
+            null, // Send image without duplicate content
+            displayName,
+            avatarUrl
           );
 
-          log(`Successfully sent photo to Discord channel ${ticket.discordChannelId}`);
         } catch (error) {
           log(`Error processing photo: ${error}`, "error");
           // If photo fails, still try to send the text content
@@ -669,6 +691,7 @@ export class BridgeManager {
       log(`Error in forwardToDiscord: ${error}`, "error");
     }
   }
+
 
 
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {
@@ -733,7 +756,7 @@ export class BridgeManager {
     return this.telegramBot;
   }
 
-  getDiscordBot(): TelegramBot {
+  getDiscordBot(): DiscordBot {
     return this.discordBot;
   }
 }

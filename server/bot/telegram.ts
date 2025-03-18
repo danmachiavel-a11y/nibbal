@@ -948,22 +948,25 @@ export class TelegramBot {
           timestamp: new Date()
         });
 
+        // Get avatar URL if possible
         let avatarUrl: string | undefined;
-        try {
-          const photos = await ctx.telegram`.getUserProfilePhotos(ctx.from.id, 0, 1);
-          if (photos && photos.total_count > 0) {
-            const fileId = photos.photos[0][0].file_id;
-            const file = await ctx.telegram.getFile(fileId);
-            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+          try {
+            const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+            if (photos && photos.total_count > 0) {
+              const fileId = photos.photos[0][0].file_id;
+              const file = await ctx.telegram.getFile(fileId);
+              if (file?.file_path) {
+                avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+              }
+            }
+          } catch (error) {
+            log(`Error getting Telegram user avatar: ${error}`, "error");
           }
-        } catch (error) {
-          log(`Error getting Telegram user avatar: ${error}`, "error");
-        }
 
-        // Get user's first and last name
-        const firstName = ctx.from?.first_name || "";
-        const lastName = ctx.from?.last_name || "";
-        const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
+          // Get user's first and last name
+          const firstName = ctx.from?.first_name || "";
+          const lastName = ctx.from?.last_name || "";
+          const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
         // Send caption if exists
         if (ctx.message.caption) {
@@ -1685,13 +1688,16 @@ export class TelegramBot {
           timestamp: new Date()
         });
 
+        // Get avatar URL if possible
         let avatarUrl: string | undefined;
         try {
           const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
           if (photos && photos.total_count > 0) {
             const fileId = photos.photos[0][0].file_id;
             const file = await ctx.telegram.getFile(fileId);
-            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+            if (file?.file_path) {
+              avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+            }
           }
         } catch (error) {
           log(`Error getting Telegram user avatar: ${error}`, "error");
