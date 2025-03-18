@@ -121,9 +121,37 @@ export class TelegramBot {
     }
   }
 
+  private cleanupRateLimits(userId: number): void {
+    const state = this.userStates.get(userId);
+    if (!state) return;
+
+    const now = Date.now();
+
+    // Clean up command rate limits
+    for (const [command, limit] of state.rateLimits.commands.entries()) {
+      if (now - limit.timestamp > RATE_LIMIT.COMMAND.WINDOW) {
+        state.rateLimits.commands.delete(command);
+        log(`Cleaned up rate limit for command ${command} for user ${userId}`);
+      }
+    }
+
+    // Clean up message rate limits
+    const messageLimit = state.rateLimits.messages;
+    if (messageLimit.blockedUntil && now > messageLimit.blockedUntil) {
+      state.rateLimits.messages = { timestamp: now, count: 0 };
+      log(`Reset message rate limit block for user ${userId}`);
+    } else if (now - messageLimit.timestamp > RATE_LIMIT.MESSAGE.WINDOW) {
+      state.rateLimits.messages = { timestamp: now, count: 0 };
+      log(`Reset message rate limit count for user ${userId}`);
+    }
+  }
+
   private checkRateLimit(userId: number, type: 'command' | 'message', command?: string): boolean {
     const state = this.userStates.get(userId);
     if (!state) return true;
+
+    // Clean up old rate limits first
+    this.cleanupRateLimits(userId);
 
     const now = Date.now();
 
@@ -135,6 +163,7 @@ export class TelegramBot {
       }
 
       if (limit.count >= RATE_LIMIT.COMMAND.MAX_COUNT) {
+        log(`Rate limit exceeded for command ${command} by user ${userId}`);
         return false;
       }
 
@@ -145,6 +174,7 @@ export class TelegramBot {
     if (type === 'message') {
       const limit = state.rateLimits.messages;
       if (limit.blockedUntil && now < limit.blockedUntil) {
+        log(`User ${userId} is blocked from sending messages until ${new Date(limit.blockedUntil)}`);
         return false;
       }
 
@@ -155,6 +185,7 @@ export class TelegramBot {
 
       if (limit.count >= RATE_LIMIT.MESSAGE.MAX_COUNT) {
         limit.blockedUntil = now + RATE_LIMIT.MESSAGE.BLOCK_DURATION;
+        log(`User ${userId} has been rate limited for messages until ${new Date(limit.blockedUntil)}`);
         return false;
       }
 
@@ -170,6 +201,14 @@ export class TelegramBot {
     const existing = this.stateCleanups.get(userId);
     if (existing?.timeout) {
       clearTimeout(existing.timeout);
+    }
+
+    // Initialize rate limits if not present
+    if (!state.rateLimits) {
+      state.rateLimits = {
+        commands: new Map(),
+        messages: { timestamp: Date.now(), count: 0 }
+      };
     }
 
     // Set new state with timeout
@@ -908,7 +947,6 @@ export class TelegramBot {
     this.bot.command("close", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
-
       if (!this.checkRateLimit(userId, 'command', 'close')) {
         await ctx.reply("⚠️ Please wait before using this command again.");
         return;
@@ -1234,7 +1272,6 @@ export class TelegramBot {
       await this.createTicket({ from: { id: userId, first_name: user.telegramName, username: user.telegramUsername }, reply: this.sendMessage.bind(this, userId) });
     }
   }
-
 
 
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
