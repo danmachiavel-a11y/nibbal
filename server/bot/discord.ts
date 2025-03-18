@@ -836,7 +836,7 @@ export class DiscordBot {
       // Prepare webhook message
       const messageOptions: any = {
         username: username,
-        avatarURL: message.avatarURL
+        avatarURL: message.avatarURL // Fix: Ensure correct case for avatarURL
       };
 
       // Handle different types of content
@@ -859,18 +859,21 @@ export class DiscordBot {
           message : (message.content || "\u200B");
       }
 
+      // Add debug logging
+      log(`Sending message with options: ${JSON.stringify({
+        username: messageOptions.username,
+        avatarURL: messageOptions.avatarURL,
+        content: messageOptions.content.substring(0, 100) + (messageOptions.content.length > 100 ? '...' : ''),
+        files: messageOptions.files ? `${messageOptions.files.length} files` : 'no files',
+        embeds: messageOptions.embeds ? `${messageOptions.embeds.length} embeds` : 'no embeds'
+      })}`);
+
       // Send message with retries
       let retries = 0;
       const maxRetries = 3;
 
       while (retries < maxRetries) {
         try {
-          log(`Sending message with options: ${JSON.stringify({
-            ...messageOptions,
-            files: messageOptions.files ? `${messageOptions.files.length} files` : 'no files',
-            embeds: messageOptions.embeds ? `${messageOptions.embeds.length} embeds` : 'no embeds'
-          })}`);
-
           await webhook.send(messageOptions);
           log(`Successfully sent message to Discord channel ${channelId}`);
           return;
