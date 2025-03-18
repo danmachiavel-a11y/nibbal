@@ -1,18 +1,17 @@
-import { 
-  Client, 
-  GatewayIntentBits, 
-  TextChannel, 
-  Webhook,
-  CategoryChannel,
-  ChannelType,
-  EmbedBuilder,
-  ApplicationCommandType,
-  ApplicationCommandOptionType,
-  WebhookClient
-} from "discord.js";
-import { storage } from "../storage";
-import { BridgeManager } from "./bridge";
-import { log } from "../vite";
+interface WebhookMessage {
+  content?: string;
+  username: string;
+  avatarURL?: string;
+  embeds?: any[];
+  files?: Array<{
+    attachment: Buffer | string;
+    name: string;
+    description?: string;
+  }>;
+  allowedMentions?: {
+    roles?: string[];
+  };
+}
 
 interface WebhookPool {
   webhook: WebhookClient;
@@ -30,6 +29,22 @@ interface RateLimitBucket {
     reject: (error: Error) => void;
   }>;
 }
+
+import { 
+  Client, 
+  GatewayIntentBits, 
+  TextChannel, 
+  Webhook,
+  CategoryChannel,
+  ChannelType,
+  EmbedBuilder,
+  ApplicationCommandType,
+  ApplicationCommandOptionType,
+  WebhookClient
+} from "discord.js";
+import { storage } from "../storage";
+import { BridgeManager } from "./bridge";
+import { log } from "../vite";
 
 export class DiscordBot {
   private client: Client;
@@ -816,7 +831,7 @@ export class DiscordBot {
     }
   }
 
-  private async sendMessage(channelId: string, message: any, username: string): Promise<void> {
+  private async sendMessage(channelId: string, message: WebhookMessage, username: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 

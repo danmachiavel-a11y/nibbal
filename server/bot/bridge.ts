@@ -6,90 +6,31 @@ import { log } from "../vite";
 import fetch from 'node-fetch';
 import { TextChannel } from 'discord.js';
 
+interface BridgeError extends Error {
+  code?: string;
+  details?: any;
+  context?: string;
+}
+
+// Centralized error handler
+const handleBridgeError = (error: BridgeError, context: string): void => {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorDetails = {
+    context,
+    code: error.code,
+    details: error.details,
+    timestamp: new Date().toISOString()
+  };
+  log(`Error in ${context}: ${errorMessage}`, "error");
+  log(`Error details: ${JSON.stringify(errorDetails)}`, "error");
+};
+
 interface ImageCacheEntry {
   telegramFileId?: string;
   discordUrl?: string;
   buffer?: Buffer;
   timestamp: number;
-}
-
-async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
-  try {
-    const formData = new URLSearchParams();
-    formData.append('image', buffer.toString('base64'));
-    formData.append('name', `telegram_photo_${Date.now()}`);
-    // Preserve image quality
-    formData.append('quality', '100');
-    // Don't auto-resize
-    formData.append('width', '0');
-    formData.append('height', '0');
-
-    const response = await fetch(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`ImgBB API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    // Log detailed image information
-    log(`Successfully uploaded image to ImgBB:
-    Original size: ${buffer.length} bytes
-    URL: ${data.data.url}
-    Display URL: ${data.data.display_url}
-    Size: ${data.data.size} bytes
-    Width: ${data.data.width}px
-    Height: ${data.data.height}px
-    Type: ${data.data.image.mime}`);
-
-    // Use display_url which provides full resolution
-    return data.data.display_url || data.data.url;
-  } catch (error) {
-    log(`Error uploading to ImgBB: ${error}`, "error");
-    return null;
-  }
-}
-
-async function forwardImageToDiscord(bridge: BridgeManager, channelId: string, buffer: Buffer, content: string | null, username: string, avatarUrl?: string): Promise<void> {
-  try {
-    // Try ImgBB first
-    const imageUrl = await uploadToImgbb(buffer);
-
-    if (imageUrl) {
-      // Send as regular message with content and image URL
-      const messageData = {
-        content: `${content ? content.toString().trim() + '\n' : ''}${imageUrl}`,
-        avatarURL: avatarUrl
-      };
-
-      await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
-      log(`Successfully sent image via ImgBB URL: ${imageUrl}`);
-    } else {
-      // Fallback to direct buffer upload
-      log("Falling back to direct buffer upload");
-      const messageData = {
-        content: content ? content.toString().trim() : "\u200B",
-        files: [{
-          attachment: buffer,
-          name: `telegram_photo_${Date.now()}.jpg`,
-          description: 'Photo from Telegram'
-        }],
-        avatarURL: avatarUrl
-      };
-
-      await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
-      log("Successfully sent image via direct buffer upload");
-    }
-  } catch (error) {
-    log(`Error forwarding image to Discord: ${error}`, "error");
-    throw error;
-  }
+  size: number;  // Track size in bytes
 }
 
 export class BridgeManager {
@@ -97,79 +38,110 @@ export class BridgeManager {
   private discordBot: DiscordBot;
   private retryAttempts: number = 0;
   private maxRetries: number = 3;
-  private retryTimeout: number = 5000; // 5 seconds
+  private retryTimeout: number = 5000;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly imageCacheTTL = 24 * 60 * 60 * 1000; // 24 hours
+  private readonly maxImageCacheSize = 500 * 1024 * 1024; // 500MB
+  private currentImageCacheSize = 0;
   private imageCache: Map<string, ImageCacheEntry> = new Map();
   private roleCache: Map<number, string> = new Map();
+  private readonly imageCacheCleanupInterval = 3600000; // 1 hour
 
   constructor() {
     log("Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
     this.startHealthCheck();
+    this.startImageCacheCleanup();
   }
 
-  // Role ping methods with proper Discord formatting
-  async pingRole(roleId: string, channelId: string, message?: string) {
-    try {
-      // Remove @ symbols and format for Discord mention
-      const cleanRoleId = roleId.replace(/[@]/g, '');
+  private startImageCacheCleanup(): void {
+    setInterval(() => this.cleanupImageCache(), this.imageCacheCleanupInterval);
+  }
 
-      // Get channel from Discord client's cache
-      const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
-      if (channel?.isTextBased()) {
-        // Send message as bot directly
-        await channel.send({
-          content: `<@&${cleanRoleId}>`,
-          allowedMentions: { roles: [cleanRoleId] }
-        });
-        log(`Successfully pinged role ${cleanRoleId} in channel ${channelId}`);
+  private cleanupImageCache(): void {
+    const now = Date.now();
+    let deletedSize = 0;
+
+    // Remove expired entries
+    for (const [key, entry] of this.imageCache.entries()) {
+      if (now - entry.timestamp > this.imageCacheTTL) {
+        this.imageCache.delete(key);
+        if (entry.buffer) {
+          deletedSize += entry.buffer.length;
+          this.currentImageCacheSize -= entry.buffer.length;
+        }
       }
-    } catch (error) {
-      log(`Error pinging role: ${error}`, "error");
+    }
+
+    // If still over size limit, remove oldest entries
+    if (this.currentImageCacheSize > this.maxImageCacheSize) {
+      const entries = Array.from(this.imageCache.entries())
+        .sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+      while (this.currentImageCacheSize > this.maxImageCacheSize && entries.length > 0) {
+        const [key, entry] = entries.shift()!;
+        this.imageCache.delete(key);
+        if (entry.buffer) {
+          deletedSize += entry.buffer.length;
+          this.currentImageCacheSize -= entry.buffer.length;
+        }
+      }
+    }
+
+    if (deletedSize > 0) {
+      log(`Cleaned up ${(deletedSize / 1024 / 1024).toFixed(2)}MB from image cache`);
     }
   }
 
-  async pingRoleForCategory(categoryId: number, channelId: string): Promise<void> {
-    try {
-      const category = await storage.getCategory(categoryId);
-      if (!category?.discordRoleId) {
-        log(`No role ID found for category ${categoryId}`);
-        return;
-      }
+  private setCachedImage(key: string, entry: Partial<ImageCacheEntry>) {
+    const buffer = entry.buffer;
+    if (buffer) {
+      // Check if adding this would exceed cache size
+      if (this.currentImageCacheSize + buffer.length > this.maxImageCacheSize) {
+        this.cleanupImageCache(); // Try to free up space
 
-      // Cache the role ID for future use
-      const cleanRoleId = category.discordRoleId.replace(/[@]/g, '');
-      this.roleCache.set(categoryId, cleanRoleId);
-
-      // Get channel from Discord client's cache
-      const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
-      if (channel?.isTextBased()) {
-        // Send message as bot directly
-        await channel.send({
-          content: `<@&${cleanRoleId}>`,
-          allowedMentions: { roles: [cleanRoleId] }
-        });
-        log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
+        // If still would exceed, don't cache
+        if (this.currentImageCacheSize + buffer.length > this.maxImageCacheSize) {
+          log(`Skipping cache for large image: ${buffer.length} bytes`);
+          return;
+        }
       }
-    } catch (error) {
-      log(`Error pinging role for category: ${error}`, "error");
+      this.currentImageCacheSize += buffer.length;
     }
+
+    this.imageCache.set(key, {
+      ...entry,
+      timestamp: Date.now(),
+      size: buffer?.length || 0
+    } as ImageCacheEntry);
   }
 
-  // Image processing methods
+  private getCachedImage(key: string): ImageCacheEntry | undefined {
+    const entry = this.imageCache.get(key);
+    if (!entry) return undefined;
+
+    if (Date.now() - entry.timestamp > this.imageCacheTTL) {
+      if (entry.buffer) {
+        this.currentImageCacheSize -= entry.buffer.length;
+      }
+      this.imageCache.delete(key);
+      return undefined;
+    }
+
+    return entry;
+  }
   private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
     try {
       if (!this.telegramBot.bot?.telegram) {
-        throw new Error("Telegram bot not initialized");
+        throw new BridgeError("Telegram bot not initialized", { context: "processTelegramToDiscord" });
       }
 
       log(`Processing Telegram file ID: ${fileId}`);
 
       const file = await this.telegramBot.bot.telegram.getFile(fileId);
       if (!file?.file_path) {
-        throw new Error(`Could not get file path for ID: ${fileId}`);
+        throw new BridgeError(`Could not get file path for ID: ${fileId}`, { context: "processTelegramToDiscord" });
       }
 
       const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
@@ -179,18 +151,18 @@ export class BridgeManager {
       log(`Response status: ${response.status}`);
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new BridgeError(`HTTP error! status: ${response.status}`, { context: "processTelegramToDiscord" });
       }
 
       const buffer = Buffer.from(await response.arrayBuffer());
       if (!buffer || buffer.length === 0) {
-        throw new Error("Received empty buffer");
+        throw new BridgeError("Received empty buffer", { context: "processTelegramToDiscord" });
       }
 
       log(`Successfully downloaded file, size: ${buffer.length} bytes`);
       return buffer;
     } catch (error) {
-      log(`Error processing Telegram image: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "processTelegramToDiscord");
       return null;
     }
   }
@@ -202,28 +174,9 @@ export class BridgeManager {
 
       return Buffer.from(await response.arrayBuffer());
     } catch (error) {
-      log(`Error processing Discord image: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "processDiscordToTelegram");
       return null;
     }
-  }
-
-  private setCachedImage(key: string, entry: Partial<ImageCacheEntry>) {
-    this.imageCache.set(key, {
-      ...entry,
-      timestamp: Date.now()
-    });
-  }
-
-  private getCachedImage(key: string): ImageCacheEntry | undefined {
-    const entry = this.imageCache.get(key);
-    if (!entry) return undefined;
-
-    if (Date.now() - entry.timestamp > this.imageCacheTTL) {
-      this.imageCache.delete(key);
-      return undefined;
-    }
-
-    return entry;
   }
   private startHealthCheck() {
     // Run health check every 5 minutes
@@ -236,7 +189,7 @@ export class BridgeManager {
           await this.reconnectDisconnectedBots(health);
         }
       } catch (error) {
-        log(`Health check failed: ${error}`, "error");
+        handleBridgeError(error as BridgeError, "healthCheck");
       }
     }, 300000); // 5 minutes
   }
@@ -256,7 +209,7 @@ export class BridgeManager {
       ]);
       log("Bots initialization completed");
     } catch (error) {
-      log(`Error starting bots: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "start");
     }
   }
 
@@ -279,7 +232,7 @@ export class BridgeManager {
         log(`${botName} bot started successfully`);
         return;
       } catch (error) {
-        log(`${botName} bot start attempt ${attempt} failed: ${error}`, "error");
+        handleBridgeError(error as BridgeError, `startBotWithRetry-${botName}-${attempt}`);
 
         if (attempt === this.maxRetries) {
           log(`${botName} bot failed to start after ${this.maxRetries} attempts`, "error");
@@ -322,7 +275,7 @@ export class BridgeManager {
 
       log("Bots restarted successfully");
     } catch (error) {
-      log(`Error restarting bots: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "restart");
       throw error;
     }
   }
@@ -340,7 +293,7 @@ export class BridgeManager {
         await this.startBotWithRetry(() => this.discordBot.start(), "Discord");
       }
     } catch (error) {
-      log(`Error reconnecting bots: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "reconnectDisconnectedBots");
       throw error;
     }
   }
@@ -357,7 +310,7 @@ export class BridgeManager {
         discord: this.discordBot.isReady()
       };
     } catch (error) {
-      log(`Error in health check: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "healthCheck");
       return {
         telegram: false,
         discord: false
@@ -371,7 +324,7 @@ export class BridgeManager {
       log(`Moving ticket to transcripts. Ticket data:`, JSON.stringify(ticket, null, 2));
 
       if (!ticket || !ticket.discordChannelId) {
-        throw new Error(`Invalid ticket or missing Discord channel: ${ticketId}`);
+        throw new BridgeError(`Invalid ticket or missing Discord channel: ${ticketId}`, { context: "moveToTranscripts" });
       }
 
       // Get category for transcript category ID
@@ -380,18 +333,18 @@ export class BridgeManager {
 
       // More strict checking for transcriptCategoryId
       if (!category) {
-        throw new Error("Category not found");
+        throw new BridgeError("Category not found", { context: "moveToTranscripts" });
       }
 
       // More strict checking for transcriptCategoryId
       if (!category.transcriptCategoryId) {
         log(`No transcript category ID found for category ${category.id}`);
-        throw new Error("No transcript category set for this service");
+        throw new BridgeError("No transcript category set for this service", { context: "moveToTranscripts" });
       }
 
       if (category.transcriptCategoryId.trim() === '') {
         log(`Empty transcript category ID for category ${category.id}`);
-        throw new Error("No transcript category set for this service");
+        throw new BridgeError("No transcript category set for this service", { context: "moveToTranscripts" });
       }
 
       log(`Moving channel ${ticket.discordChannelId} to transcript category ${category.transcriptCategoryId}`);
@@ -407,28 +360,28 @@ export class BridgeManager {
 
       log(`Successfully moved ticket ${ticketId} to transcripts category ${category.transcriptCategoryId}`);
     } catch (error) {
-      log(`Error moving ticket to transcripts: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "moveToTranscripts");
       throw error;
     }
   }
 
   async createTicketChannel(ticket: Ticket) {
     if (!ticket.categoryId) {
-      throw new Error("Ticket must have a category");
+      throw new BridgeError("Ticket must have a category", { context: "createTicketChannel" });
     }
 
     const category = await storage.getCategory(ticket.categoryId);
     if (!category) {
-      throw new Error("Category not found");
+      throw new BridgeError("Category not found", { context: "createTicketChannel" });
     }
 
     if (!ticket.userId) {
-      throw new Error("Ticket must have a user");
+      throw new BridgeError("Ticket must have a user", { context: "createTicketChannel" });
     }
 
     const user = await storage.getUser(ticket.userId);
     if (!user) {
-      throw new Error("User not found");
+      throw new BridgeError("User not found", { context: "createTicketChannel" });
     }
 
     const tickets = await storage.getTicketsByCategory(ticket.categoryId);
@@ -476,7 +429,7 @@ export class BridgeManager {
 
       log(`Ticket channel created: ${channelName}`);
     } catch (error) {
-      log(`Error creating Discord channel: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "createTicketChannel");
 
       // Check if error is due to channel limit
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -484,7 +437,7 @@ export class BridgeManager {
         errorMessage.includes('channel limit')) {
         // Update ticket status to pending
         await storage.updateTicketStatus(ticket.id, "pending");
-        throw new Error("Category is at maximum channel limit. Please try again later or contact an administrator.");
+        throw new BridgeError("Category is at maximum channel limit. Please try again later or contact an administrator.", { context: "createTicketChannel" });
       }
 
       // For other errors, mark ticket as open but without channel
@@ -548,7 +501,7 @@ export class BridgeManager {
               log(`Processing Discord attachment: ${attachment.url}`);
               const buffer = await this.processDiscordToTelegram(attachment.url);
               if (!buffer) {
-                throw new Error("Failed to process image");
+                throw new BridgeError("Failed to process image", { context: "forwardToTelegram" });
               }
               log(`Successfully processed image, size: ${buffer.length} bytes`);
 
@@ -561,7 +514,7 @@ export class BridgeManager {
 
               log(`Successfully sent photo to Telegram user ${user.telegramId}`);
             } catch (error) {
-              log(`Error sending photo to Telegram: ${error}`, "error");
+              handleBridgeError(error as BridgeError, "forwardToTelegram-attachment");
             }
           }
         }
@@ -602,7 +555,7 @@ export class BridgeManager {
           log(`Processing Discord image URL: ${imageUrl}`);
           const buffer = await this.processDiscordToTelegram(imageUrl);
           if (!buffer) {
-            throw new Error("Failed to process image");
+            throw new BridgeError("Failed to process image", { context: "forwardToTelegram" });
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
@@ -614,7 +567,7 @@ export class BridgeManager {
 
           log(`Successfully sent photo to Telegram user ${user.telegramId}`);
         } catch (error) {
-          log(`Error processing and sending image: ${error}`, "error");
+          handleBridgeError(error as BridgeError, "forwardToTelegram-image");
         }
       } else {
         // Regular text message handling
@@ -630,7 +583,7 @@ export class BridgeManager {
 
       log(`Successfully sent message to Telegram user: ${user.username}`);
     } catch (error) {
-      log(`Error forwarding to Telegram: ${error instanceof Error ? error.message : String(error)}`, "error");
+      handleBridgeError(error as BridgeError, "forwardToTelegram");
     }
   }
 
@@ -640,27 +593,20 @@ export class BridgeManager {
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
 
       if (!ticket || !ticket.discordChannelId) {
-        log(`Invalid ticket or missing Discord channel: ${ticketId}`, "error");
-        return;
+        throw new BridgeError(`Invalid ticket or missing Discord channel: ${ticketId}`, { context: "forwardToDiscord" });
       }
 
       const displayName = [firstName, lastName]
         .filter(Boolean)
         .join(' ') || username;
 
-      // Handle photo if present
       if (photo) {
         try {
-          log(`Processing photo with ID: ${photo}`);
           const buffer = await this.processTelegramToDiscord(photo);
-
           if (!buffer) {
-            throw new Error("Failed to process image");
+            throw new BridgeError("Failed to process image", { context: "forwardToDiscord" });
           }
 
-          log(`Successfully processed image, size: ${buffer.length} bytes`);
-
-          // Send text content first if exists
           if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
@@ -672,19 +618,17 @@ export class BridgeManager {
             );
           }
 
-          // Forward the image using our helper function
           await forwardImageToDiscord(
             this,
             ticket.discordChannelId,
             buffer,
-            null, // Send image without duplicate content
+            null,
             displayName,
             avatarUrl
           );
 
         } catch (error) {
-          log(`Error processing photo: ${error}`, "error");
-          // If photo fails, still try to send the text content
+          handleBridgeError(error as BridgeError, "forwardToDiscord-photo");
           if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
@@ -697,7 +641,6 @@ export class BridgeManager {
           }
         }
       } else {
-        // Regular text message
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
@@ -710,7 +653,7 @@ export class BridgeManager {
 
       log(`Successfully forwarded message to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
-      log(`Error in forwardToDiscord: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "forwardToDiscord");
     }
   }
 
@@ -718,16 +661,15 @@ export class BridgeManager {
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
-      if (!ticket || !ticket.userId) {
-        throw new Error("Invalid ticket or missing user ID");
+      if (!ticket?.userId) {
+        throw new BridgeError("Invalid ticket or missing user ID", { code: "INVALID_TICKET", context: "forwardPingToTelegram" });
       }
 
       const user = await storage.getUser(ticket.userId);
-      if (!user || !user.telegramId) {
-        throw new Error("Could not find Telegram information for ticket creator");
+      if (!user?.telegramId) {
+        throw new BridgeError("Could not find Telegram information for ticket creator", { code: "USER_NOT_FOUND", context: "forwardPingToTelegram" });
       }
 
-      // Send ping notification to Telegram user with @ mention
       await this.telegramBot.sendMessage(
         parseInt(user.telegramId),
         `🔔 @${user.username} You've been pinged by ${discordUsername} in ticket #${ticketId}`
@@ -735,7 +677,7 @@ export class BridgeManager {
 
       log(`Successfully sent ping to Telegram user ${user.telegramId}`);
     } catch (error) {
-      log(`Error forwarding ping to Telegram: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "forwardPingToTelegram");
       throw error;
     }
   }
@@ -743,20 +685,19 @@ export class BridgeManager {
   async forwardPingToDiscord(ticketId: number, telegramUsername: string) {
     try {
       const ticket = await storage.getTicket(ticketId);
-      if (!ticket || !ticket.categoryId) {
-        throw new Error("Invalid ticket or missing category");
+      if (!ticket?.categoryId) {
+        throw new BridgeError("Invalid ticket or missing category", { code: "INVALID_TICKET", context: "forwardPingToDiscord" });
       }
 
       const category = await storage.getCategory(ticket.categoryId);
-      if (!category || !category.discordRoleId) {
-        throw new Error("No role ID found for category");
+      if (!category?.discordRoleId) {
+        throw new BridgeError("No role ID found for category", { code: "MISSING_ROLE", context: "forwardPingToDiscord" });
       }
 
       if (!ticket.discordChannelId) {
-        throw new Error("No Discord channel found for ticket");
+        throw new BridgeError("No Discord channel found for ticket", { code: "MISSING_CHANNEL", context: "forwardPingToDiscord" });
       }
 
-      // Send role ping with improved formatting
       await this.discordBot.sendMessage(
         ticket.discordChannelId,
         {
@@ -768,8 +709,104 @@ export class BridgeManager {
 
       log(`Successfully sent ping to Discord role ${category.discordRoleId}`);
     } catch (error) {
-      log(`Error forwarding ping to Discord: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "forwardPingToDiscord");
       throw error;
+    }
+  }
+
+  async pingRole(roleId: string, channelId: string, message?: string) {
+    try {
+      // Remove @ symbols and format for Discord mention
+      const cleanRoleId = roleId.replace(/[@]/g, '');
+
+      // Get channel from Discord client's cache
+      const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
+      if (channel?.isTextBased()) {
+        // Send message as bot directly
+        await channel.send({
+          content: `<@&${cleanRoleId}>`,
+          allowedMentions: { roles: [cleanRoleId] }
+        });
+        log(`Successfully pinged role ${cleanRoleId} in channel ${channelId}`);
+      }
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "pingRole");
+    }
+  }
+
+  async pingRoleForCategory(categoryId: number, channelId: string): Promise<void> {
+    try {
+      const category = await storage.getCategory(categoryId);
+      if (!category?.discordRoleId) {
+        log(`No role ID found for category ${categoryId}`);
+        return;
+      }
+
+      // Cache the role ID for future use
+      const cleanRoleId = category.discordRoleId.replace(/[@]/g, '');
+      this.roleCache.set(categoryId, cleanRoleId);
+
+      // Get channel from Discord client's cache
+      const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
+      if (channel?.isTextBased()) {
+        // Send message as bot directly
+        await channel.send({
+          content: `<@&${cleanRoleId}>`,
+          allowedMentions: { roles: [cleanRoleId] }
+        });
+        log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
+      }
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "pingRoleForCategory");
+    }
+  }
+
+  // Image processing methods
+  private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
+    try {
+      if (!this.telegramBot.bot?.telegram) {
+        throw new BridgeError("Telegram bot not initialized", { context: "processTelegramToDiscord" });
+      }
+
+      log(`Processing Telegram file ID: ${fileId}`);
+
+      const file = await this.telegramBot.bot.telegram.getFile(fileId);
+      if (!file?.file_path) {
+        throw new BridgeError(`Could not get file path for ID: ${fileId}`, { context: "processTelegramToDiscord" });
+      }
+
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+      log(`Downloading file from: ${fileUrl}`);
+
+      const response = await fetch(fileUrl);
+      log(`Response status: ${response.status}`);
+
+      if (!response.ok) {
+        throw new BridgeError(`HTTP error! status: ${response.status}`, { context: "processTelegramToDiscord" });
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (!buffer || buffer.length === 0) {
+        throw new BridgeError("Received empty buffer", { context: "processTelegramToDiscord" });
+      }
+
+      log(`Successfully downloaded file, size: ${buffer.length} bytes`);
+      return buffer;
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "processTelegramToDiscord");
+      return null;
+    }
+  }
+
+  private async processDiscordToTelegram(url: string): Promise<Buffer | null> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "processDiscordToTelegram");
+      return null;
     }
   }
 
@@ -779,5 +816,84 @@ export class BridgeManager {
 
   getDiscordBot(): DiscordBot {
     return this.discordBot;
+  }
+}
+
+async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
+  try {
+    const formData = new URLSearchParams();
+    formData.append('image', buffer.toString('base64'));
+    formData.append('name', `telegram_photo_${Date.now()}`);
+    // Preserve image quality
+    formData.append('quality', '100');
+    // Don't auto-resize
+    formData.append('width', '0');
+    formData.append('height', '0');
+
+    const response = await fetch(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      }
+    });
+
+    if (!response.ok) {
+      throw new BridgeError(`ImgBB API error: ${response.status}`, { context: "uploadToImgbb" });
+    }
+
+    const data = await response.json();
+
+    // Log detailed image information
+    log(`Successfully uploaded image to ImgBB:
+    Original size: ${buffer.length} bytes
+    URL: ${data.data.url}
+    Display URL: ${data.data.display_url}
+    Size: ${data.data.size} bytes
+    Width: ${data.data.width}px
+    Height: ${data.data.height}px
+    Type: ${data.data.image.mime}`);
+
+    // Use display_url which provides full resolution
+    return data.data.display_url || data.data.url;
+  } catch (error) {
+    handleBridgeError(error as BridgeError, "uploadToImgbb");
+    return null;
+  }
+}
+
+async function forwardImageToDiscord(bridge: BridgeManager, channelId: string, buffer: Buffer, content: string | null, username: string, avatarUrl?: string): Promise<void> {
+  try {
+    // Try ImgBB first
+    const imageUrl = await uploadToImgbb(buffer);
+
+    if (imageUrl) {
+      // Send as regular message with content and image URL
+      const messageData = {
+        content: `${content ? content.toString().trim() + '\n' : ''}${imageUrl}`,
+        avatarURL: avatarUrl
+      };
+
+      await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
+      log(`Successfully sent image via ImgBB URL: ${imageUrl}`);
+    } else {
+      // Fallback to direct buffer upload
+      log("Falling back to direct buffer upload");
+      const messageData= {
+        content: content ? content.toString().trim() : "\u200B",
+        files: [{
+          attachment: buffer,
+          name: `telegram_photo_${Date.now()}.jpg`,
+          description: 'Photo from Telegram'
+        }],
+        avatarURL: avatarUrl
+      };
+
+      await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
+      log("Successfully sent image via direct buffer upload");
+    }
+  } catch (error) {
+    handleBridgeError(error as BridgeError, "forwardImageToDiscord");
+    throw error;
   }
 }
