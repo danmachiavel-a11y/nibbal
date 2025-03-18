@@ -62,9 +62,13 @@ async function forwardImageToDiscord(bridge: BridgeManager, channelId: string, b
     const imageUrl = await uploadToImgbb(buffer);
 
     if (imageUrl) {
-      // Send as regular message with content and image URL
+      // Send as webhook message with proper attachments
       const messageData = {
-        content: `${content ? content.toString().trim() + '\n' : ''}${imageUrl}`,
+        content: content ? content.toString().trim() : "\u200B",
+        files: [{
+          attachment: imageUrl,
+          name: `telegram_photo_${Date.now()}.jpg`
+        }],
         avatarURL: avatarUrl
       };
 
