@@ -2,7 +2,16 @@ interface WebhookMessage {
   content?: string;
   username: string;
   avatarURL?: string;
-  embeds?: any[];
+  embeds?: Array<{
+    title?: string;
+    description?: string;
+    color?: number;
+    fields?: Array<{
+      name: string;
+      value: string;
+      inline?: boolean;
+    }>;
+  }>;
   files?: Array<{
     attachment: Buffer | string;
     name: string;
@@ -17,6 +26,12 @@ interface WebhookPool {
   webhook: WebhookClient;
   lastUsed: number;
   failures: number;
+  messageQueue: Array<{
+    message: WebhookMessage;
+    username: string;
+    resolve: (value: void | PromiseLike<void>) => void;
+    reject: (reason?: any) => void;
+  }>;
 }
 
 interface RateLimitBucket {
@@ -66,6 +81,7 @@ export class DiscordBot {
   private readonly MAX_WEBHOOK_FAILURES = 3;
   private readonly WEBHOOK_TIMEOUT = 300000; // 5 minutes
   private readonly MAX_WEBHOOKS_PER_CHANNEL = 5;
+  private readonly MESSAGE_QUEUE_TIMEOUT = 30000; // 30 seconds
 
   constructor(bridge: BridgeManager) {
     this.client = new Client({
@@ -832,77 +848,98 @@ export class DiscordBot {
   }
 
   private async sendMessage(channelId: string, message: WebhookMessage, username: string): Promise<void> {
-    try {
-      log(`Attempting to send message to Discord channel ${channelId}`);
+    return new Promise(async (resolve, reject) => {
+      try {
+        log(`Attempting to send message to Discord channel ${channelId}`);
 
-      // Check rate limits
-      await this.globalCheck();
-      await this.webhookCheck(channelId);
+        // Check rate limits
+        await this.globalCheck();
+        await this.webhookCheck(channelId);
 
-      const channel = await this.client.channels.fetch(channelId);
-      if (!(channel instanceof TextChannel)) {
-        throw new Error(`Invalid channel type for channel ${channelId}`);
-      }
-
-      // Get webhook
-      const webhook = await this.getWebhookForChannel(channel);
-      if (!webhook) throw new Error("Failed to get webhook");
-
-      // Prepare webhook message
-      const messageOptions: any = {
-        username: username,
-        avatarURL: message.avatarURL // This is case sensitive for Discord webhooks
-      };
-
-      // Handle different types of content
-      if (message.embeds) {
-        // Embed message (for images)
-        messageOptions.embeds = message.embeds;
-        messageOptions.content = message.content || "\u200B";
-      } else if (message.files && message.files.length > 0) {
-        // Message with file attachments
-        messageOptions.files = message.files.map((file: any) => ({
-          attachment: file.attachment,
-          name: file.name || 'file.jpg',
-          description: file.description || 'File attachment'
-        }));
-        messageOptions.content = message.content || "\u200B";
-      } else {
-        // Regular text message
-        messageOptions.content = typeof message === 'string' ? 
-          message : (message.content || "\u200B");
-      }
-
-      // Add debug logging
-      log(`Sending message with options: ${JSON.stringify({
-        username: messageOptions.username,
-        avatarURL: messageOptions.avatarURL,
-        content: messageOptions.content.substring(0, 100) + (messageOptions.content.length > 100 ? '...' : ''),
-        files: messageOptions.files ? `${messageOptions.files.length} files` : 'no files',
-        embeds: messageOptions.embeds ? `${messageOptions.embeds.length} embeds` : 'no embeds'
-      })}`);
-
-      // Send message with retries
-      let retries = 0;
-      const maxRetries = 3;
-
-      while (retries < maxRetries) {
-        try {
-          await webhook.send(messageOptions);
-          log(`Successfully sent message to Discord channel ${channelId}`);
-          return;
-        } catch (error) {
-          retries++;
-          log(`Attempt ${retries}/${maxRetries} failed: ${error}`, "error");
-
-          if (retries === maxRetries) throw error;
-          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+        const channel = await this.client.channels.fetch(channelId);
+        if (!(channel instanceof TextChannel)) {
+          throw new Error(`Invalid channel type for channel ${channelId}`);
         }
+
+        // Get webhook
+        const webhook = await this.getWebhookForChannel(channel);
+        if (!webhook) throw new Error("Failed to get webhook");
+
+        // Prepare webhook message
+        const messageOptions: any = {
+          username: username,
+          avatarURL: message.avatarURL
+        };
+
+        // Handle different types of content
+        if (message.embeds) {
+          messageOptions.embeds = message.embeds;
+          messageOptions.content = message.content || "\u200B";
+        } else if (message.files && message.files.length > 0) {
+          messageOptions.files = message.files.map((file: any) => ({
+            attachment: file.attachment,
+            name: file.name || 'file.jpg',
+            description: file.description || 'File attachment'
+          }));
+          messageOptions.content = message.content || "\u200B";
+        } else {
+          messageOptions.content = typeof message === 'string' ? 
+            message : (message.content || "\u200B");
+        }
+
+        // Add allowed mentions if specified
+        if (message.allowedMentions) {
+          messageOptions.allowedMentions = message.allowedMentions;
+        }
+
+        // Add debug logging
+        log(`Sending message with options: ${JSON.stringify({
+          username: messageOptions.username,
+          avatarURL: messageOptions.avatarURL,
+          content: messageOptions.content.substring(0, 100) + (messageOptions.content.length > 100 ? '...' : ''),
+          files: messageOptions.files ? `${messageOptions.files.length} files` : 'no files',
+          embeds: messageOptions.embeds ? `${messageOptions.embeds.length} embeds` : 'no embeds'
+        })}`);
+
+        // Send message with retries
+        let retries = 0;
+        const maxRetries = 3;
+
+        while (retries < maxRetries) {
+          try {
+            await webhook.send(messageOptions);
+            log(`Successfully sent message to Discord channel ${channelId}`);
+            resolve();
+            return;
+          } catch (error) {
+            retries++;
+            log(`Attempt ${retries}/${maxRetries} failed: ${error}`, "error");
+
+            if (retries === maxRetries) {
+              // Add to queue if all retries failed
+              const pool = this.webhooks.get(channelId)?.[0];
+              if (pool) {
+                pool.messageQueue.push({ message, username, resolve, reject });
+                setTimeout(() => {
+                  const index = pool.messageQueue.findIndex(item => 
+                    item.message === message && item.username === username);
+                  if (index > -1) {
+                    pool.messageQueue.splice(index, 1);
+                    reject(new Error("Message queue timeout"));
+                  }
+                }, this.MESSAGE_QUEUE_TIMEOUT);
+                return;
+              }
+              throw error;
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+          }
+        }
+      } catch (error) {
+        log(`Error sending message to Discord: ${error}`, "error");
+        reject(error);
       }
-    } catch (error) {
-      log(`Error sending message to Discord: ${error}`, "error");
-      throw error;
-    }
+    });
   }
 
   private async getWebhookForChannel(channel: TextChannel): Promise<WebhookClient | null> {
@@ -959,14 +996,15 @@ export class DiscordBot {
             name: "Message Relay",
             reason: 'For message bridging'
           });
-          log(`Created new webhook ${webhook.id} for channel ${channel.id}`);
+          log(`Created new webhook ${webhook.id} for channel${channel.id}`);
         }
 
         const webhookClient = new WebhookClient({ url: webhook.url });
         const webhookPool: WebhookPool = {
           webhook: webhookClient,
           lastUsed: Date.now(),
-          failures: 0
+          failures: 0,
+          messageQueue: []
         };
 
         // Update webhook pool
@@ -995,9 +1033,25 @@ export class DiscordBot {
       if (activeWebhooks.length !== webhooks.length) {
         if (activeWebhooks.length === 0) {
           this.webhooks.delete(channelId);
-          log(`Removed all stale webhooks for channel ${channelId}`);        } else {
+          log(`Removed all stale webhooks for channel ${channelId}`);
+        } else {
           this.webhooks.set(channelId, activeWebhooks);
           log(`Cleaned up ${webhooks.length - activeWebhooks.length} stale webhooks for channel ${channelId}`);
+        }
+
+        // Process queued messages for remaining webhooks
+        for (const pool of activeWebhooks) {
+          while (pool.messageQueue.length > 0) {
+            const queued = pool.messageQueue.shift();
+            if (queued) {
+              try {
+                await this.sendMessage(channelId, queued.message, queued.username);
+                queued.resolve();
+              } catch (error) {
+                queued.reject(error);
+              }
+            }
+          }
         }
       }
     }
