@@ -64,7 +64,7 @@ export class DiscordBot {
     this.webhooks = new Map();
 
     // Start webhook cleanup interval
-    setInterval(() => this.cleanupWebhooks(), 300000);
+    setInterval(() => this.cleanupStaleWebhooks(), 300000);
 
     this.setupHandlers();
     this.setupRateLimitBuckets();
@@ -904,7 +904,13 @@ export class DiscordBot {
       let webhooks = this.webhooks.get(channel.id) || [];
       webhooks = webhooks.filter(w => w.failures < this.MAX_WEBHOOK_FAILURES);
 
-      // Use existing webhook if available
+      // Sort webhooks by failure count and last used time
+      webhooks.sort((a, b) => {
+        if (a.failures !== b.failures) return a.failures - b.failures;
+        return a.lastUsed - b.lastUsed;
+      });
+
+      // Use existing webhook if available and not overloaded
       if (webhooks.length > 0) {
         const webhook = webhooks[0];
         webhook.lastUsed = Date.now();
@@ -915,17 +921,30 @@ export class DiscordBot {
       this.webhookCreationLock.add(channel.id);
 
       try {
-        // Check for existing webhook first
+        // Check for existing webhooks first
         const existingWebhooks = await channel.fetchWebhooks();
-        let webhook = existingWebhooks.find(w => w.name === "Message Relay");
+        const messageRelayWebhooks = existingWebhooks.filter(w => w.name === "Message Relay");
 
+        // If we have too many webhooks, remove the oldest ones
+        if (messageRelayWebhooks.size >= 5) {
+          const oldestWebhooks = Array.from(messageRelayWebhooks.values())
+            .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+            .slice(0, messageRelayWebhooks.size - 4);
+
+          for (const webhook of oldestWebhooks) {
+            await webhook.delete('Cleaning up old webhooks');
+            log(`Deleted old webhook ${webhook.id} from channel ${channel.id}`);
+          }
+        }
+
+        // Create new webhook if needed
+        let webhook = messageRelayWebhooks.first();
         if (!webhook) {
-          // Add delay to avoid rate limits
-          await new Promise(resolve => setTimeout(resolve, 1000));
           webhook = await channel.createWebhook({
-            name: "Message Relay", // This name doesn't matter as it's overridden per message
+            name: "Message Relay",
             reason: 'For message bridging'
           });
+          log(`Created new webhook ${webhook.id} for channel ${channel.id}`);
         }
 
         const webhookClient = new WebhookClient({ url: webhook.url });
@@ -935,8 +954,9 @@ export class DiscordBot {
           failures: 0
         };
 
-        this.webhooks.set(channel.id, [webhookPool]);
-        log(`Using webhook: ${webhook.id} for channel ${channel.id}`);
+        // Update webhook pool
+        webhooks.push(webhookPool);
+        this.webhooks.set(channel.id, webhooks.slice(0, 5)); // Keep max 5 webhooks
         return webhookClient;
       } finally {
         // Always release lock
@@ -948,27 +968,22 @@ export class DiscordBot {
     }
   }
 
-  private cleanupWebhooks() {
+  // Add periodic cleanup for stale webhooks
+  private cleanupStaleWebhooks() {
     const now = Date.now();
-    for (const [channelId, webhooks] of this.webhooks.entries()) {
-      // Only cleanup webhooks that haven't been used in a while
-      const activeWebhooks = webhooks.filter(pool => {
-        const isActive = now - pool.lastUsed < this.WEBHOOK_TIMEOUT && 
-                        pool.failures < this.MAX_WEBHOOK_FAILURES;
-        if (!isActive) {
-          try {
-            pool.webhook.destroy();
-          } catch (error) {
-            log(`Error destroying webhook: ${error}`, "error");
-          }
-        }
-        return isActive;
-      });
+    for (const [channelId, webhooks] of this.webhooks) {
+      // Remove webhooks that haven't been used in 30 minutes or have too many failures
+      const activeWebhooks = webhooks.filter(webhook => 
+        now - webhook.lastUsed < 1800000 && webhook.failures < this.MAX_WEBHOOK_FAILURES
+      );
 
-      if (activeWebhooks.length === 0) {
-        this.webhooks.delete(channelId);
-      } else {
-        this.webhooks.set(channelId, activeWebhooks);
+      if (activeWebhooks.length !== webhooks.length) {
+        if (activeWebhooks.length === 0) {
+          this.webhooks.delete(channelId);
+          log(`Removed all stale webhooks for channel ${channelId}`);        } else {
+          this.webhooks.set(channelId, activeWebhooks);
+          log(`Cleaned up ${webhooks.length - activeWebhooks.length} stale webhooks for channel ${channelId}`);
+        }
       }
     }
   }
@@ -994,7 +1009,7 @@ export class DiscordBot {
     } catch (error) {
       log(`Error moving channel to category: ${error}`, "error");
       throw error;
-        }
+    }
   }
 
   async getCategories() {
