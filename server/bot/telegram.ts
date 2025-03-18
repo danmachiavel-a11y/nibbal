@@ -4,28 +4,49 @@ import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 import fetch from 'node-fetch';
 
-interface CommandCooldown {
-  lastUsed: number;
+// Add proper type definitions for rate limiting
+interface RateLimit {
+  timestamp: number;
   count: number;
 }
 
+interface CommandRateLimit extends RateLimit {
+  command: string;
+}
+
+interface MessageRateLimit extends RateLimit {
+  blockedUntil?: number;
+}
+
+// Proper type safety for user states
 interface UserState {
   categoryId: number;
   currentQuestion: number;
   answers: string[];
   inQuestionnaire: boolean;
-}
-
-interface MessageRateLimit {
-  messages: number;
-  windowStart: number;
-  blockedUntil?: number;
+  rateLimits: {
+    commands: Map<string, CommandRateLimit>;
+    messages: MessageRateLimit;
+  };
 }
 
 interface StateCleanup {
   timeout: NodeJS.Timeout;
   createdAt: number;
 }
+
+// Rate limiting constants
+const RATE_LIMIT = {
+  COMMAND: {
+    WINDOW: 60000, // 1 minute
+    MAX_COUNT: 5
+  },
+  MESSAGE: {
+    WINDOW: 2000, // 2 seconds
+    MAX_COUNT: 10,
+    BLOCK_DURATION: 300000 // 5 minutes
+  }
+};
 
 function escapeMarkdown(text: string): string {
   if (!text) return '';
@@ -71,37 +92,24 @@ export class TelegramBot {
   private readonly RECONNECT_COOLDOWN = 30000; // 30 seconds
   private readonly MAX_FAILED_HEARTBEATS = 3;
   private failedHeartbeats = 0;
-
-  // Rate limiting and cooldown functionality
-  private commandCooldowns: Map<number, Map<string, CommandCooldown>> = new Map();
-  private readonly COOLDOWN_WINDOW = 60000;
-  private readonly MAX_COMMANDS = 5;
-  private messageRateLimits: Map<number, MessageRateLimit> = new Map();
-  private readonly MESSAGE_WINDOW = 2000;
-  private readonly MAX_MESSAGES = 10;
-  private readonly SPAM_BLOCK_DURATION = 300000;
   private readonly MAX_CONCURRENT_USERS = 500;
   private activeUsers: Set<number> = new Set();
 
   constructor(bridge: BridgeManager) {
-    try {
-      if (!process.env.TELEGRAM_BOT_TOKEN?.trim()) {
-        throw new Error("Invalid Telegram bot token");
-      }
-
-      this.bridge = bridge;
-
-      // Start cleanup interval for stale states
-      setInterval(() => this.cleanupStaleStates(), 60000);
-
-      log("Telegram bot instance created successfully");
-    } catch (error) {
-      log(`Error creating Telegram bot: ${error}`, "error");
-      throw error;
+    if (!process.env.TELEGRAM_BOT_TOKEN?.trim()) {
+      throw new Error("Invalid Telegram bot token");
     }
+
+    this.bridge = bridge;
+    this.startCleanupInterval();
+    log("Telegram bot instance created successfully");
   }
 
-  private cleanupStaleStates() {
+  private startCleanupInterval(): void {
+    setInterval(() => this.cleanupStaleStates(), 60000);
+  }
+
+  private cleanupStaleStates(): void {
     const now = Date.now();
     for (const [userId, cleanup] of this.stateCleanups) {
       if (now - cleanup.createdAt > this.STATE_TIMEOUT) {
@@ -111,6 +119,50 @@ export class TelegramBot {
         log(`Cleaned up stale state for user ${userId}`);
       }
     }
+  }
+
+  private checkRateLimit(userId: number, type: 'command' | 'message', command?: string): boolean {
+    const state = this.userStates.get(userId);
+    if (!state) return true;
+
+    const now = Date.now();
+
+    if (type === 'command' && command) {
+      const limit = state.rateLimits.commands.get(command);
+      if (!limit || now - limit.timestamp > RATE_LIMIT.COMMAND.WINDOW) {
+        state.rateLimits.commands.set(command, { timestamp: now, count: 1, command });
+        return true;
+      }
+
+      if (limit.count >= RATE_LIMIT.COMMAND.MAX_COUNT) {
+        return false;
+      }
+
+      limit.count++;
+      return true;
+    }
+
+    if (type === 'message') {
+      const limit = state.rateLimits.messages;
+      if (limit.blockedUntil && now < limit.blockedUntil) {
+        return false;
+      }
+
+      if (!limit || now - limit.timestamp > RATE_LIMIT.MESSAGE.WINDOW) {
+        state.rateLimits.messages = { timestamp: now, count: 1 };
+        return true;
+      }
+
+      if (limit.count >= RATE_LIMIT.MESSAGE.MAX_COUNT) {
+        limit.blockedUntil = now + RATE_LIMIT.MESSAGE.BLOCK_DURATION;
+        return false;
+      }
+
+      limit.count++;
+      return true;
+    }
+
+    return true;
   }
 
   private setState(userId: number, state: UserState) {
@@ -267,8 +319,6 @@ export class TelegramBot {
       this.userStates.clear();
       this.stateCleanups.clear();
       this.reconnectAttempts = 0;
-      this.commandCooldowns.clear();
-      this.messageRateLimits.clear();
       this.activeUsers.clear();
       this.failedHeartbeats = 0;
 
@@ -432,6 +482,11 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId) return;
 
+    if (!this.checkRateLimit(userId, 'message')) {
+      await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
+      return;
+    }
+
     try {
       // Check if user still has an active ticket
       const activeTicket = await storage.getActiveTicketByUserId(user.id);
@@ -549,6 +604,11 @@ export class TelegramBot {
       const userId = ctx.from?.id;
       if (!userId) return;
 
+      if (!this.checkRateLimit(userId, 'command', 'ping')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+
       try {
         // Check for active ticket first
         const user = await storage.getUserByTelegramId(userId.toString());
@@ -585,7 +645,7 @@ export class TelegramBot {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      if (!await this.checkCommandCooldown(userId, 'start')) {
+      if (!this.checkRateLimit(userId, 'command', 'start')) {
         await ctx.reply("⚠️ Please wait before using this command again.");
         return;
       }
@@ -849,6 +909,11 @@ export class TelegramBot {
       const userId = ctx.from?.id;
       if (!userId) return;
 
+      if (!this.checkRateLimit(userId, 'command', 'close')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+
       const user = await storage.getUserByTelegramId(userId.toString());
       if (!user) {
         await ctx.reply("You haven't created any tickets yet.");
@@ -905,6 +970,11 @@ export class TelegramBot {
       const userId = ctx.from?.id;
       if (!userId) return;
 
+      if (!this.checkRateLimit(userId, 'message')) {
+        await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
+        return;
+      }
+
       const state = this.userStates.get(userId);
       console.log(`Received message from user ${userId}. Current state:`, state);
 
@@ -925,6 +995,11 @@ export class TelegramBot {
     this.bot.on("photo", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
+
+      if (!this.checkRateLimit(userId, 'message')) {
+        await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
+        return;
+      }
 
       const user = await storage.getUserByTelegramId(userId.toString());
       if (!user) return;
@@ -1141,7 +1216,11 @@ export class TelegramBot {
         categoryId,
         currentQuestion: 0,
         answers: [],
-        inQuestionnaire: true
+        inQuestionnaire: true,
+        rateLimits: {
+          commands: new Map(),
+          messages: { timestamp: 0, count: 0 }
+        }
       };
       this.setState(userId, state);
       await ctx.reply(category.questions[0]);
@@ -1159,70 +1238,15 @@ export class TelegramBot {
 
 
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
-    if (!this.commandCooldowns.has(userId)) {
-      this.commandCooldowns.set(userId, new Map());
-    }
-
-    const userCooldowns = this.commandCooldowns.get(userId)!;
-    const now = Date.now();
-
-    if (!userCooldowns.has(command)) {
-      userCooldowns.set(command, { lastUsed: now, count: 1 });
-      return true;
-    }
-
-    const cooldown = userCooldowns.get(command)!;
-
-    if (now - cooldown.lastUsed > this.COOLDOWN_WINDOW) {
-      cooldown.count = 1;
-      cooldown.lastUsed = now;
-      return true;
-    }
-
-    if (cooldown.count >= this.MAX_COMMANDS) {
-      return false;
-    }
-
-    cooldown.count++;
-    cooldown.lastUsed = now;
-    return true;
+    const state = this.userStates.get(userId);
+    if(!state) return true;
+    return this.checkRateLimit(userId, 'command', command);
   }
 
   private async checkMessageRateLimit(userId: number): Promise<boolean> {
-    const now = Date.now();
-    if (!this.messageRateLimits.has(userId)) {
-      this.messageRateLimits.set(userId, {
-        messages: 1,
-        windowStart: now
-      });
-      return true;
-    }
-
-    const limit = this.messageRateLimits.get(userId)!;
-
-    // Check if user is currently blocked
-    if (limit.blockedUntil && now < limit.blockedUntil) {
-      return false;
-    }
-
-    // Reset window if it's expired
-    if (now - limit.windowStart > this.MESSAGE_WINDOW) {
-      limit.messages = 1;
-      limit.windowStart = now;
-      limit.blockedUntil = undefined;
-      return true;
-    }
-
-    // Increment message count
-    limit.messages++;
-
-    // Check if user exceeded limit
-    if (limit.messages > this.MAX_MESSAGES) {
-      limit.blockedUntil = now + this.SPAM_BLOCK_DURATION;
-      return false;
-    }
-
-    return true;
+    const state = this.userStates.get(userId);
+    if(!state) return true;
+    return this.checkRateLimit(userId, 'message');
   }
   // Removed duplicate handleCategoryMenu function
   // Removed duplicate setupHandlers function
