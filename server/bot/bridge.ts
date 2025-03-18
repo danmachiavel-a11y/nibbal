@@ -45,13 +45,9 @@ async function forwardImageToDiscord(bridge: BridgeManager, channelId: string, b
     const imageUrl = await uploadToImgbb(buffer);
 
     if (imageUrl) {
-      // Send as embed with ImgBB URL
+      // Send as regular message with content and image URL
       const messageData = {
-        content: content ? content.toString().trim() : "\u200B",
-        embeds: [{
-          image: { url: imageUrl },
-          description: "Photo from Telegram"
-        }],
+        content: `${content ? content.toString().trim() + '\n' : ''}${imageUrl}`,
         avatarURL: avatarUrl
       };
 
