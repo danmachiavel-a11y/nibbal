@@ -137,6 +137,14 @@ export class BridgeManager {
         throw new BridgeError("Telegram bot not initialized", { context: "processTelegramToDiscord" });
       }
 
+      // Try cache first
+      const cacheKey = `telegram_${fileId}`;
+      const cached = this.getCachedImage(cacheKey);
+      if (cached?.buffer) {
+        log(`Using cached buffer for Telegram file ${fileId}`);
+        return cached.buffer;
+      }
+
       log(`Processing Telegram file ID: ${fileId}`);
 
       const file = await this.telegramBot.bot.telegram.getFile(fileId);
@@ -145,10 +153,16 @@ export class BridgeManager {
       }
 
       const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-      log(`Downloading file from: ${fileUrl}`);
 
-      const response = await fetch(fileUrl);
-      log(`Response status: ${response.status}`);
+      // Use Promise.race to implement timeout
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Download timeout')), 30000)
+      );
+
+      const response = await Promise.race([
+        fetch(fileUrl),
+        timeoutPromise
+      ]) as Response;
 
       if (!response.ok) {
         throw new BridgeError(`HTTP error! status: ${response.status}`, { context: "processTelegramToDiscord" });
@@ -158,6 +172,9 @@ export class BridgeManager {
       if (!buffer || buffer.length === 0) {
         throw new BridgeError("Received empty buffer", { context: "processTelegramToDiscord" });
       }
+
+      // Cache the result
+      this.setCachedImage(cacheKey, { buffer });
 
       log(`Successfully downloaded file, size: ${buffer.length} bytes`);
       return buffer;
@@ -169,10 +186,37 @@ export class BridgeManager {
 
   private async processDiscordToTelegram(url: string): Promise<Buffer | null> {
     try {
-      const response = await fetch(url);
-      if (!response.ok) return null;
+      // Try cache first
+      const cacheKey = `discord_${url}`;
+      const cached = this.getCachedImage(cacheKey);
+      if (cached?.buffer) {
+        log(`Using cached buffer for Discord URL ${url}`);
+        return cached.buffer;
+      }
 
-      return Buffer.from(await response.arrayBuffer());
+      // Use Promise.race to implement timeout
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Download timeout')), 30000)
+      );
+
+      const response = await Promise.race([
+        fetch(url),
+        timeoutPromise
+      ]) as Response;
+
+      if (!response.ok) {
+        throw new BridgeError(`Failed to fetch Discord image: ${response.status}`, { context: "processDiscordToTelegram" });
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (!buffer || buffer.length === 0) {
+        throw new BridgeError("Received empty buffer from Discord", { context: "processDiscordToTelegram" });
+      }
+
+      // Cache the result
+      this.setCachedImage(cacheKey, { buffer });
+
+      return buffer;
     } catch (error) {
       handleBridgeError(error as BridgeError, "processDiscordToTelegram");
       return null;
@@ -222,7 +266,7 @@ export class BridgeManager {
       try {
         // Add significant delay between attempts
         if (attempt > 1) {
-          log(`Waiting ${this.retryTimeout/1000} seconds before attempt ${attempt}...`);
+          log(`Waiting ${this.retryTimeout / 1000} seconds before attempt ${attempt}...`);
           await new Promise(resolve => setTimeout(resolve, this.retryTimeout));
         }
 
@@ -619,8 +663,7 @@ export class BridgeManager {
             );
           }
 
-          await forwardImageToDiscord(
-            this,
+          await this.forwardImageToDiscord(
             ticket.discordChannelId,
             buffer,
             null,
@@ -763,51 +806,60 @@ export class BridgeManager {
   }
 
   // Image processing methods
-  private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
+  async forwardImageToDiscord(channelId: string, buffer: Buffer, content: string | null, username: string, avatarUrl?: string): Promise<void> {
     try {
-      if (!this.telegramBot.bot?.telegram) {
-        throw new BridgeError("Telegram bot not initialized", { context: "processTelegramToDiscord" });
+      // Try ImgBB upload without waiting for previous operations
+      const imageUrlPromise = uploadToImgbb(buffer);
+
+      // Prepare message data while upload is in progress
+      const baseMessageData = {
+        content: content ? content.toString().trim() : "\u200B",
+        username,
+        avatarURL: avatarUrl
+      };
+
+      try {
+        // Wait for ImgBB upload with timeout
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Upload timeout')), 30000)
+        );
+
+        const imageUrl = await Promise.race([
+          imageUrlPromise,
+          timeoutPromise
+        ]) as string | null;
+
+        if (imageUrl) {
+          // Send as URL if ImgBB upload succeeded
+          const messageData = {
+            ...baseMessageData,
+            content: `${baseMessageData.content}\n${imageUrl}`.trim()
+          };
+
+          await this.discordBot.sendMessage(channelId, messageData, username);
+          log(`Successfully sent image via ImgBB URL: ${imageUrl}`);
+          return;
+        }
+      } catch (error) {
+        log(`ImgBB upload failed, falling back to direct upload: ${error}`, "warn");
       }
 
-      log(`Processing Telegram file ID: ${fileId}`);
+      // Fallback to direct buffer upload
+      log("Using direct buffer upload");
+      const messageData = {
+        ...baseMessageData,
+        files: [{
+          attachment: buffer,
+          name: `photo_${Date.now()}.jpg`,
+          description: 'Photo from Telegram'
+        }]
+      };
 
-      const file = await this.telegramBot.bot.telegram.getFile(fileId);
-      if (!file?.file_path) {
-        throw new BridgeError(`Could not get file path for ID: ${fileId}`, { context: "processTelegramToDiscord" });
-      }
-
-      const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-      log(`Downloading file from: ${fileUrl}`);
-
-      const response = await fetch(fileUrl);
-      log(`Response status: ${response.status}`);
-
-      if (!response.ok) {
-        throw new BridgeError(`HTTP error! status: ${response.status}`, { context: "processTelegramToDiscord" });
-      }
-
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (!buffer || buffer.length === 0) {
-        throw new BridgeError("Received empty buffer", { context: "processTelegramToDiscord" });
-      }
-
-      log(`Successfully downloaded file, size: ${buffer.length} bytes`);
-      return buffer;
+      await this.discordBot.sendMessage(channelId, messageData, username);
+      log("Successfully sent image via direct buffer upload");
     } catch (error) {
-      handleBridgeError(error as BridgeError, "processTelegramToDiscord");
-      return null;
-    }
-  }
-
-  private async processDiscordToTelegram(url: string): Promise<Buffer | null> {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) return null;
-
-      return Buffer.from(await response.arrayBuffer());
-    } catch (error) {
-      handleBridgeError(error as BridgeError, "processDiscordToTelegram");
-      return null;
+      handleBridgeError(error as BridgeError, "forwardImageToDiscord");
+      throw error;
     }
   }
 
@@ -860,41 +912,5 @@ async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
   } catch (error) {
     handleBridgeError(error as BridgeError, "uploadToImgbb");
     return null;
-  }
-}
-
-async function forwardImageToDiscord(bridge: BridgeManager, channelId: string, buffer: Buffer, content: string | null, username: string, avatarUrl?: string): Promise<void> {
-  try {
-    // Try ImgBB first
-    const imageUrl = await uploadToImgbb(buffer);
-
-    if (imageUrl) {
-      // Send as regular message with content and image URL
-      const messageData = {
-        content: `${content ? content.toString().trim() + '\n' : ''}${imageUrl}`,
-        avatarURL: avatarUrl
-      };
-
-      await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
-      log(`Successfully sent image via ImgBB URL: ${imageUrl}`);
-    } else {
-      // Fallback to direct buffer upload
-      log("Falling back to direct buffer upload");
-      const messageData= {
-        content: content ? content.toString().trim() : "\u200B",
-        files: [{
-          attachment: buffer,
-          name: `telegram_photo_${Date.now()}.jpg`,
-          description: 'Photo from Telegram'
-        }],
-        avatarURL: avatarUrl
-      };
-
-      await bridge.getDiscordBot().sendMessage(channelId, messageData, username);
-      log("Successfully sent image via direct buffer upload");
-    }
-  } catch (error) {
-    handleBridgeError(error as BridgeError, "forwardImageToDiscord");
-    throw error;
   }
 }
