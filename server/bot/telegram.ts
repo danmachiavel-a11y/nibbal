@@ -948,7 +948,8 @@ export class TelegramBot {
         // Force close any active ticket
         const user = await storage.getUserByTelegramId(userId.toString());
         if (user) {
-          const activeTicket = await storage.getActiveTicketByUserId(user.id);          if (activeTicket) {
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          if (activeTicket) {
             // Force close the ticket regardless of transcript category
             await storage.updateTicketStatus(activeTicket.id, "closed");
 
