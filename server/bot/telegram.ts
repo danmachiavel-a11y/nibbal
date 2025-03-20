@@ -225,20 +225,15 @@ export class TelegramBot {
     let cleanedCount = 0;
     const stateCount = this.userStates.size;
 
-    // First, remove expired states
+    // Only cleanup non-questionnaire states
     for (const [userId, state] of this.userStates.entries()) {
+      if (state.inQuestionnaire) continue; // Skip active questionnaires
+
       const cleanup = this.stateCleanups.get(userId);
-      if (!cleanup) {
-        // No cleanup record, remove the state
-        this.userStates.delete(userId);
-        this.activeUsers.delete(userId);
-        cleanedCount++;
-        continue;
-      }
-
-      if (now - cleanup.createdAt > this.USER_INACTIVE_TIMEOUT) {
-        // Clear the timeout to prevent memory leaks
-        clearTimeout(cleanup.timeout);
+      if (!cleanup || now - cleanup.createdAt > USER_INACTIVE_TIMEOUT) {
+        if (cleanup?.timeout) {
+          clearTimeout(cleanup.timeout);
+        }
         this.userStates.delete(userId);
         this.stateCleanups.delete(userId);
         this.activeUsers.delete(userId);
@@ -246,21 +241,7 @@ export class TelegramBot {
       }
     }
 
-    // If we still have too many states, remove the oldest ones
-    if (this.userStates.size > this.MAX_INACTIVE_STATES) {
-      const sortedStates = Array.from(this.stateCleanups.entries())
-        .sort((a, b) => a[1].createdAt - b[1].createdAt);
-
-      while (this.userStates.size > this.MAX_INACTIVE_STATES) {
-        const [userId, cleanup] = sortedStates.shift()!;
-        clearTimeout(cleanup.timeout);
-        this.userStates.delete(userId);
-        this.stateCleanups.delete(userId);
-        this.activeUsers.delete(userId);
-        cleanedCount++;
-      }
-    }
-
+    // Only log if we actually cleaned something
     if (cleanedCount > 0) {
       log(`Cleaned up ${cleanedCount} stale user states. Before: ${stateCount}, After: ${this.userStates.size}`);
     }
@@ -356,26 +337,25 @@ export class TelegramBot {
       };
     }
 
-    // Set new state with timeout
+    // Set new state
     this.userStates.set(userId, state);
 
-    // Create new timeout for automatic cleanup
+    // Set cleanup timeout
     const timeout = setTimeout(() => {
-      this.userStates.delete(userId);
-      this.stateCleanups.delete(userId);
-      this.activeUsers.delete(userId);
-      log(`State timeout for user ${userId}`);
-    }, this.USER_INACTIVE_TIMEOUT);
+      // Only cleanup if not in questionnaire
+      const currentState = this.userStates.get(userId);
+      if (!currentState?.inQuestionnaire) {
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+        log(`State timeout for user ${userId}`);
+      }
+    }, USER_INACTIVE_TIMEOUT);
 
     this.stateCleanups.set(userId, {
       timeout,
       createdAt: Date.now()
     });
-
-    // If we have too many states, trigger cleanup
-    if (this.userStates.size > this.MAX_INACTIVE_STATES) {
-      this.cleanupStaleStates();
-    }
   }
 
 
@@ -657,12 +637,22 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId) return;
 
+    // Get user state before rate limit check
+    const state = this.userStates.get(userId);
+    log(`Received message from user ${userId}. Current state: ${JSON.stringify(state)}`);
+
     if (!this.checkRateLimit(userId, 'message')) {
       await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
       return;
     }
 
     try {
+      // If we're in a questionnaire, handle that first
+      if (state?.inQuestionnaire) {
+        await this.handleQuestionnaireResponse(ctx);
+        return;
+      }
+
       // Check if user still has an active ticket
       const activeTicket = await storage.getActiveTicketByUserId(user.id);
       if (!activeTicket || activeTicket.id !== ticket.id) {
@@ -703,7 +693,7 @@ export class TelegramBot {
         ticket.id,
         displayName,
         avatarUrl,
-        undefined, // photo parameter
+        undefined,
         firstName,
         lastName
       );
@@ -1421,8 +1411,7 @@ export class TelegramBot {
     if (!state) return true;
     return this.checkRateLimit(userId, 'message');
   }
-  // Removed duplicate handleCategoryMenu function
-  // Removed duplicate setupHandlers function
+  
 
 }
 
