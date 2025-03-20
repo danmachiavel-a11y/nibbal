@@ -18,6 +18,12 @@ interface MessageRateLimit extends RateLimit {
   blockedUntil?: number;
 }
 
+// Add with other interfaces
+interface TokenBucket {
+  tokens: number;
+  lastRefill: number;
+}
+
 // Proper type safety for user states
 interface UserState {
   categoryId: number;
@@ -27,6 +33,7 @@ interface UserState {
   rateLimits: {
     commands: Map<string, CommandRateLimit>;
     messages: MessageRateLimit;
+    bucket: TokenBucket;
   };
 }
 
@@ -48,16 +55,16 @@ interface ConnectionState {
 }
 
 
-// Rate limiting constants
+// Add at the top with other constants
 const RATE_LIMIT = {
   COMMAND: {
-    WINDOW: 60000, // 1 minute
-    MAX_COUNT: 5
+    WINDOW: parseInt(process.env.RATE_LIMIT_COMMAND_WINDOW || "60000", 10), // 1 minute default
+    MAX_COUNT: parseInt(process.env.RATE_LIMIT_COMMAND_MAX_COUNT || "5", 10) // 5 commands default
   },
   MESSAGE: {
-    WINDOW: 2000, // 2 seconds
-    MAX_COUNT: 10,
-    BLOCK_DURATION: 300000 // 5 minutes
+    WINDOW: parseInt(process.env.RATE_LIMIT_MESSAGE_WINDOW || "2000", 10), // 2 seconds default
+    MAX_COUNT: parseInt(process.env.RATE_LIMIT_MESSAGE_MAX_COUNT || "10", 10), // 10 messages default
+    BLOCK_DURATION: parseInt(process.env.RATE_LIMIT_MESSAGE_BLOCK_DURATION || "300000", 10) // 5 minutes default
   }
 };
 
@@ -298,25 +305,37 @@ export class TelegramBot {
     }
 
     if (type === 'message') {
-      const limit = state.rateLimits.messages;
-      if (limit.blockedUntil && now < limit.blockedUntil) {
-        log(`User ${userId} is blocked from sending messages until ${new Date(limit.blockedUntil)}`);
-        return false;
+      // Initialize bucket if doesn't exist
+      if (!state.rateLimits.bucket) {
+        state.rateLimits.bucket = {
+          tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
+          lastRefill: now
+        };
       }
 
-      if (!limit || now - limit.timestamp > RATE_LIMIT.MESSAGE.WINDOW) {
-        state.rateLimits.messages = { timestamp: now, count: 1 };
+      const bucket = state.rateLimits.bucket;
+      const elapsedTime = now - bucket.lastRefill;
+      const refillAmount = Math.floor(elapsedTime / RATE_LIMIT.MESSAGE.WINDOW) * RATE_LIMIT.MESSAGE.MAX_COUNT;
+
+      bucket.tokens = Math.min(RATE_LIMIT.MESSAGE.MAX_COUNT, bucket.tokens + refillAmount);
+      bucket.lastRefill = now;
+
+      if (bucket.tokens > 0) {
+        bucket.tokens--;
         return true;
       }
 
-      if (limit.count >= RATE_LIMIT.MESSAGE.MAX_COUNT) {
-        limit.blockedUntil = now + RATE_LIMIT.MESSAGE.BLOCK_DURATION;
-        log(`User ${userId} has been rate limited for messages until ${new Date(limit.blockedUntil)}`);
+      // If no tokens and already blocked, check block duration
+      const messageLimit = state.rateLimits.messages;
+      if (messageLimit.blockedUntil && now < messageLimit.blockedUntil) {
+        log(`User ${userId} is blocked from sending messages until ${new Date(messageLimit.blockedUntil)}`);
         return false;
       }
 
-      limit.count++;
-      return true;
+      // If no tokens and not blocked, apply block
+      messageLimit.blockedUntil = now + RATE_LIMIT.MESSAGE.BLOCK_DURATION;
+      log(`User ${userId} has been rate limited for messages until ${new Date(messageLimit.blockedUntil)}`);
+      return false;
     }
 
     return true;
@@ -333,7 +352,11 @@ export class TelegramBot {
     if (!state.rateLimits) {
       state.rateLimits = {
         commands: new Map(),
-        messages: { timestamp: Date.now(), count: 0 }
+        messages: { timestamp: Date.now(), count: 0 },
+        bucket: {
+          tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
+          lastRefill: Date.now()
+        }
       };
     }
 
@@ -915,7 +938,7 @@ export class TelegramBot {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
-        }
+                }
       } catch (error) {
         log(`Error in start command: ${error}`, "error");
         await ctx.reply("❌ There was an error processing your request. Please try again in a moment.");
@@ -1383,7 +1406,11 @@ export class TelegramBot {
         inQuestionnaire: true,
         rateLimits: {
           commands: new Map(),
-          messages: { timestamp: 0, count: 0 }
+          messages: { timestamp: 0, count: 0 },
+          bucket: {
+            tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
+            lastRefill: Date.now()
+          }
         }
       };
       this.setState(userId, state);
@@ -1411,7 +1438,6 @@ export class TelegramBot {
     if (!state) return true;
     return this.checkRateLimit(userId, 'message');
   }
-  
 
 }
 
