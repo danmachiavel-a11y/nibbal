@@ -46,6 +46,10 @@ export class BridgeManager {
   private imageCache: Map<string, ImageCacheEntry> = new Map();
   private roleCache: Map<number, string> = new Map();
   private readonly imageCacheCleanupInterval = 3600000; // 1 hour
+  // Add at the top with other constants
+  private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB per image
+  private readonly MIN_IMAGE_SIZE = 32; // 32 bytes minimum
+
 
   constructor() {
     log("Initializing Bridge Manager");
@@ -131,6 +135,24 @@ export class BridgeManager {
 
     return entry;
   }
+
+  private async validateAndProcessImage(buffer: Buffer, context: string): Promise<Buffer | null> {
+    try {
+      if (!buffer || buffer.length < this.MIN_IMAGE_SIZE) {
+        throw new BridgeError("Image too small or empty", { context });
+      }
+
+      if (buffer.length > this.MAX_IMAGE_SIZE) {
+        throw new BridgeError(`Image too large (${buffer.length} bytes)`, { context });
+      }
+
+      return buffer;
+    } catch (error) {
+      handleBridgeError(error as BridgeError, context);
+      return null;
+    }
+  }
+
   private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
     try {
       if (!this.telegramBot.bot?.telegram) {
@@ -169,15 +191,16 @@ export class BridgeManager {
       }
 
       const buffer = Buffer.from(await response.arrayBuffer());
-      if (!buffer || buffer.length === 0) {
-        throw new BridgeError("Received empty buffer", { context: "processTelegramToDiscord" });
+      const validatedBuffer = await this.validateAndProcessImage(buffer, "processTelegramToDiscord");
+      if (!validatedBuffer) {
+        return null;
       }
 
       // Cache the result
-      this.setCachedImage(cacheKey, { buffer });
+      this.setCachedImage(cacheKey, { buffer: validatedBuffer });
 
-      log(`Successfully downloaded file, size: ${buffer.length} bytes`);
-      return buffer;
+      log(`Successfully downloaded file, size: ${validatedBuffer.length} bytes`);
+      return validatedBuffer;
     } catch (error) {
       handleBridgeError(error as BridgeError, "processTelegramToDiscord");
       return null;
@@ -209,14 +232,15 @@ export class BridgeManager {
       }
 
       const buffer = Buffer.from(await response.arrayBuffer());
-      if (!buffer || buffer.length === 0) {
-        throw new BridgeError("Received empty buffer from Discord", { context: "processDiscordToTelegram" });
+      const validatedBuffer = await this.validateAndProcessImage(buffer, "processDiscordToTelegram");
+      if (!validatedBuffer) {
+        return null;
       }
 
       // Cache the result
-      this.setCachedImage(cacheKey, { buffer });
+      this.setCachedImage(cacheKey, { buffer: validatedBuffer });
 
-      return buffer;
+      return validatedBuffer;
     } catch (error) {
       handleBridgeError(error as BridgeError, "processDiscordToTelegram");
       return null;

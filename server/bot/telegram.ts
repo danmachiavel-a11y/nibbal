@@ -61,6 +61,11 @@ const RATE_LIMIT = {
   }
 };
 
+// Add with other constants
+const USER_STATE_CLEANUP_INTERVAL = 300000; // 5 minutes
+const USER_INACTIVE_TIMEOUT = 3600000; // 1 hour
+const MAX_INACTIVE_STATES = 1000; // Maximum number of stored states
+
 function escapeMarkdown(text: string): string {
   if (!text) return '';
   const specialChars = ['[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
@@ -210,18 +215,54 @@ export class TelegramBot {
   };
 
   private startCleanupInterval(): void {
-    setInterval(() => this.cleanupStaleStates(), 60000);
+    // Cleanup stale states every 5 minutes
+    setInterval(() => this.cleanupStaleStates(), this.USER_STATE_CLEANUP_INTERVAL);
+    log("Started user state cleanup interval");
   }
 
   private cleanupStaleStates(): void {
     const now = Date.now();
-    for (const [userId, cleanup] of this.stateCleanups) {
-      if (now - cleanup.createdAt > this.STATE_TIMEOUT) {
+    let cleanedCount = 0;
+    const stateCount = this.userStates.size;
+
+    // First, remove expired states
+    for (const [userId, state] of this.userStates.entries()) {
+      const cleanup = this.stateCleanups.get(userId);
+      if (!cleanup) {
+        // No cleanup record, remove the state
+        this.userStates.delete(userId);
+        this.activeUsers.delete(userId);
+        cleanedCount++;
+        continue;
+      }
+
+      if (now - cleanup.createdAt > this.USER_INACTIVE_TIMEOUT) {
+        // Clear the timeout to prevent memory leaks
+        clearTimeout(cleanup.timeout);
         this.userStates.delete(userId);
         this.stateCleanups.delete(userId);
         this.activeUsers.delete(userId);
-        log(`Cleaned up stale state for user ${userId}`);
+        cleanedCount++;
       }
+    }
+
+    // If we still have too many states, remove the oldest ones
+    if (this.userStates.size > this.MAX_INACTIVE_STATES) {
+      const sortedStates = Array.from(this.stateCleanups.entries())
+        .sort((a, b) => a[1].createdAt - b[1].createdAt);
+
+      while (this.userStates.size > this.MAX_INACTIVE_STATES) {
+        const [userId, cleanup] = sortedStates.shift()!;
+        clearTimeout(cleanup.timeout);
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+        cleanedCount++;
+      }
+    }
+
+    if (cleanedCount > 0) {
+      log(`Cleaned up ${cleanedCount} stale user states. Before: ${stateCount}, After: ${this.userStates.size}`);
     }
   }
 
@@ -317,17 +358,24 @@ export class TelegramBot {
 
     // Set new state with timeout
     this.userStates.set(userId, state);
+
+    // Create new timeout for automatic cleanup
     const timeout = setTimeout(() => {
       this.userStates.delete(userId);
       this.stateCleanups.delete(userId);
       this.activeUsers.delete(userId);
       log(`State timeout for user ${userId}`);
-    }, this.STATE_TIMEOUT);
+    }, this.USER_INACTIVE_TIMEOUT);
 
     this.stateCleanups.set(userId, {
       timeout,
       createdAt: Date.now()
     });
+
+    // If we have too many states, trigger cleanup
+    if (this.userStates.size > this.MAX_INACTIVE_STATES) {
+      this.cleanupStaleStates();
+    }
   }
 
 
@@ -900,8 +948,7 @@ export class TelegramBot {
         // Force close any active ticket
         const user = await storage.getUserByTelegramId(userId.toString());
         if (user) {
-          const activeTicket = await storage.getActiveTicketByUserId(user.id);
-          if (activeTicket) {
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);          if (activeTicket) {
             // Force close the ticket regardless of transcript category
             await storage.updateTicketStatus(activeTicket.id, "closed");
 

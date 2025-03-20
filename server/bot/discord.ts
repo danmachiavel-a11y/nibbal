@@ -30,10 +30,16 @@ interface RateLimitBucket {
   }>;
 }
 
-import { 
-  Client, 
-  GatewayIntentBits, 
-  TextChannel, 
+interface WSCleanupConfig {
+  connectionTimeout: number;
+  maxReconnectAttempts: number;
+  cleanupInterval: number;
+}
+
+import {
+  Client,
+  GatewayIntentBits,
+  TextChannel,
   Webhook,
   CategoryChannel,
   ChannelType,
@@ -52,6 +58,13 @@ export class DiscordBot {
   private webhooks: Map<string, WebhookPool[]> = new Map();
   private webhookCreationLock: Set<string> = new Set();
   private rateLimitBuckets: Map<string, RateLimitBucket> = new Map();
+  private wsCleanupConfig: WSCleanupConfig = {
+    connectionTimeout: 30000,    // 30 seconds
+    maxReconnectAttempts: 5,
+    cleanupInterval: 300000     // 5 minutes
+  };
+  private cleanupInterval: NodeJS.Timeout | null = null;
+  private connectionTimeout: NodeJS.Timeout | null = null;
 
   // Rate limit configurations
   private readonly LIMITS = {
@@ -78,9 +91,8 @@ export class DiscordBot {
     this.bridge = bridge;
     this.webhooks = new Map();
 
-    // Start webhook cleanup interval
-    setInterval(() => this.cleanupStaleWebhooks(), 300000);
-
+    // Start cleanup intervals
+    this.startCleanupIntervals();
     this.setupHandlers();
     this.setupRateLimitBuckets();
   }
@@ -158,6 +170,48 @@ export class DiscordBot {
   private async webhookCheck(webhookId: string): Promise<void> {
     return this.checkRateLimit('webhook', webhookId);
   }
+
+  private startCleanupIntervals() {
+    // Clear any existing intervals
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+    }
+
+    // Start WebSocket cleanup interval
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupWebSockets();
+    }, this.wsCleanupConfig.cleanupInterval);
+
+    log("Started WebSocket cleanup intervals");
+  }
+
+  private async cleanupWebSockets() {
+    try {
+      if (!this.client.ws) return;
+
+      // Check for dead connections
+      const wsConnection = (this.client.ws as any).connection;
+      if (wsConnection && !wsConnection.connected) {
+        log("Found dead WebSocket connection, attempting cleanup...");
+
+        try {
+          await this.client.destroy();
+          log("Successfully destroyed client connection");
+
+          // Attempt to reconnect
+          await this.start();
+        } catch (error) {
+          log(`Error during WebSocket cleanup: ${error}`, "error");
+        }
+      }
+    } catch (error) {
+      log(`Error checking WebSocket status: ${error}`, "error");
+    }
+  }
+
 
   private async registerSlashCommands() {
     try {
@@ -310,7 +364,7 @@ export class DiscordBot {
             .addFields(
               { name: 'Telegram Username', value: `@${user.username}`, inline: true },
               { name: 'Telegram ID', value: user.telegramId, inline: true },
-              { name: 'Full Name', value: user.fullName || 'Not Available', inline: true},
+              { name: 'Full Name', value: user.fullName || 'Not Available', inline: true },
               { name: 'Total Paid Tickets', value: paidTickets.length.toString(), inline: false }
             )
             .setTimestamp();
@@ -348,10 +402,10 @@ export class DiscordBot {
           }
 
           // Use member's display name if available, fallback to username
-          const displayName = interaction.member?.displayName || 
-                             interaction.user.displayName ||
-                             interaction.user.username ||
-                             "Discord User";
+          const displayName = interaction.member?.displayName ||
+            interaction.user.displayName ||
+            interaction.user.username ||
+            "Discord User";
 
           // Forward ping through bridge
           await this.bridge.forwardPingToTelegram(ticket.id, displayName);
@@ -431,9 +485,9 @@ export class DiscordBot {
           const user = await storage.getUser(ticket.userId!);
           if (user?.telegramId) {
             // Get staff member's display name
-            const staffName = interaction.member?.displayName || 
-                              interaction.user.displayName ||
-                              interaction.user.username;
+            const staffName = interaction.member?.displayName ||
+              interaction.user.displayName ||
+              interaction.user.username;
 
             // Send notification
             await this.bridge.getTelegramBot().sendMessage(
@@ -605,9 +659,9 @@ export class DiscordBot {
           });
 
           // Get staff member's display name
-          const staffName = interaction.member?.displayName || 
-                           interaction.user.displayName ||
-                           interaction.user.username;
+          const staffName = interaction.member?.displayName ||
+            interaction.user.displayName ||
+            interaction.user.username;
 
           // Process all channels
           for (const [_, channel] of channels) {
@@ -644,8 +698,8 @@ export class DiscordBot {
           // Send final status
           await interaction.followUp({
             content: `✅ Processed ${channels.size} tickets:\n` +
-                     `• ${moveCount} tickets moved to transcripts\n` +
-                     `• ${errorCount} errors encountered`,
+              `• ${moveCount} tickets moved to transcripts\n` +
+              `• ${errorCount} errors encountered`,
             ephemeral: true
           });
         } catch (error) {
@@ -807,6 +861,7 @@ export class DiscordBot {
   }
 
 
+
   async createTicketChannel(categoryId: string, name: string): Promise<string> {
     try {
       log(`Creating ticket channel ${name} in category ${categoryId}`);
@@ -869,7 +924,7 @@ export class DiscordBot {
         messageOptions.content = message.content || "\u200B";
       } else {
         // Regular text message
-        messageOptions.content = typeof message === 'string' ? 
+        messageOptions.content = typeof message === 'string' ?
           message : (message.content || "\u200B");
       }
 
@@ -988,14 +1043,15 @@ export class DiscordBot {
     const now = Date.now();
     for (const [channelId, webhooks] of this.webhooks) {
       // Remove webhooks that haven't been used in 30 minutes or have too many failures
-      const activeWebhooks = webhooks.filter(webhook => 
+      const activeWebhooks = webhooks.filter(webhook =>
         now - webhook.lastUsed < 1800000 && webhook.failures < this.MAX_WEBHOOK_FAILURES
       );
 
       if (activeWebhooks.length !== webhooks.length) {
         if (activeWebhooks.length === 0) {
           this.webhooks.delete(channelId);
-          log(`Removed all stale webhooks for channel ${channelId}`);        } else {
+          log(`Removed all stale webhooks for channel ${channelId}`);
+        } else {
           this.webhooks.set(channelId, activeWebhooks);
           log(`Cleaned up ${webhooks.length - activeWebhooks.length} stale webhooks for channel ${channelId}`);
         }
@@ -1059,9 +1115,10 @@ export class DiscordBot {
   private async getRoles() {
     try {
       const guilds = await this.client.guilds.fetch();
-      const guild = await guilds.first()?.fetch();      if (!guild) throw new Error("No guild found");
+      const guild = await guilds.first()?.fetch();
+      if (!guild) throw new Error("No guild found");
 
-      return guild.roles.cache.sort((roleA, roleB) =>{
+      return guild.roles.cache.sort((roleA, roleB) => {
         return (roleB?.position || 0) - (roleA?.position || 0);
       }).map(role => ({
         id: role.id,
@@ -1075,26 +1132,64 @@ export class DiscordBot {
   }
 
   async start() {
-    await this.client.login(process.env.DISCORD_BOT_TOKEN);
+    try {
+      // Clear any existing timeouts
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+      }
+
+      // Set connection timeout
+      this.connectionTimeout = setTimeout(() => {
+        log("Connection timeout reached, destroying client...", "warn");
+        this.client.destroy()
+          .catch(error => log(`Error destroying client: ${error}`, "error"));
+      }, this.wsCleanupConfig.connectionTimeout);
+
+      await this.client.login(process.env.DISCORD_BOT_TOKEN);
+
+      // Clear timeout on successful connection
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
+
+      log("Discord bot started successfully");
+    } catch (error) {
+      log(`Error starting Discord bot: ${error}`, "error");
+      throw error;
+    }
   }
 
   async stop() {
     try {
-      // Destroy all webhooks
-      for (const [_, webhooks] of this.webhooks) {
-        for (const pool of webhooks) {
+      // Clear all intervals and timeouts
+      if (this.cleanupInterval) {
+        clearInterval(this.cleanupInterval);
+        this.cleanupInterval = null;
+      }
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
+
+      // Cleanup all webhooks
+      for (const [channelId, webhooks] of this.webhooks) {
+        for (const webhook of webhooks) {
           try {
-            await pool.webhook.destroy();
+            await webhook.webhook.deleteIfExists();
           } catch (error) {
-            log(`Error deleting webhook: ${error}`, "error");
+            log(`Error deleting webhook for channel ${channelId}: ${error}`, "warn");
           }
         }
       }
       this.webhooks.clear();
 
       // Destroy the client
-      this.client.destroy();
-      log("Discord bot stopped");
+      if (this.client) {
+        await this.client.destroy();
+      }
+
+      log("Discord bot stopped successfully");
     } catch (error) {
       log(`Error stopping Discord bot: ${error}`, "error");
       throw error;
