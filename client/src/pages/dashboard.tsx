@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { MessagesSquare, User, Clock, AlertCircle } from "lucide-react";
 import { Link } from "wouter";
 import { Settings } from "lucide-react";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
+
 
 export default function Dashboard() {
   const { data: categories } = useQuery<Category[]>({
@@ -20,11 +20,17 @@ export default function Dashboard() {
 
   if (!categories || !tickets) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner 
-          size="lg"
-          message="Loading dashboard data..." 
-        />
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {[...Array(4)].map((_, i) => (
+          <Card key={i} className="animate-pulse">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Loading...</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-4 w-[100px] bg-muted rounded"></div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     );
   }
