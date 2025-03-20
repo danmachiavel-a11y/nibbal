@@ -35,6 +35,19 @@ interface StateCleanup {
   createdAt: number;
 }
 
+interface BackoffConfig {
+  initialDelay: number;
+  maxDelay: number;
+  factor: number;
+}
+
+interface ConnectionState {
+  status: 'connected' | 'disconnected' | 'reconnecting';
+  lastTransition: number;
+  lastError?: string;
+}
+
+
 // Rate limiting constants
 const RATE_LIMIT = {
   COMMAND: {
@@ -95,6 +108,15 @@ export class TelegramBot {
   private readonly MAX_CONCURRENT_USERS = 500;
   private activeUsers: Set<number> = new Set();
   private lastHeartbeatSuccess: number = Date.now();
+  private backoffConfig: BackoffConfig = {
+    initialDelay: 5000,  // 5 seconds
+    maxDelay: 300000,    // 5 minutes
+    factor: 2            // Double the delay each time
+  };
+  private connectionState: ConnectionState = {
+    status: 'disconnected',
+    lastTransition: Date.now()
+  };
 
   constructor(bridge: BridgeManager) {
     if (!process.env.TELEGRAM_BOT_TOKEN?.trim()) {
@@ -309,17 +331,44 @@ export class TelegramBot {
   }
 
 
+  private updateConnectionState(newStatus: 'connected' | 'disconnected' | 'reconnecting', error?: string) {
+    const oldStatus = this.connectionState.status;
+    const now = Date.now();
+
+    this.connectionState = {
+      status: newStatus,
+      lastTransition: now,
+      lastError: error
+    };
+
+    log(`Connection state transition: ${oldStatus} -> ${newStatus}${error ? ` (Error: ${error})` : ''}`,
+      newStatus === 'connected' ? 'info' : 'warn');
+  }
+
+  private calculateBackoffDelay(): number {
+    const attempt = this.reconnectAttempts;
+    const delay = Math.min(
+      this.backoffConfig.initialDelay * Math.pow(this.backoffConfig.factor, attempt),
+      this.backoffConfig.maxDelay
+    );
+    return delay;
+  }
+
   private async handleDisconnect() {
     if (this.isStarting) return;
 
-    log("Bot disconnected, attempting to reconnect...");
-    await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN));
+    this.updateConnectionState('reconnecting');
+    const backoffDelay = this.calculateBackoffDelay();
+
+    log(`Bot disconnected, waiting ${backoffDelay / 1000} seconds before reconnection attempt...`);
+    await new Promise(resolve => setTimeout(resolve, backoffDelay));
 
     try {
       if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+        this.updateConnectionState('disconnected', 'Max reconnection attempts reached');
         log("Max reconnection attempts reached, waiting for longer cooldown", "warn");
         this.reconnectAttempts = 0;
-        await new Promise(resolve => setTimeout(resolve, this.RECONNECT_COOLDOWN * 2));
+        await new Promise(resolve => setTimeout(resolve, this.backoffConfig.maxDelay));
       }
 
       log(`Attempting to reconnect (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
@@ -335,9 +384,12 @@ export class TelegramBot {
 
       await this.start();
       this.reconnectAttempts = 0;
+      this.updateConnectionState('connected');
       log("Reconnection successful");
     } catch (error) {
       this.reconnectAttempts++;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.updateConnectionState('disconnected', errorMsg);
       log(`Reconnection attempt failed: ${error}`, "error");
 
       if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
@@ -359,6 +411,7 @@ export class TelegramBot {
 
     try {
       log("Starting Telegram bot...");
+      this.updateConnectionState('reconnecting');
 
       // Stop existing bot if any
       if (this.bot) {
@@ -390,11 +443,14 @@ export class TelegramBot {
       log(`Connected as @${botInfo.username}`);
 
       this._isConnected = true;
+      this.updateConnectionState('connected');
       this.startHeartbeat();
       this.reconnectAttempts = 0;
 
       log("Telegram bot started successfully");
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.updateConnectionState('disconnected', errorMsg);
       log(`Error starting Telegram bot: ${error}`, "error");
       this._isConnected = false;
       this.failedHeartbeats = 0;
@@ -730,9 +786,9 @@ export class TelegramBot {
             const category = await storage.getCategory(activeTicket.categoryId);
             const categoryName = escapeMarkdown(category?.name || "Unknown");
             await ctx.reply(
-              `❌ You already have an active ticket in *${categoryName}* category\\.\n\n` +
-              "You cannot create a new ticket while you have an active one\\.\n" +
-              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket\\.",
+              `❌ You already have an active ticket in *${categoryName}* category.\n\n` +
+              "You cannot create a new ticket while you have an active one.\n" +
+              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.",
               { parse_mode: "MarkdownV2" }
             );
             return;
@@ -1308,13 +1364,13 @@ export class TelegramBot {
 
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
     const state = this.userStates.get(userId);
-    if(!state) return true;
+    if (!state) return true;
     return this.checkRateLimit(userId, 'command', command);
   }
 
   private async checkMessageRateLimit(userId: number): Promise<boolean> {
     const state = this.userStates.get(userId);
-    if(!state) return true;
+    if (!state) return true;
     return this.checkRateLimit(userId, 'message');
   }
   // Removed duplicate handleCategoryMenu function
