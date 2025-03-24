@@ -729,62 +729,91 @@ export class TelegramBot {
   }
 
   private async handleCategoryMenu(ctx: Context) {
-    const botConfig = await storage.getBotConfig();
-    const categories = await storage.getCategories();
+    try {
+      const botConfig = await storage.getBotConfig();
+      const categories = await storage.getCategories();
 
-    const submenus = categories.filter(cat => cat.isSubmenu);
-    const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
+      const submenus = categories.filter(cat => cat.isSubmenu);
+      const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
 
-    const keyboard: { text: string; callback_data: string; }[][] = [];
-    let currentRow: { text: string; callback_data: string; }[] = [];
+      const keyboard: { text: string; callback_data: string; }[][] = [];
+      let currentRow: { text: string; callback_data: string; }[] = [];
 
-    for (const submenu of submenus) {
-      const button = {
-        text: submenu.isClosed ? `🔴 ${submenu.name}` : submenu.name,
-        callback_data: `submenu_${submenu.id}`
-      };
+      for (const submenu of submenus) {
+        const button = {
+          text: submenu.isClosed ? `🔴 ${submenu.name}` : submenu.name,
+          callback_data: `submenu_${submenu.id}`
+        };
 
-      if (submenu.newRow && currentRow.length > 0) {
-        keyboard.push([...currentRow]);
-        currentRow = [button];
-      } else {
-        currentRow.push(button);
-        if (currentRow.length >= 2) {
+        if (submenu.newRow && currentRow.length > 0) {
           keyboard.push([...currentRow]);
-          currentRow = [];
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
         }
       }
-    }
 
-    for (const category of rootCategories) {
-      const button = {
-        text: category.isClosed ? `🔴 ${category.name}` : category.name,
-        callback_data: `category_${category.id}`
-      };
+      for (const category of rootCategories) {
+        const button = {
+          text: category.isClosed ? `🔴 ${category.name}` : category.name,
+          callback_data: `category_${category.id}`
+        };
 
-      if (category.newRow && currentRow.length > 0) {
-        keyboard.push([...currentRow]);
-        currentRow = [button];
-      } else {
-        currentRow.push(button);
-        if (currentRow.length >= 2) {
+        if (category.newRow && currentRow.length > 0) {
           keyboard.push([...currentRow]);
-          currentRow = [];
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
         }
       }
+
+      if (currentRow.length > 0) {
+        keyboard.push(currentRow);
+      }
+
+      const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
+
+      try {
+        // Try to edit existing message if this was triggered by a callback
+        if (ctx.callbackQuery) {
+          await ctx.editMessageText(welcomeMessage, {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        } else {
+          // Otherwise send a new message
+          await ctx.reply(welcomeMessage, {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        }
+      } catch (error) {
+        // If editing fails, send a new message
+        if (error.message?.includes("message can't be edited")) {
+          await ctx.reply(welcomeMessage, {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        } else {
+          throw error; // Re-throw other errors
+        }
+      }
+    } catch (error) {
+      log(`Error in handleCategoryMenu: ${error}`, "error");
+      await ctx.reply("❌ There was an error displaying the menu. Please try again.");
     }
 
-    if (currentRow.length > 0) {
-      keyboard.push(currentRow);
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery();
     }
-
-    const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
-
-    await ctx.editMessageText(welcomeMessage, {
-      parse_mode: "MarkdownV2",
-      reply_markup: { inline_keyboard: keyboard }
-    });
-    await ctx.answerCbQuery();
   }
 
   private async handleCategorySelection(ctx: Context, categoryId: number) {
@@ -907,10 +936,23 @@ export class TelegramBot {
       }]);
 
       const message = `Please select a service from ${submenu.name}:`;
-      await ctx.editMessageText(escapeMarkdown(message), {
-        parse_mode: "MarkdownV2",
-        reply_markup: { inline_keyboard: keyboard }
-      });
+
+      try {
+        await ctx.editMessageText(escapeMarkdown(message), {
+          parse_mode: "MarkdownV2",
+          reply_markup: { inline_keyboard: keyboard }
+        });
+      } catch (error) {
+        // If editing fails, send a new message
+        if (error.message?.includes("message can't be edited")) {
+          await ctx.reply(escapeMarkdown(message), {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        } else {
+          throw error; // Re-throw other errors
+        }
+      }
 
       log(`Successfully displayed submenu options for submenu ${submenuId}`);
     } catch (error) {
@@ -1503,10 +1545,23 @@ export class TelegramBot {
       }]);
 
       const message = `Please select a service from ${submenu.name}:`;
-      await ctx.editMessageText(escapeMarkdown(message), {
-        parse_mode: "MarkdownV2",
-        reply_markup: { inline_keyboard: keyboard }
-      });
+
+      try {
+        await ctx.editMessageText(escapeMarkdown(message), {
+          parse_mode: "MarkdownV2",
+          reply_markup: { inline_keyboard: keyboard }
+        });
+      } catch (error) {
+        // If editing fails, send a new message
+        if (error.message?.includes("message can't be edited")) {
+          await ctx.reply(escapeMarkdown(message), {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        } else {
+          throw error; // Re-throw other errors
+        }
+      }
 
       log(`Successfully displayed submenu options for submenu ${submenuId}`);
     } catch (error) {
