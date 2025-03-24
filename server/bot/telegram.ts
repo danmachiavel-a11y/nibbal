@@ -787,7 +787,7 @@ export class TelegramBot {
     await ctx.answerCbQuery();
   }
 
-  private async handleCategoryCallback(ctx: Context, categoryId: number) {
+  private async handleCategorySelection(ctx: Context, categoryId: number) {
     try {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -859,8 +859,63 @@ export class TelegramBot {
       });
 
     } catch (error) {
-      log(`Error in handleCategoryCallback: ${error}`, "error");
+      log(`Error in handleCategorySelection: ${error}`, "error");
       await ctx.reply("❌ There was an error processing your selection. Please try again.");
+    }
+  }
+
+  private async handleSubmenuClick(ctx: Context, submenuId: number) {
+    try {
+      const submenu = await storage.getCategory(submenuId);
+      if (!submenu) {
+        await ctx.reply("❌ Submenu not found.");
+        return;
+      }
+
+      const categories = await storage.getCategories();
+      const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
+
+      const keyboard: { text: string; callback_data: string; }[][] = [];
+      let currentRow: { text: string; callback_data: string; }[] = [];
+
+      for (const category of submenuCategories) {
+        const button = {
+          text: category.isClosed ? `🔴 ${category.name}` : category.name,
+          callback_data: `category_${category.id}`
+        };
+
+        if (category.newRow && currentRow.length > 0) {
+          keyboard.push([...currentRow]);
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
+        }
+      }
+
+      if (currentRow.length > 0) {
+        keyboard.push(currentRow);
+      }
+
+      // Add a "Back" button
+      keyboard.push([{
+        text: "↩️ Back",
+        callback_data: "back_to_main"
+      }]);
+
+      const message = `Please select a service from ${submenu.name}:`;
+      await ctx.editMessageText(escapeMarkdown(message), {
+        parse_mode: "MarkdownV2",
+        reply_markup: { inline_keyboard: keyboard }
+      });
+
+      log(`Successfully displayed submenu options for submenu ${submenuId}`);
+    } catch (error) {
+      log(`Error in handleSubmenuClick: ${error}`, "error");
+      await ctx.reply("❌ There was an error displaying the menu. Please try again.");
     }
   }
 
@@ -941,80 +996,7 @@ export class TelegramBot {
           return;
         }
 
-        const botConfig = await storage.getBotConfig();
-        const categories = await storage.getCategories();
-
-        const submenus = categories.filter(cat => cat.isSubmenu);
-        const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
-
-        const keyboard: { text: string; callback_data: string; }[][] = [];
-        let currentRow: { text: string; callback_data: string; }[] = [];
-
-        for (const submenu of submenus) {
-          const button = {
-            text: submenu.isClosed ? `🔴 ${submenu.name}` : submenu.name,
-            callback_data: `submenu_${submenu.id}`
-          };
-
-          if (submenu.newRow && currentRow.length > 0) {
-            keyboard.push([...currentRow]);
-            currentRow = [button];
-          } else {
-            currentRow.push(button);
-            if (currentRow.length >= 2) {
-              keyboard.push([...currentRow]);
-              currentRow = [];
-            }
-          }
-        }
-
-        for (const category of rootCategories) {
-          const button = {
-            text: category.isClosed ? `🔴 ${category.name}` : category.name,
-            callback_data: `category_${category.id}`
-          };
-
-          if (category.newRow && currentRow.length > 0) {
-            keyboard.push([...currentRow]);
-            currentRow = [button];
-          } else {
-            currentRow.push(button);
-            if (currentRow.length >= 2) {
-              keyboard.push([...currentRow]);
-              currentRow = [];
-            }
-          }
-        }
-
-        if (currentRow.length > 0) {
-          keyboard.push(currentRow);
-        }
-
-        const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
-
-        if (botConfig?.welcomeImageUrl) {
-          try {
-            await ctx.replyWithPhoto(
-              botConfig.welcomeImageUrl,
-              {
-                caption: welcomeMessage,
-                parse_mode: "MarkdownV2",
-                reply_markup: { inline_keyboard: keyboard }
-              }
-            );
-          } catch (error) {
-            console.error("Failed to send welcome image:", error);
-            await ctx.reply(welcomeMessage, {
-              parse_mode: "MarkdownV2",
-              reply_markup: { inline_keyboard: keyboard }
-            });
-          }
-        } else {
-          await ctx.reply(welcomeMessage, {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
-        }
+        await this.handleCategoryMenu(ctx);
       } catch (error) {
         log(`Error in start command: ${error}`, "error");
         await ctx.reply("❌ There was an error processing your request. Please try again in a moment.");
@@ -1070,73 +1052,12 @@ export class TelegramBot {
 
       if (data.startsWith("submenu_")) {
         const submenuId = parseInt(data.split("_")[1]);
-        const categories = await storage.getCategories();
-        const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
-
-        log(`Processing submenu ${submenuId} with ${submenuCategories.length} categories`);
-
-        const keyboard: { text: string; callback_data: string; }[][] = [];
-        let currentRow: { text: string; callback_data: string; }[] = [];
-
-        for (const category of submenuCategories) {
-          const button = {
-            text: category.isClosed ? `🔴 ${category.name}` : category.name,
-            callback_data: `category_${category.id}`
-          };
-
-          if (category.serviceSummary) {
-            // Add service summary below the category name
-            button.text = `${button.text}\n${category.serviceSummary}`;
-          }
-
-          if (category.newRow && currentRow.length > 0) {
-            keyboard.push([...currentRow]);
-            currentRow = [button];
-          } else {
-            currentRow.push(button);
-            if (currentRow.length >= 2) {
-              keyboard.push([...currentRow]);
-              currentRow = [];
-            }
-          }
-        }
-
-        if (currentRow.length > 0) {
-          keyboard.push(currentRow);
-        }
-
-        // Add "Back to Menu" button in a new row
-        keyboard.push([{
-          text: "↩️ Back to Menu",
-          callback_data: "back_to_menu"
-        }]);
-
-        try {
-          await ctx.editMessageText(
-            escapeMarkdown("Please select a service from the options below. Our team will be ready to assist you with your chosen service:"),
-            {
-              parse_mode: "MarkdownV2",
-              reply_markup: { inline_keyboard: keyboard }
-            }
-          );
-          log(`Successfully displayed submenu options for submenu ${submenuId}`);
-        } catch (error) {
-          log(`Error updating submenu message: ${error}`, "error");
-          // If edit fails, try sending a new message as fallback
-          await ctx.reply(
-            "Please select a service from the options below. Our team will be ready to assist you with your chosen service:",
-            {
-              reply_markup: { inline_keyboard: keyboard }
-            }
-          );
-        }
-
-        await ctx.answerCbQuery();
+        await this.handleSubmenuClick(ctx, submenuId);
         return;
       }
 
       // Handle back to menu button
-      if (data === "back_to_menu") {
+      if (data === "back_to_main") {
         await this.handleCategoryMenu(ctx);
         return;
       }
@@ -1144,7 +1065,7 @@ export class TelegramBot {
       if (!data.startsWith("category_")) return;
 
       const categoryId = parseInt(data.split("_")[1]);
-      await this.handleCategoryCallback(ctx, categoryId);
+      await this.handleCategorySelection(ctx, categoryId);
       await ctx.answerCbQuery();
     });
 
@@ -1463,23 +1384,55 @@ export class TelegramBot {
   }
 
   private async handleCategorySelection(ctx: Context, categoryId: number) {
-    const userId = ctx.from?.id;
-    if (!userId) return;
+    try {
+      const userId = ctx.from?.id;
+      if (!userId) return;
 
-    const category = await storage.getCategory(categoryId);
-    if (!category) {
-      await this.sendMessage(userId, "❌ Invalid category selected.");
-      return;
-    }
+      if (!this.checkRateLimit(userId, 'command', 'category')) {
+        await ctx.reply("⚠️ Please wait before selecting another category.");
+        return;
+      }
 
-    if (!await this.checkActiveUsers(userId)) {
-      await this.sendMessage(userId, "❌ Too many active users. Please try again later.");
-      return;
-    }
+      const category = await storage.getCategory(categoryId);
+      if (!category) {
+        await ctx.reply("❌ Category not found.");
+        return;
+      }
 
+      // Display service image and summary if available
+      if (category.serviceImageUrl) {
+        try {
+          await ctx.replyWithPhoto(
+            category.serviceImageUrl,
+            {
+              caption: category.serviceSummary ? escapeMarkdown(category.serviceSummary) : undefined,
+              parse_mode: "MarkdownV2"
+            }
+          );
+        } catch (error) {
+          log(`Error sending service image: ${error}`, "error");
+          // If image fails, still show the summary as text
+          if (category.serviceSummary) {
+            await ctx.reply(escapeMarkdown(category.serviceSummary), {
+              parse_mode: "MarkdownV2"
+            });
+          }
+        }
+      } else if (category.serviceSummary) {
+        // If no image but has summary, show summary as text
+        await ctx.reply(escapeMarkdown(category.serviceSummary), {
+          parse_mode: "MarkdownV2"
+        });
+      }
 
-    if (category.questions.length > 0) {
-      // Start questionnaire
+      // Get the questions for this category
+      const questions = category.questions || [];
+      if (questions.length === 0) {
+        await ctx.reply("❌ No questions configured for this category.");
+        return;
+      }
+
+      // Initialize questionnaire state
       const state: UserState = {
         categoryId,
         currentQuestion: 0,
@@ -1495,18 +1448,72 @@ export class TelegramBot {
         }
       };
       this.setState(userId, state);
-      await ctx.reply(category.questions[0]);
-    } else {
-      // Create ticket directly
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (!user) {
-        await this.sendMessage(userId, "❌ User not found. Please try /start.");
-        return;
-      }
-      await this.createTicket({ from: { id: userId, first_name: user.telegramName, username: user.telegramUsername }, reply: this.sendMessage.bind(this, userId) });
+
+      // Ask first question
+      await ctx.reply(escapeMarkdown(questions[0]), {
+        parse_mode: "MarkdownV2"
+      });
+
+    } catch (error) {
+      log(`Error in handleCategorySelection: ${error}`, "error");
+      await ctx.reply("❌ There was an error processing your selection. Please try again.");
     }
   }
 
+  private async handleSubmenuClick(ctx: Context, submenuId: number) {
+    try {
+      const submenu = await storage.getCategory(submenuId);
+      if (!submenu) {
+        await ctx.reply("❌ Submenu not found.");
+        return;
+      }
+
+      const categories = await storage.getCategories();
+      const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
+
+      const keyboard: { text: string; callback_data: string; }[][] = [];
+      let currentRow: { text: string; callback_data: string; }[] = [];
+
+      for (const category of submenuCategories) {
+        const button = {
+          text: category.isClosed ? `🔴 ${category.name}` : category.name,
+          callback_data: `category_${category.id}`
+        };
+
+        if (category.newRow && currentRow.length > 0) {
+          keyboard.push([...currentRow]);
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
+        }
+      }
+
+      if (currentRow.length > 0) {
+        keyboard.push(currentRow);
+      }
+
+      // Add a "Back" button
+      keyboard.push([{
+        text: "↩️ Back",
+        callback_data: "back_to_main"
+      }]);
+
+      const message = `Please select a service from ${submenu.name}:`;
+      await ctx.editMessageText(escapeMarkdown(message), {
+        parse_mode: "MarkdownV2",
+        reply_markup: { inline_keyboard: keyboard }
+      });
+
+      log(`Successfully displayed submenu options for submenu ${submenuId}`);
+    } catch (error) {
+      log(`Error in handleSubmenuClick: ${error}`, "error");
+      await ctx.reply("❌ There was an error displaying the menu. Please try again.");
+    }
+  }
 
   private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
     const state = this.userStates.get(userId);
