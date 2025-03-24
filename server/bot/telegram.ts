@@ -762,11 +762,6 @@ export class TelegramBot {
         callback_data: `category_${category.id}`
       };
 
-      if (category.serviceSummary) {
-        // Add service summary below the category name
-        button.text = `${button.text}\n${category.serviceSummary}`;
-      }
-
       if (category.newRow && currentRow.length > 0) {
         keyboard.push([...currentRow]);
         currentRow = [button];
@@ -790,6 +785,64 @@ export class TelegramBot {
       reply_markup: { inline_keyboard: keyboard }
     });
     await ctx.answerCbQuery();
+  }
+
+  private async handleCategoryCallback(ctx: Context, categoryId: number) {
+    try {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      if (!this.checkRateLimit(userId, 'command', 'category')) {
+        await ctx.reply("⚠️ Please wait before selecting another category.");
+        return;
+      }
+
+      const category = await storage.getCategory(categoryId);
+      if (!category) {
+        await ctx.reply("❌ Category not found.");
+        return;
+      }
+
+      // Display service summary if available
+      if (category.serviceSummary) {
+        await ctx.reply(escapeMarkdown(category.serviceSummary), {
+          parse_mode: "MarkdownV2"
+        });
+      }
+
+      // Get the questions for this category
+      const questions = category.questions || [];
+      if (questions.length === 0) {
+        await ctx.reply("❌ No questions configured for this category.");
+        return;
+      }
+
+      // Initialize questionnaire state
+      const state: UserState = {
+        categoryId,
+        currentQuestion: 0,
+        answers: [],
+        inQuestionnaire: true,
+        rateLimits: {
+          commands: new Map(),
+          messages: { timestamp: 0, count: 0 },
+          bucket: {
+            tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
+            lastRefill: Date.now()
+          }
+        }
+      };
+      this.setState(userId, state);
+
+      // Ask first question
+      await ctx.reply(escapeMarkdown(questions[0]), {
+        parse_mode: "MarkdownV2"
+      });
+
+    } catch (error) {
+      log(`Error in handleCategoryCallback: ${error}`, "error");
+      await ctx.reply("❌ There was an error processing your selection. Please try again.");
+    }
   }
 
   private setupHandlers() {
@@ -890,7 +943,7 @@ export class TelegramBot {
             currentRow = [button];
           } else {
             currentRow.push(button);
-            if (currentRow.length >= 2) {
+            if (currentRow.length>= 2) {
               keyboard.push([...currentRow]);
               currentRow = [];
             }
@@ -902,11 +955,6 @@ export class TelegramBot {
             text: category.isClosed ? `🔴 ${category.name}` : category.name,
             callback_data: `category_${category.id}`
           };
-
-          if (category.serviceSummary) {
-            // Add service summary below the category name
-            button.text = `${button.text}\n${category.serviceSummary}`;
-          }
 
           if (category.newRow && currentRow.length > 0) {
             keyboard.push([...currentRow]);
@@ -1078,7 +1126,7 @@ export class TelegramBot {
       if (!data.startsWith("category_")) return;
 
       const categoryId = parseInt(data.split("_")[1]);
-      await this.handleCategorySelection(ctx, categoryId);
+      await this.handleCategoryCallback(ctx, categoryId);
       await ctx.answerCbQuery();
     });
 
