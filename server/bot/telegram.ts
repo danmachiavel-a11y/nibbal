@@ -762,6 +762,11 @@ export class TelegramBot {
         callback_data: `category_${category.id}`
       };
 
+      if (category.serviceSummary) {
+        // Add service summary below the category name
+        button.text = `${button.text}\n${category.serviceSummary}`;
+      }
+
       if (category.newRow && currentRow.length > 0) {
         keyboard.push([...currentRow]);
         currentRow = [button];
@@ -898,6 +903,11 @@ export class TelegramBot {
             callback_data: `category_${category.id}`
           };
 
+          if (category.serviceSummary) {
+            // Add service summary below the category name
+            button.text = `${button.text}\n${category.serviceSummary}`;
+          }
+
           if (category.newRow && currentRow.length > 0) {
             keyboard.push([...currentRow]);
             currentRow = [button];
@@ -938,7 +948,7 @@ export class TelegramBot {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
-                }
+        }
       } catch (error) {
         log(`Error in start command: ${error}`, "error");
         await ctx.reply("❌ There was an error processing your request. Please try again in a moment.");
@@ -1007,6 +1017,11 @@ export class TelegramBot {
             text: category.isClosed ? `🔴 ${category.name}` : category.name,
             callback_data: `category_${category.id}`
           };
+
+          if (category.serviceSummary) {
+            // Add service summary below the category name
+            button.text = `${button.text}\n${category.serviceSummary}`;
+          }
 
           if (category.newRow && currentRow.length > 0) {
             keyboard.push([...currentRow]);
