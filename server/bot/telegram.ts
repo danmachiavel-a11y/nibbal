@@ -803,8 +803,27 @@ export class TelegramBot {
         return;
       }
 
-      // Display service summary if available
-      if (category.serviceSummary) {
+      // Display service image and summary if available
+      if (category.serviceImageUrl) {
+        try {
+          await ctx.replyWithPhoto(
+            category.serviceImageUrl,
+            {
+              caption: category.serviceSummary ? escapeMarkdown(category.serviceSummary) : undefined,
+              parse_mode: "MarkdownV2"
+            }
+          );
+        } catch (error) {
+          log(`Error sending service image: ${error}`, "error");
+          // If image fails, still show the summary as text
+          if (category.serviceSummary) {
+            await ctx.reply(escapeMarkdown(category.serviceSummary), {
+              parse_mode: "MarkdownV2"
+            });
+          }
+        }
+      } else if (category.serviceSummary) {
+        // If no image but has summary, show summary as text
         await ctx.reply(escapeMarkdown(category.serviceSummary), {
           parse_mode: "MarkdownV2"
         });
@@ -917,8 +936,7 @@ export class TelegramBot {
         const state = this.userStates.get(userId);
         if (state?.inQuestionnaire) {
           await ctx.reply(
-            "❌ You are currently answering questions for a ticket.\n" +
-            "Use /cancel to cancel the current process first."
+            "❌ You are currently answering questions for a ticket.\nUse /cancel to cancel the current process first."
           );
           return;
         }
@@ -943,7 +961,7 @@ export class TelegramBot {
             currentRow = [button];
           } else {
             currentRow.push(button);
-            if (currentRow.length>= 2) {
+            if (currentRow.length >= 2) {
               keyboard.push([...currentRow]);
               currentRow = [];
             }
