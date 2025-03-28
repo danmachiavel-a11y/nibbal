@@ -1,63 +1,62 @@
 import fetch from 'node-fetch';
-import { log } from "../vite";
+import fs from 'fs';
+import { log } from '../vite';
+import FormData from 'form-data';
 
 async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
   try {
-    const formData = new URLSearchParams();
-    formData.append('image', buffer.toString('base64'));
-    formData.append('name', `test_photo_${Date.now()}`);
-    // Preserve image quality
-    formData.append('quality', '100');
-    // Don't auto-resize
-    formData.append('width', '0');
-    formData.append('height', '0');
+    if (!process.env.IMGBB_API_KEY) {
+      throw new Error("ImgBB API key is missing");
+    }
 
-    const response = await fetch(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, {
+    const apiKey = process.env.IMGBB_API_KEY;
+    const form = new FormData();
+
+    form.append("image", buffer.toString('base64'));
+    
+    const response = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
       method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      }
+      body: form as any,
+      headers: form.getHeaders ? form.getHeaders() : {}
     });
 
     if (!response.ok) {
-      throw new Error(`ImgBB API error: ${response.status}`);
+      const errorData = await response.text();
+      throw new Error(`ImgBB API error: ${response.status} ${response.statusText} - ${errorData}`);
     }
 
-    const data = await response.json();
-
-    // Log detailed image information
-    log(`Successfully uploaded image to ImgBB:
-    Original size: ${buffer.length} bytes
-    URL: ${data.data.url}
-    Display URL: ${data.data.display_url}
-    Size: ${data.data.size} bytes
-    Width: ${data.data.width}px
-    Height: ${data.data.height}px
-    Type: ${data.data.image.mime}`);
-
-    return data.data.display_url || data.data.url;
+    const data = await response.json() as any;
+    if (data.success && data.data.url) {
+      return data.data.url;
+    } else {
+      throw new Error(`ImgBB API response missing URL: ${JSON.stringify(data)}`);
+    }
   } catch (error) {
     log(`Error uploading to ImgBB: ${error}`, "error");
     return null;
   }
 }
 
-// Test image buffer (a 1x1 transparent PNG)
-const testImageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+// Create a test buffer with some basic image data
+const testBuffer = Buffer.from([
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 
+  0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 
+  0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82
+]); // This is a 1x1 PNG image
 
-// Run test
-async function testImgbbUpload() {
-  log("Starting ImgBB upload test...");
-  const imageUrl = await uploadToImgbb(testImageBuffer);
-
-  if (imageUrl) {
-    log("✅ ImgBB upload test successful! URL:", imageUrl);
-  } else {
-    log("❌ ImgBB upload test failed!");
+async function main() {
+  console.log("Testing ImgBB upload...");
+  console.log("API Key exists:", !!process.env.IMGBB_API_KEY);
+  
+  try {
+    const url = await uploadToImgbb(testBuffer);
+    console.log("Upload result:", url);
+  } catch (error) {
+    console.error("Upload error:", error);
   }
 }
 
-testImgbbUpload().catch(error => {
-  log("Error running test:", error);
-});
+main().catch(console.error);
