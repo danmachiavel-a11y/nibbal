@@ -1015,12 +1015,11 @@ export class TelegramBot {
           const activeTicket = await storage.getActiveTicketByUserId(user.id);
           if (activeTicket) {
             const category = await storage.getCategory(activeTicket.categoryId);
-            const categoryName = escapeMarkdown(category?.name || "Unknown");
+            const categoryName = category?.name || "Unknown";
             await ctx.reply(
-              `❌ You already have an active ticket in *${categoryName}* category.\n\n` +
+              `❌ You already have an active ticket in ${categoryName} category.\n\n` +
               "You cannot create a new ticket while you have an active one.\n" +
-              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.",
-              { parse_mode: "MarkdownV2" }
+              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket."
             );
             return;
           }
