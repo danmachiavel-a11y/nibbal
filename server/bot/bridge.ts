@@ -153,7 +153,7 @@ export class BridgeManager {
     }
   }
 
-  private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
+  async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
     try {
       if (!this.telegramBot.bot?.telegram) {
         throw new BridgeError("Telegram bot not initialized", { context: "processTelegramToDiscord" });
@@ -207,7 +207,7 @@ export class BridgeManager {
     }
   }
 
-  private async processDiscordToTelegram(url: string): Promise<Buffer | null> {
+  async processDiscordToTelegram(url: string): Promise<Buffer | null> {
     try {
       // Try cache first
       const cacheKey = `discord_${url}`;
