@@ -75,22 +75,30 @@ const MAX_INACTIVE_STATES = 1000; // Maximum number of stored states
 
 function escapeMarkdown(text: string): string {
   if (!text) return '';
-  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-  
-  let escaped = text;
-  // Properly escape characters - the issue was the incorrect regex pattern
-  for (const char of specialChars) {
-    // Create a global regex that matches the character literally
-    const regex = new RegExp(escapeRegExp(char), 'g');
-    escaped = escaped.replace(regex, '\\' + char);
-  }
-  
-  return escaped;
-}
+  const specialChars = ['[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+  const formatPatterns = [
+    { start: '**', end: '**', marker: '*' },
+    { start: '__', end: '__', marker: '_' },
+    { start: '```', end: '```', marker: '`' },
+    { start: '`', end: '`', marker: '`' }
+  ];
 
-// Helper function to escape special characters in regex
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const pattern of formatPatterns) {
+    if (text.startsWith(pattern.start) && text.endsWith(pattern.end)) {
+      const content = text.slice(pattern.start.length, -pattern.end.length);
+      let escaped = content;
+      for (const char of specialChars) {
+        escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+      }
+      return `${pattern.marker}${escaped}${pattern.marker}`;
+    }
+  }
+
+  let escaped = text;
+  for (const char of [...specialChars, '*', '_', '`']) {
+    escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+  }
+  return escaped;
 }
 
 export class TelegramBot {
@@ -750,14 +758,8 @@ export class TelegramBot {
       }
 
       for (const category of rootCategories) {
-        // Make sure we're only displaying the name on the button, not the summary
-        let buttonText = category.name;
-        if (category.isClosed) {
-          buttonText = `🔴 ${buttonText}`;
-        }
-        
         const button = {
-          text: buttonText,
+          text: category.isClosed ? `🔴 ${category.name}` : category.name,
           callback_data: `category_${category.id}`
         };
 
@@ -777,18 +779,19 @@ export class TelegramBot {
         keyboard.push(currentRow);
       }
 
-      // Don't use escapeMarkdown for welcomeMessage since it might have special characters
-      const welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
+      const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
 
       try {
         // Try to edit existing message if this was triggered by a callback
         if (ctx.callbackQuery) {
           await ctx.editMessageText(welcomeMessage, {
+            parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
         } else {
           // Otherwise send a new message
           await ctx.reply(welcomeMessage, {
+            parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
         }
@@ -796,6 +799,7 @@ export class TelegramBot {
         // If editing fails, send a new message
         if (error.message?.includes("message can't be edited")) {
           await ctx.reply(welcomeMessage, {
+            parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
         } else {
@@ -1015,11 +1019,12 @@ export class TelegramBot {
           const activeTicket = await storage.getActiveTicketByUserId(user.id);
           if (activeTicket) {
             const category = await storage.getCategory(activeTicket.categoryId);
-            const categoryName = category?.name || "Unknown";
+            const categoryName = escapeMarkdown(category?.name || "Unknown");
             await ctx.reply(
-              `❌ You already have an active ticket in ${categoryName} category.\n\n` +
+              `❌ You already have an active ticket in *${categoryName}* category.\n\n` +
               "You cannot create a new ticket while you have an active one.\n" +
-              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket."
+              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.",
+              { parse_mode: "MarkdownV2" }
             );
             return;
           }
