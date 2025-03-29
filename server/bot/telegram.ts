@@ -54,6 +54,7 @@ interface ConnectionState {
   lastError?: string;
 }
 
+
 // Add at the top with other constants
 const RATE_LIMIT = {
   COMMAND: {
@@ -74,29 +75,17 @@ const MAX_INACTIVE_STATES = 1000; // Maximum number of stored states
 
 function escapeMarkdown(text: string): string {
   if (!text) return '';
+  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
   
-  // Use Telegram's documented list of characters that need escaping in MarkdownV2
-  // https://core.telegram.org/bots/api#markdownv2-style
-  return text
-    .replace(/\\/g, '\\\\') // Must be first to avoid double escaping
-    .replace(/_/g, '\\_')
-    .replace(/\*/g, '\\*')
-    .replace(/\[/g, '\\[')
-    .replace(/\]/g, '\\]')
-    .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)')
-    .replace(/~/g, '\\~')
-    .replace(/`/g, '\\`')
-    .replace(/>/g, '\\>')
-    .replace(/\#/g, '\\#')
-    .replace(/\+/g, '\\+')
-    .replace(/\-/g, '\\-')
-    .replace(/=/g, '\\=')
-    .replace(/\|/g, '\\|')
-    .replace(/\{/g, '\\{')
-    .replace(/\}/g, '\\}')
-    .replace(/\./g, '\\.')
-    .replace(/!/g, '\\!');
+  let escaped = text;
+  // Properly escape characters - the issue was the incorrect regex pattern
+  for (const char of specialChars) {
+    // Create a global regex that matches the character literally
+    const regex = new RegExp(escapeRegExp(char), 'g');
+    escaped = escaped.replace(regex, '\\' + char);
+  }
+  
+  return escaped;
 }
 
 // Helper function to escape special characters in regex
@@ -226,7 +215,7 @@ export class TelegramBot {
 
   private startCleanupInterval(): void {
     // Cleanup stale states every 5 minutes
-    setInterval(() => this.cleanupStaleStates(), USER_STATE_CLEANUP_INTERVAL);
+    setInterval(() => this.cleanupStaleStates(), this.USER_STATE_CLEANUP_INTERVAL);
     log("Started user state cleanup interval");
   }
 
@@ -512,7 +501,10 @@ export class TelegramBot {
       if (error instanceof Error && error.message.includes("409: Conflict")) {
         log("409 Conflict detected - another bot instance is already running", "error");
         await this.stop();
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 2));
       }
+
+      throw error;
     } finally {
       this.isStarting = false;
     }
@@ -520,253 +512,253 @@ export class TelegramBot {
 
   async stop() {
     try {
+      log("Stopping Telegram bot...");
+      this.stopHeartbeat();
+
       if (this.bot) {
-        log("Stopping Telegram bot...");
-        this.stopHeartbeat();
-        await this.bot.stop();
-        this.bot = null;
-        this._isConnected = false;
-        this.updateConnectionState('disconnected', 'Manual stop');
-        log("Telegram bot stopped successfully");
+        try {
+          await this.bot.stop();
+        } catch (error) {
+          log(`Error during bot stop: ${error}`, "warn");
+        } finally {
+          this.bot = null;
+        }
       }
+
+      this._isConnected = false;
+      this.isStarting = false;
+      this.userStates.clear();
+      this.stateCleanups.clear();
+      this.reconnectAttempts = 0;
+      this.activeUsers.clear();
+      this.failedHeartbeats = 0;
+
+      log("Telegram bot stopped successfully");
     } catch (error) {
       log(`Error stopping Telegram bot: ${error}`, "error");
+      throw error;
     }
   }
 
   getIsConnected(): boolean {
-    return this._isConnected;
+    return this._isConnected && this.bot !== null;
   }
 
   async sendMessage(chatId: number, text: string) {
     try {
-      if (!this.bot?.telegram) {
-        log("Cannot send message: Bot is not connected", "error");
-        return;
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
       }
 
-      return await this.bot.telegram.sendMessage(chatId, text, { parse_mode: "MarkdownV2" });
+      await this.bot.telegram.sendMessage(chatId, escapeMarkdown(text), {
+        parse_mode: "MarkdownV2"
+      });
     } catch (error) {
-      log(`Error sending message to ${chatId}: ${error}`, "error");
-      if (error.message?.includes('restart') || error.message?.includes('unauthorized')) {
-        this._isConnected = false;
-        await this.handleDisconnect();
-      }
+      log(`Error sending message: ${error}`, "error");
       throw error;
     }
   }
 
   async sendPhoto(chatId: number, photo: Buffer | string, caption?: string): Promise<string | undefined> {
     try {
-      if (!this.bot?.telegram) {
-        log("Cannot send photo: Bot is not connected", "error");
-        return;
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
       }
 
-      const result = await this.bot.telegram.sendPhoto(chatId, photo, {
-        caption,
-        parse_mode: "MarkdownV2"
-      });
+      log(`Sending photo to chat ${chatId}`);
+      let sentMessage;
 
-      // Return the file ID for caching
-      if (result?.photo && result.photo.length > 0) {
-        return result.photo[result.photo.length - 1].file_id;
+      // If photo is a URL, download it first
+      if (typeof photo === 'string' && photo.startsWith('http')) {
+        const response = await fetch(photo);
+        const buffer = await response.buffer();
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: buffer }, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      } else if (photo instanceof Buffer) {
+        // Handle buffer by using InputFile format
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: photo }, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      } else {
+        // Handle file_id string
+        sentMessage = await this.bot.telegram.sendPhoto(chatId, photo, {
+          caption: caption ? escapeMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
       }
+
+      // Return the file_id for caching
+      if (sentMessage?.photo && sentMessage.photo.length > 0) {
+        const fileId = sentMessage.photo[sentMessage.photo.length - 1].file_id;
+        log(`Got file_id ${fileId} for photo`);
+        return fileId;
+      }
+
+      log(`Successfully sent photo to chat ${chatId}`);
+      return undefined;
     } catch (error) {
-      log(`Error sending photo to ${chatId}: ${error}`, "error");
-      if (error.message?.includes('restart') || error.message?.includes('unauthorized')) {
-        this._isConnected = false;
-        await this.handleDisconnect();
-      }
+      log(`Error sending photo: ${error}`, "error");
       throw error;
     }
   }
 
   async sendCachedPhoto(chatId: number, fileId: string, caption?: string): Promise<void> {
     try {
-      if (!this.bot?.telegram) {
-        log("Cannot send cached photo: Bot is not connected", "error");
-        return;
+      if (!this.bot) {
+        throw new Error("Bot not initialized");
       }
 
       await this.bot.telegram.sendPhoto(chatId, fileId, {
-        caption,
+        caption: caption ? escapeMarkdown(caption) : undefined,
         parse_mode: "MarkdownV2"
       });
+
+      log(`Successfully sent cached photo (${fileId}) to chat ${chatId}`);
     } catch (error) {
-      log(`Error sending cached photo to ${chatId}: ${error}`, "error");
-      if (error.message?.includes('restart') || error.message?.includes('unauthorized')) {
-        this._isConnected = false;
-        await this.handleDisconnect();
-      }
+      log(`Error sending cached photo: ${error}`, "error");
       throw error;
     }
   }
 
   private async checkActiveUsers(userId: number): Promise<boolean> {
-    if (this.activeUsers.size >= this.MAX_CONCURRENT_USERS) {
-      const inactiveTime = 10 * 60 * 1000; // 10 minutes of inactivity
-      const now = Date.now();
-      
-      // Find users to evict (inactive ones first)
-      const usersToEvict: number[] = [];
-      
-      for (const [id, cleanup] of this.stateCleanups.entries()) {
-        if (now - cleanup.createdAt > inactiveTime) {
-          usersToEvict.push(id);
-          if (usersToEvict.length + 1 >= this.activeUsers.size - this.MAX_CONCURRENT_USERS + 1) {
-            break;
-          }
-        }
-      }
-      
-      // Evict users if needed
-      if (usersToEvict.length > 0) {
-        for (const id of usersToEvict) {
-          const cleanup = this.stateCleanups.get(id);
-          if (cleanup?.timeout) {
-            clearTimeout(cleanup.timeout);
-          }
-          this.userStates.delete(id);
-          this.stateCleanups.delete(id);
-          this.activeUsers.delete(id);
-        }
-        log(`Evicted ${usersToEvict.length} inactive users to make room for new users`);
-      } else {
-        // If no inactive users to evict, refuse service
-        log(`Too many concurrent users (${this.activeUsers.size}), refusing service to user ${userId}`);
-        return false;
+    // Clean up disconnected users first
+    for (const activeId of this.activeUsers) {
+      try {
+        await this.bot?.telegram.getChat(activeId);
+      } catch (error) {
+        this.activeUsers.delete(activeId);
+        this.userStates.delete(activeId);
+        this.stateCleanups.delete(activeId);
+        log(`Removed inactive user ${activeId}`);
       }
     }
-    
-    // Add user to active set
-    this.activeUsers.add(userId);
+
+    // Check if we can add new user
+    if (!this.activeUsers.has(userId)) {
+      if (this.activeUsers.size >= this.MAX_CONCURRENT_USERS) {
+        return false;
+      }
+      this.activeUsers.add(userId);
+    }
     return true;
   }
 
   private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    // Get user state before rate limit check
+    const state = this.userStates.get(userId);
+    log(`Received message from user ${userId}. Current state: ${JSON.stringify(state)}`);
+
+    if (!this.checkRateLimit(userId, 'message')) {
+      await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
+      return;
+    }
+
     try {
-      if (!user || !ticket) {
-        await ctx.reply("❌ Could not find your active ticket.");
+      // If we're in a questionnaire, handle that first
+      if (state?.inQuestionnaire) {
+        await this.handleQuestionnaireResponse(ctx);
         return;
       }
 
-      const message = ctx.message as any;
-      if (!message) return;
-
-      // Handle text messages
-      if (message.text) {
-        await this.bridge.forwardToDiscord(
-          message.text,
-          ticket.id,
-          user.username || user.telegramId,
-          user.avatarUrl,
-          user.photo,
-          user.firstName,
-          user.lastName
-        );
+      // Check if user still has an active ticket
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket || activeTicket.id !== ticket.id) {
+        await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
         return;
       }
 
-      // Handle images
-      if (message.photo && message.photo.length > 0) {
-        try {
-          const fileId = message.photo[message.photo.length - 1].file_id;
-          const url = await this.bot?.telegram.getFileLink(fileId);
+      // Process message
+      await storage.createMessage({
+        ticketId: ticket.id,
+        content: ctx.message.text,
+        authorId: user.id,
+        platform: "telegram",
+        timestamp: new Date()
+      });
 
-          if (!url) {
-            await ctx.reply("❌ Could not get the image. Please try again.");
-            return;
+      let avatarUrl: string | undefined;
+      try {
+        const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+        if (photos && photos.total_count > 0) {
+          const fileId = photos.photos[0][0].file_id;
+          const file = await this.bot?.telegram.getFile(fileId);
+          if (file?.file_path) {
+            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
           }
-
-          // Forward the image through the bridge
-          const imageBuffer = await this.bridge.processTelegramToDiscord(fileId);
-          if (imageBuffer) {
-            const caption = message.caption || '';
-            await this.bridge.forwardImageToDiscord(
-              ticket.discordChannelId,
-              imageBuffer,
-              caption,
-              user.username || user.telegramId,
-              user.avatarUrl
-            );
-          } else {
-            await ctx.reply("❌ Failed to process the image. Please try again with a smaller image.");
-          }
-        } catch (error) {
-          log(`Error handling photo: ${error}`, "error");
-          await ctx.reply("❌ There was an error processing your image. Please try again.");
         }
-        return;
+      } catch (error) {
+        log(`Error getting Telegram user avatar: ${error}`, "error");
       }
 
-      // Handle document files
-      if (message.document) {
-        await ctx.reply("📝 Document received. Unfortunately, file attachments are not supported. Please convert to text or image.");
-        return;
-      }
+      // Get user's first and last name
+      const firstName = ctx.from?.first_name || "";
+      const lastName = ctx.from?.last_name || "";
+      const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
-      // Handle other message types
-      await ctx.reply("❓ This message type is not supported. Please send text or images only.");
+      await this.bridge.forwardToDiscord(
+        ctx.message.text,
+        ticket.id,
+        displayName,
+        avatarUrl,
+        undefined,
+        firstName,
+        lastName
+      );
+
+      log(`Message processed successfully for ticket ${ticket.id}`);
     } catch (error) {
       log(`Error in handleTicketMessage: ${error}`, "error");
-      await ctx.reply("❌ There was an error processing your message. Please try again.");
+      await ctx.reply("Sorry, there was an error processing your message. Please try again.");
     }
   }
 
   private async handleCategoryMenu(ctx: Context) {
     try {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      if (!this.checkRateLimit(userId, 'command', 'menu')) {
-        await ctx.reply("⚠️ Please wait before using this command again.");
-        return;
-      }
-
-      const isActive = await this.checkActiveUsers(userId);
-      if (!isActive) {
-        await ctx.reply("⚠️ The system is currently at maximum capacity. Please try again in a few minutes.");
-        return;
-      }
-
-      // Get user to check for active tickets
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (activeTicket) {
-          const confirmText = "You have an active ticket. Would you like to continue with it or start a new one?";
-          await ctx.reply(confirmText, {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "📝 Continue Existing", callback_data: "continue_ticket" },
-                  { text: "🆕 Start New", callback_data: "new_ticket" }
-                ]
-              ]
-            }
-          });
-          return;
-        }
-      }
-
-      // Get categories to display
+      const botConfig = await storage.getBotConfig();
       const categories = await storage.getCategories();
-      
-      // First, filter out for parent/root level categories only
-      const parentCategories = categories.filter(cat => !cat.parentId);
-      const hasSubmenus = parentCategories.some(cat => categories.some(c => c.parentId === cat.id));
+
+      const submenus = categories.filter(cat => cat.isSubmenu);
+      const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
 
       const keyboard: { text: string; callback_data: string; }[][] = [];
       let currentRow: { text: string; callback_data: string; }[] = [];
 
-      for (const category of parentCategories) {
-        const hasChildren = categories.some(c => c.parentId === category.id);
-        
-        // Create a button with appropriate prefix
+      for (const submenu of submenus) {
         const button = {
-          text: category.isClosed ? `🔴 ${category.name}` : (hasChildren ? `📁 ${category.name}` : category.name),
-          callback_data: hasChildren ? `submenu_${category.id}` : `category_${category.id}`
+          text: submenu.isClosed ? `🔴 ${submenu.name}` : submenu.name,
+          callback_data: `submenu_${submenu.id}`
+        };
+
+        if (submenu.newRow && currentRow.length > 0) {
+          keyboard.push([...currentRow]);
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
+        }
+      }
+
+      for (const category of rootCategories) {
+        // Make sure we're only displaying the name on the button, not the summary
+        let buttonText = category.name;
+        if (category.isClosed) {
+          buttonText = `🔴 ${buttonText}`;
+        }
+        
+        const button = {
+          text: buttonText,
+          callback_data: `category_${category.id}`
         };
 
         if (category.newRow && currentRow.length > 0) {
@@ -785,17 +777,38 @@ export class TelegramBot {
         keyboard.push(currentRow);
       }
 
-      const message = hasSubmenus 
-        ? "Please select a category or submenu:" 
-        : "Please select a service category:";
+      // Don't use escapeMarkdown for welcomeMessage since it might have special characters
+      const welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
 
-      await ctx.reply(message, {
-        reply_markup: { inline_keyboard: keyboard }
-      });
-
+      try {
+        // Try to edit existing message if this was triggered by a callback
+        if (ctx.callbackQuery) {
+          await ctx.editMessageText(welcomeMessage, {
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        } else {
+          // Otherwise send a new message
+          await ctx.reply(welcomeMessage, {
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        }
+      } catch (error) {
+        // If editing fails, send a new message
+        if (error.message?.includes("message can't be edited")) {
+          await ctx.reply(welcomeMessage, {
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        } else {
+          throw error; // Re-throw other errors
+        }
+      }
     } catch (error) {
       log(`Error in handleCategoryMenu: ${error}`, "error");
       await ctx.reply("❌ There was an error displaying the menu. Please try again.");
+    }
+
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery();
     }
   }
 
@@ -944,155 +957,6 @@ export class TelegramBot {
     }
   }
 
-  private async handleQuestionnaireResponse(ctx: Context, state: UserState) {
-    try {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      const message = ctx.message as any;
-      if (!message || !message.text) {
-        await ctx.reply("❌ Please provide a text response.");
-        return;
-      }
-
-      const category = await storage.getCategory(state.categoryId);
-      if (!category) {
-        await ctx.reply("❌ Category not found. Please start over.");
-        this.userStates.delete(userId);
-        return;
-      }
-
-      const questions = category.questions || [];
-      if (questions.length === 0) {
-        await ctx.reply("❌ No questions configured for this category. Please start over.");
-        this.userStates.delete(userId);
-        return;
-      }
-
-      // Save the answer
-      state.answers.push(message.text);
-
-      // Move to next question or finish questionnaire
-      if (state.currentQuestion < questions.length - 1) {
-        state.currentQuestion++;
-        this.setState(userId, state);
-        
-        await ctx.reply(escapeMarkdown(questions[state.currentQuestion]), {
-          parse_mode: "MarkdownV2"
-        });
-      } else {
-        // Questionnaire completed, create ticket
-        await this.createTicket(ctx);
-      }
-    } catch (error) {
-      log(`Error in handleQuestionnaireResponse: ${error}`, "error");
-      await ctx.reply("❌ There was an error processing your response. Please try again.");
-    }
-  }
-
-  private async createTicket(ctx: Context) {
-    try {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      const state = this.userStates.get(userId);
-      if (!state) {
-        await ctx.reply("❌ Session expired. Please start over.");
-        return;
-      }
-
-      const category = await storage.getCategory(state.categoryId);
-      if (!category) {
-        await ctx.reply("❌ Category not found. Please start over.");
-        this.userStates.delete(userId);
-        return;
-      }
-
-      // Get or create user
-      let user = await storage.getUserByTelegramId(userId.toString());
-      
-      if (!user) {
-        user = await storage.createUser({
-          telegramId: userId.toString(),
-          username: ctx.from?.username || `user_${userId}`,
-          firstName: ctx.from?.first_name || null,
-          lastName: ctx.from?.last_name || null,
-          avatarUrl: null,
-          isAdmin: false,
-          isStaff: false,
-          isBanned: false
-        });
-      }
-
-      // Create ticket
-      const ticket = await storage.createTicket({
-        userId: user.id,
-        categoryId: state.categoryId,
-        status: "open",
-        discordChannelId: null,
-        amount: 0,
-        claimedBy: null,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-
-      // Create a formatted ticket summary
-      const questions = category.questions || [];
-      let ticketSummary = `*New Ticket*\n\n*Category:* ${escapeMarkdown(category.name)}\n\n`;
-      
-      for (let i = 0; i < questions.length; i++) {
-        if (i < state.answers.length) {
-          ticketSummary += `*Q:* ${escapeMarkdown(questions[i])}\n*A:* ${escapeMarkdown(state.answers[i])}\n\n`;
-        }
-      }
-
-      // Create a ticket message
-      await storage.createMessage({
-        ticketId: ticket.id,
-        userId: user.id,
-        content: ticketSummary,
-        type: "system",
-        createdAt: new Date()
-      });
-
-      // Forward ticket to Discord via bridge
-      try {
-        await this.bridge.createTicketChannel(ticket);
-      } catch (error) {
-        log(`Error creating Discord channel for ticket ${ticket.id}: ${error}`, "error");
-        await ctx.reply("❌ There was an error creating your ticket on Discord. Support has been notified.");
-        
-        // Continue with the process anyway
-      }
-
-      // Clear questionnaire state and send confirmation
-      state.inQuestionnaire = false;
-      this.setState(userId, state);
-      
-      await ctx.reply(`✅ Your ticket #${ticket.id} has been created successfully. You can now start a conversation with our support team. Just send messages here and they will be forwarded to our staff.`);
-      
-      // Ping role for this category if configured
-      if (category.roleId) {
-        await this.bridge.forwardPingToDiscord(ticket.id, user.username || `user_${userId}`);
-      }
-    } catch (error) {
-      log(`Error in createTicket: ${error}`, "error");
-      await ctx.reply("❌ There was an error creating your ticket. Please try again.");
-    }
-  }
-
-  private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
-    const state = this.userStates.get(userId);
-    if (!state) return true;
-    return this.checkRateLimit(userId, 'command', command);
-  }
-
-  private async checkMessageRateLimit(userId: number): Promise<boolean> {
-    const state = this.userStates.get(userId);
-    if (!state) return true;
-    return this.checkRateLimit(userId, 'message');
-  }
-
   private setupHandlers() {
     this.bot.command("ping", async (ctx) => {
       const userId = ctx.from?.id;
@@ -1103,24 +967,35 @@ export class TelegramBot {
         return;
       }
 
-      const startTime = Date.now();
-      const msg = await ctx.reply("Pinging...");
-      const responseTime = Date.now() - startTime;
-
       try {
-        await this.bot.telegram.editMessageText(
-          ctx.chat.id,
-          msg.message_id,
-          undefined,
-          `Pong! Bot latency: ${responseTime}ms`
-        );
-      } catch (error) {
-        if (error.message?.includes("message can't be edited")) {
-          // If we can't edit, just send a new message
-          await ctx.reply(`Pong! Bot latency: ${responseTime}ms`);
-        } else {
-          throw error;
+        // Check for active ticket first
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          await ctx.reply("You haven't created any tickets yet.");
+          return;
         }
+
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (!activeTicket) {
+          await ctx.reply("You don't have any active tickets to ping.");
+          return;
+        }
+
+        // Get user's display name
+        const displayName = [ctx.from.first_name, ctx.from.last_name]
+          .filter(Boolean)
+          .join(' ') || ctx.from.username || "Telegram User";
+
+        try {
+          await this.bridge.forwardPingToDiscord(activeTicket.id, displayName);
+          await ctx.reply("✅ Staff has been successfully notified.");
+        } catch (error) {
+          log(`Error sending ping: ${error}`, "error");
+          await ctx.reply("❌ Failed to send ping. Please try again.");
+        }
+      } catch (error) {
+        log(`Error in ping command: ${error}`, "error");
+        await ctx.reply("❌ There was an error processing your request. Please try again.");
       }
     });
 
@@ -1159,14 +1034,6 @@ export class TelegramBot {
           return;
         }
 
-        // Get bot config for welcome message
-        const config = await storage.getBotConfig();
-        const welcomeMessage = config?.welcomeMessage || "Welcome to our support system! Use /menu to get started.";
-
-        // Don't use MarkdownV2 for welcome message to avoid escaping issues
-        await ctx.reply(welcomeMessage);
-        
-        // Show category menu right after welcome message
         await this.handleCategoryMenu(ctx);
       } catch (error) {
         log(`Error in start command: ${error}`, "error");
@@ -1174,234 +1041,545 @@ export class TelegramBot {
       }
     });
 
-    this.bot.command("menu", this.handleCategoryMenu.bind(this));
-
-    this.bot.command("ticket", async (ctx) => {
+    this.bot.command("cancel", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      if (!this.checkRateLimit(userId, 'command', 'ticket')) {
-        await ctx.reply("⚠️ Please wait before using this command again.");
-        return;
-      }
-
-      // Get user and their active tickets
-      const user = await storage.getUserByTelegramId(userId.toString());
-      
-      if (!user) {
-        await ctx.reply("❌ You don't have any tickets. Use /menu to create one.");
-        return;
-      }
-
-      const tickets = await storage.getTicketsByUserId(user.id);
-      
-      if (tickets.length === 0) {
-        await ctx.reply("❌ You don't have any tickets. Use /menu to create one.");
-        return;
-      }
-
-      // Format ticket information
-      let ticketInfo = "*Your Tickets:*\n\n";
-      
-      for (const ticket of tickets) {
-        const category = await storage.getCategory(ticket.categoryId);
-        const categoryName = category ? category.name : "Unknown";
-        
-        const statusEmoji = ticket.status === "open" ? "🟢" : 
-                           ticket.status === "closed" ? "🔴" : 
-                           ticket.status === "pending" ? "🟡" : "⚪";
-        
-        ticketInfo += `*Ticket #${ticket.id}*\n`;
-        ticketInfo += `*Category:* ${categoryName}\n`;
-        ticketInfo += `*Status:* ${statusEmoji} ${ticket.status}\n`;
-        // Don't include date with dots in the string that will be escaped later
-        ticketInfo += `*Created:* ${ticket.createdAt ? new Date(ticket.createdAt).toISOString().split('T')[0] : 'Unknown'}\n\n`;
-      }
-
-      await ctx.reply(escapeMarkdown(ticketInfo), {
-        parse_mode: "MarkdownV2"
-      });
-    });
-
-    this.bot.command("help", async (ctx) => {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      if (!this.checkRateLimit(userId, 'command', 'help')) {
-        await ctx.reply("⚠️ Please wait before using this command again.");
-        return;
-      }
-
-      const helpText = `
-*Available Commands:*
-
-/start - Welcome message and bot introduction
-/menu - Open the services menu to create a new ticket
-/ticket - View your active and past tickets
-/help - Show this help message
-/ping - Check if the bot is responsive
-
-*How to use:*
-1. Use /menu to browse available services
-2. Select a service category
-3. Answer the questions to create a ticket
-4. Chat directly with our support team
-`;
-
-      await ctx.reply(escapeMarkdown(helpText), {
-        parse_mode: "MarkdownV2"
-      });
-    });
-
-    // Handle callback queries (inline button clicks)
-    this.bot.on("callback_query", async (ctx) => {
       try {
-        const userId = ctx.from?.id;
-        if (!userId) return;
-
-        const data = ctx.callbackQuery?.data;
-        if (!data) return;
-
-        // Try to acknowledge the callback to prevent "loading" state
-        try {
-          await ctx.answerCbQuery();
-        } catch (error) {
-          log(`Error answering callback query: ${error}`, "warn");
-        }
-
-        if (data === "back_to_main") {
-          await this.handleCategoryMenu(ctx);
-          return;
-        }
-
-        if (data === "continue_ticket") {
-          const user = await storage.getUserByTelegramId(userId.toString());
-          if (user) {
-            const ticket = await storage.getActiveTicketByUserId(user.id);
-            if (ticket) {
-              const category = await storage.getCategory(ticket.categoryId);
-              await ctx.reply(`✅ Continuing with ticket #${ticket.id} in category ${category?.name || "Unknown"}. Simply send your messages here.`);
-              return;
-            }
-          }
-          await ctx.reply("❌ Could not find your active ticket. Please create a new one.");
-          await this.handleCategoryMenu(ctx);
-          return;
-        }
-
-        if (data === "new_ticket") {
-          await this.handleCategoryMenu(ctx);
-          return;
-        }
-
-        if (data.startsWith("submenu_")) {
-          const submenuId = parseInt(data.substring(8), 10);
-          if (isNaN(submenuId)) {
-            await ctx.reply("❌ Invalid submenu ID.");
-            return;
-          }
-          await this.handleSubmenuClick(ctx, submenuId);
-          return;
-        }
-
-        if (data.startsWith("category_")) {
-          const categoryId = parseInt(data.substring(9), 10);
-          if (isNaN(categoryId)) {
-            await ctx.reply("❌ Invalid category ID.");
-            return;
-          }
-          await this.handleCategorySelection(ctx, categoryId);
-          return;
-        }
-
-        log(`Unknown callback data: ${data}`, "warn");
-        await ctx.reply("❌ Unknown action. Please try again.");
-      } catch (error) {
-        log(`Error handling callback query: ${error}`, "error");
-        await ctx.reply("❌ There was an error processing your request. Please try again.");
-      }
-    });
-
-    // Handle text messages
-    this.bot.on("text", async (ctx) => {
-      try {
-        const userId = ctx.from?.id;
-        if (!userId) return;
-
-        // Check if in questionnaire
+        // Clear questionnaire state if exists
         const state = this.userStates.get(userId);
         if (state?.inQuestionnaire) {
-          await this.handleQuestionnaireResponse(ctx, state);
-          return;
+          this.userStates.delete(userId);
+          this.stateCleanups.delete(userId);
+          this.activeUsers.delete(userId);
         }
 
-        // Check message rate limit
-        if (!this.checkRateLimit(userId, 'message')) {
-          await ctx.reply("⚠️ You're sending messages too quickly. Please wait a moment before sending more.");
-          return;
-        }
-
-        // Handle normal messages (forward to active ticket)
+        // Force close any active ticket
         const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) {
-          await ctx.reply("❌ You don't have an account. Please use /menu to get started.");
-          return;
+        if (user) {
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          if (activeTicket) {
+            // Force close the ticket regardless of transcript category
+            await storage.updateTicketStatus(activeTicket.id, "closed");
+
+            // Try to move to transcripts if possible, but don't block on failure
+            if (activeTicket.discordChannelId) {
+              try {
+                await this.bridge.moveToTranscripts(activeTicket.id);
+              } catch (error) {
+                log(`Failed to move ticket ${activeTicket.id} to transcripts during force cancel: ${error}`, "warn");
+              }
+            }
+          }
         }
 
-        const ticket = await storage.getActiveTicketByUserId(user.id);
-        if (!ticket) {
-          await ctx.reply("❌ You don't have an active ticket. Please use /menu to create one.");
-          return;
-        }
-
-        // Forward the message to the active ticket
-        await this.handleTicketMessage(ctx, user, ticket);
+        await ctx.reply("✅ All operations cancelled. Use /start when you're ready to begin again.");
       } catch (error) {
-        log(`Error handling text message: ${error}`, "error");
-        await ctx.reply("❌ There was an error processing your message. Please try again.");
+        log(`Error in cancel command: ${error}`, "error");
+        // Even if there's an error, try to clear states
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+        await ctx.reply("✅ Reset completed. Use /start to begin again.");
       }
     });
 
-    // Handle photos
-    this.bot.on("photo", async (ctx) => {
+    this.bot.on("callback_query", async (ctx) => {
+      const data = ctx.callbackQuery?.data;
+      if (!data) return;
+
+      if (data.startsWith("submenu_")) {
+        const submenuId = parseInt(data.split("_")[1]);
+        await this.handleSubmenuClick(ctx, submenuId);
+        return;
+      }
+
+      // Handle back to menu button
+      if (data === "back_to_main") {
+        await this.handleCategoryMenu(ctx);
+        return;
+      }
+
+      if (!data.startsWith("category_")) return;
+
+      const categoryId = parseInt(data.split("_")[1]);
+      await this.handleCategorySelection(ctx, categoryId);
+      await ctx.answerCbQuery();
+    });
+
+    this.bot.command("status", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets.");
+        return;
+      }
+
+      const category = await storage.getCategory(activeTicket.categoryId);
+      await ctx.reply(
+        `Your active ticket:\n\n` +
+        `Category: *${category?.name || "Unknown"}*\n` +
+        `Status: *${activeTicket.status}*\n` +
+        `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
+        { parse_mode: "Markdown" }
+      );
+    });
+
+    this.bot.command("close", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      if (!this.checkRateLimit(userId, 'command', 'close')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("You haven't created any tickets yet.");
+        return;
+      }
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("You don't have any active tickets to close.");
+        return;
+      }
+
       try {
-        const userId = ctx.from?.id;
-        if (!userId) return;
-
-        // Check message rate limit
-        if (!this.checkRateLimit(userId, 'message')) {
-          await ctx.reply("⚠️ You're sending messages too quickly. Please wait a moment before sending more.");
+        const category = await storage.getCategory(activeTicket.categoryId);
+        if (!category?.transcriptCategoryId) {
+          await ctx.reply(
+            "❌ Cannot close ticket: No transcript category set for this service. " +
+            "Please contact an administrator."
+          );
           return;
         }
 
-        // Handle photos (forward to active ticket)
-        const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) {
-          await ctx.reply("❌ You don't have an account. Please use /menu to get started.");
-          return;
-        }
+        await storage.updateTicketStatus(activeTicket.id, "closed");
 
-        const ticket = await storage.getActiveTicketByUserId(user.id);
-        if (!ticket) {
-          await ctx.reply("❌ You don't have an active ticket. Please use /menu to create one.");
-          return;
+        if (activeTicket.discordChannelId) {
+          try {
+            await this.bridge.moveToTranscripts(activeTicket.id);
+            await ctx.reply(
+              "✅ Your ticket has been closed and moved to transcripts.\n" +
+              "Use /start to create a new ticket if needed."
+            );
+          } catch (error) {
+            console.error("Error moving to transcripts:", error);
+            await ctx.reply(
+              "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
+              "An administrator will handle this. You can use /start to create a new ticket if needed."
+            );
+          }
+        } else {
+          await ctx.reply(
+            "✅ Your ticket has been closed.\n" +
+            "Use /start to create a new ticket if needed."
+          );
         }
-
-        // Forward the photo to the active ticket
-        await this.handleTicketMessage(ctx, user, ticket);
       } catch (error) {
-        log(`Error handling photo: ${error}`, "error");
-        await ctx.reply("❌ There was an error processing your photo. Please try again.");
+        console.error("Error closing ticket:", error);
+        await ctx.reply(
+          "❌ There was an error closing your ticket. Please try again or contact an administrator."
+        );
       }
     });
 
-    // Generic error handler
-    this.bot.catch((err, ctx) => {
-      const userId = ctx?.from?.id;
-      const update = ctx?.update;
-      log(`Bot error: ${err}\nContext: ${JSON.stringify({ userId, update })}`, "error");
+    this.bot.on("text", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      if (!this.checkRateLimit(userId, 'message')) {
+        await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
+        return;
+      }
+
+      const state = this.userStates.get(userId);
+      console.log(`Received message from user ${userId}. Current state:`, state);
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (activeTicket) {
+          await this.handleTicketMessage(ctx, user, activeTicket);
+          return;
+        }
+      }
+
+      if (state) {
+        await this.handleQuestionnaireResponse(ctx, state);
+      }
     });
 
-    return Promise.resolve();
+    this.bot.on("photo", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      if (!this.checkRateLimit(userId, 'message')) {
+        await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
+        return;
+      }
+
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) return;
+
+      const activeTicket = await storage.getActiveTicketByUserId(user.id);
+      if (!activeTicket) {
+        await ctx.reply("Please start a ticket first before sending photos.");
+        return;
+      }
+
+      try {
+        const photos = ctx.message.photo;
+        const bestPhoto = photos[photos.length - 1]; // Get highest quality photo
+        const file = await ctx.telegram.getFile(bestPhoto.file_id);
+
+        await storage.createMessage({
+          ticketId: activeTicket.id,
+          content: ctx.message.caption || "Image sent",
+          authorId: user.id,
+          platform: "telegram",
+          timestamp: new Date()
+        });
+
+        // Get avatar URL if possible
+        let avatarUrl: string | undefined;
+        try {
+          const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+          if (photos && photos.total_count > 0) {
+            const fileId = photos.photos[0][0].file_id;
+            const file = await ctx.telegram.getFile(fileId);
+            if (file?.file_path) {
+              avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+            }
+          }
+        } catch (error) {
+          log(`Error getting Telegram user avatar: ${error}`, "error");
+        }
+
+        // Get user's first and last name
+        const firstName = ctx.from?.first_name || "";
+        const lastName = ctx.from?.last_name || "";
+        const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
+
+        // Send caption if exists
+        if (ctx.message.caption) {
+          await this.bridge.forwardToDiscord(
+            ctx.message.caption,
+            activeTicket.id,
+            displayName,
+            avatarUrl,
+            undefined,
+            firstName,
+            lastName
+          );
+        }
+
+        // Forward the photo using the file_id
+        await this.bridge.forwardToDiscord(
+          "",
+          activeTicket.id,
+          displayName,
+          avatarUrl,
+          bestPhoto.file_id, // Pass the file_id directly
+          firstName,
+          lastName
+        );
+
+        log(`Successfully forwarded photo from Telegram to Discord for ticket ${activeTicket.id}`);
+      } catch (error) {
+        log(`Error handling photo message: ${error}`, "error");
+        await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
+      }
+    });
   }
+
+  private async handleQuestionnaireResponse(ctx: Context, state: UserState) {
+    const category = await storage.getCategory(state.categoryId);
+    if (!category) {
+      console.error(`Category ${state.categoryId} not found`);
+      return;
+    }
+
+    const userId = ctx.from?.id;
+    if (!userId || !ctx.message || !('text' in ctx.message)) return;
+
+    console.log(`Processing question ${state.currentQuestion + 1}/${category.questions.length}`);
+
+    // Store the answer
+    state.answers.push(ctx.message.text);
+
+    // Check if we have more questions
+    if (state.currentQuestion < category.questions.length - 1) {
+      // Move to next question
+      state.currentQuestion++;
+
+      // Update state before sending next question
+      this.setState(userId, {
+        ...state,
+        currentQuestion: state.currentQuestion,
+        inQuestionnaire: true
+      });
+
+      // Add shorter delay before next question
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Send next question
+      await ctx.reply(category.questions[state.currentQuestion]);
+    } else {
+      try {
+        // Create ticket with raw answers
+        await this.createTicket(ctx);
+      } catch (error) {
+        log(`Error creating ticket: ${error}`, "error");
+        await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
+
+        // Clean up state on error
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+      }
+    }
+  }
+
+  private async createTicket(ctx: Context) {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const state = this.userStates.get(userId);
+    if (!state) {
+      await ctx.reply("❌ Something went wrong. Please try /start to begin again.");
+      return;
+    }
+
+    try {
+      // Create or get user
+      let user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        user = await storage.createUser({
+          username: ctx.from.username || "Unknown",
+          telegramId: userId.toString(),
+          telegramUsername: ctx.from.username,
+          telegramName: ctx.from.first_name,
+          discordId: null,
+          isBanned: false
+        });
+      }
+
+      // Create ticket with raw answers
+      const ticket = await storage.createTicket({
+        userId: user.id,
+        categoryId: state.categoryId,
+        status: "open",
+        discordChannelId: null,
+        claimedBy: null,
+        amount: null,
+        answers: state.answers,
+        completedAt: null
+      });
+
+      try {
+        // Create Discord channel first
+        await this.bridge.createTicketChannel(ticket);
+        await ctx.reply("✅ Ticket created! A staff member will be with you shortly. You can continue chatting here, and your messages will be forwarded to our team.");
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        if (errorMessage.includes('maximum channel limit')) {
+          await ctx.reply(
+            "❌ Sorry, our support channels are currently at maximum capacity.\n" +
+            "Your ticket has been created but is in a pending state."
+          );
+        } else {
+          await ctx.reply(
+            "❌ There was an error creating your Discord channel. Please try again or contact an administrator."
+          );
+          log(`Failed to create Discord channel for ticket ${ticket.id}: ${errorMessage}`, "error");
+        }
+      } finally {
+        // Clean up state after ticket creation (success or failure)
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+      }
+    } catch (error) {
+      log(`Error creating ticket: ${error}`, "error");
+      await ctx.reply("❌ There was an error creating your ticket. Please try /start to begin again.");
+
+      // Clean up state on error
+      this.userStates.delete(userId);
+      this.stateCleanups.delete(userId);
+      this.activeUsers.delete(userId);
+    }
+  }
+
+  private async handleCategorySelection(ctx: Context, categoryId: number) {
+    try {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      if (!this.checkRateLimit(userId, 'command', 'category')) {
+        await ctx.reply("⚠️ Please wait before selecting another category.");
+        return;
+      }
+
+      const category = await storage.getCategory(categoryId);
+      if (!category) {
+        await ctx.reply("❌ Category not found.");
+        return;
+      }
+
+      // Display service image and summary if available
+      if (category.serviceImageUrl) {
+        try {
+          await ctx.replyWithPhoto(
+            category.serviceImageUrl,
+            {
+              caption: category.serviceSummary ? escapeMarkdown(category.serviceSummary) : undefined,
+              parse_mode: "MarkdownV2"
+            }
+          );
+        } catch (error) {
+          log(`Error sending service image: ${error}`, "error");
+          // If image fails, still show the summary as text
+          if (category.serviceSummary) {
+            await ctx.reply(escapeMarkdown(category.serviceSummary), {
+              parse_mode: "MarkdownV2"
+            });
+          }
+        }
+      } else if (category.serviceSummary) {
+        // If no image but has summary, show summary as text
+        await ctx.reply(escapeMarkdown(category.serviceSummary), {
+          parse_mode: "MarkdownV2"
+        });
+      }
+
+      // Get the questions for this category
+      const questions = category.questions || [];
+      if (questions.length === 0) {
+        await ctx.reply("❌ No questions configured for this category.");
+        return;
+      }
+
+      // Initialize questionnaire state
+      const state: UserState = {
+        categoryId,
+        currentQuestion: 0,
+        answers: [],
+        inQuestionnaire: true,
+        rateLimits: {
+          commands: new Map(),
+          messages: { timestamp: 0, count: 0 },
+          bucket: {
+            tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
+            lastRefill: Date.now()
+          }
+        }
+      };
+      this.setState(userId, state);
+
+      // Ask first question
+      await ctx.reply(escapeMarkdown(questions[0]), {
+        parse_mode: "MarkdownV2"
+      });
+
+    } catch (error) {
+      log(`Error in handleCategorySelection: ${error}`, "error");
+      await ctx.reply("❌ There was an error processing your selection. Please try again.");
+    }
+  }
+
+  private async handleSubmenuClick(ctx: Context, submenuId: number) {
+    try {
+      const submenu = await storage.getCategory(submenuId);
+      if (!submenu) {
+        await ctx.reply("❌ Submenu not found.");
+        return;
+      }
+
+      const categories = await storage.getCategories();
+      const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
+
+      const keyboard: { text: string; callback_data: string; }[][] = [];
+      let currentRow: { text: string; callback_data: string; }[] = [];
+
+      for (const category of submenuCategories) {
+        const button = {
+          text: category.isClosed ? `🔴 ${category.name}` : category.name,
+          callback_data: `category_${category.id}`
+        };
+
+        if (category.newRow && currentRow.length > 0) {
+          keyboard.push([...currentRow]);
+          currentRow = [button];
+        } else {
+          currentRow.push(button);
+          if (currentRow.length >= 2) {
+            keyboard.push([...currentRow]);
+            currentRow = [];
+          }
+        }
+      }
+
+      if (currentRow.length > 0) {
+        keyboard.push(currentRow);
+      }
+
+      // Add a "Back" button
+      keyboard.push([{
+        text: "↩️ Back",
+        callback_data: "back_to_main"
+      }]);
+
+      const message = `Please select a service from ${submenu.name}:`;
+
+      try {
+        await ctx.editMessageText(escapeMarkdown(message), {
+          parse_mode: "MarkdownV2",
+          reply_markup: { inline_keyboard: keyboard }
+        });
+      } catch (error) {
+        // If editing fails, send a new message
+        if (error.message?.includes("message can't be edited")) {
+          await ctx.reply(escapeMarkdown(message), {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        } else {
+          throw error; // Re-throw other errors
+        }
+      }
+
+      log(`Successfully displayed submenu options for submenu ${submenuId}`);
+    } catch (error) {
+      log(`Error in handleSubmenuClick: ${error}`, "error");
+      await ctx.reply("❌ There was an error displaying the menu. Please try again.");
+    }
+  }
+
+  private async checkCommandCooldown(userId: number, command: string): Promise<boolean> {
+    const state = this.userStates.get(userId);
+    if (!state) return true;
+    return this.checkRateLimit(userId, 'command', command);
+  }
+
+  private async checkMessageRateLimit(userId: number): Promise<boolean> {
+    const state = this.userStates.get(userId);
+    if (!state) return true;
+    return this.checkRateLimit(userId, 'message');
+  }
+
+}
+
+if (!process.env.TELEGRAM_BOT_TOKEN) {
+  throw new Error("TELEGRAM_BOT_TOKEN is required");
 }
