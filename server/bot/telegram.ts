@@ -1121,11 +1121,44 @@ export class TelegramBot {
         return;
       }
 
-      // Get bot config for welcome message
-      const config = await storage.getBotConfig();
-      const welcomeMessage = config?.welcomeMessage || "Welcome to our support system! Use /menu to get started.";
+      try {
+        // Check for existing active ticket first
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (user) {
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          if (activeTicket) {
+            const category = await storage.getCategory(activeTicket.categoryId);
+            const categoryName = escapeMarkdown(category?.name || "Unknown");
+            await ctx.reply(
+              `❌ You already have an active ticket in *${categoryName}* category.\n\n` +
+              "You cannot create a new ticket while you have an active one.\n" +
+              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.",
+              { parse_mode: "MarkdownV2" }
+            );
+            return;
+          }
+        }
 
-      await ctx.reply(welcomeMessage);
+        const state = this.userStates.get(userId);
+        if (state?.inQuestionnaire) {
+          await ctx.reply(
+            "❌ You are currently answering questions for a ticket.\nUse /cancel to cancel the current process first."
+          );
+          return;
+        }
+
+        // Get bot config for welcome message
+        const config = await storage.getBotConfig();
+        const welcomeMessage = config?.welcomeMessage || "Welcome to our support system! Use /menu to get started.";
+
+        await ctx.reply(welcomeMessage);
+        
+        // Show category menu right after welcome message
+        await this.handleCategoryMenu(ctx);
+      } catch (error) {
+        log(`Error in start command: ${error}`, "error");
+        await ctx.reply("❌ There was an error processing your request. Please try again in a moment.");
+      }
     });
 
     this.bot.command("menu", this.handleCategoryMenu.bind(this));
