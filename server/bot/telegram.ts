@@ -74,17 +74,29 @@ const MAX_INACTIVE_STATES = 1000; // Maximum number of stored states
 
 function escapeMarkdown(text: string): string {
   if (!text) return '';
-  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
   
-  let escaped = text;
-  // Properly escape characters - the issue was the incorrect regex pattern
-  for (const char of specialChars) {
-    // Create a global regex that matches the character literally
-    const regex = new RegExp(escapeRegExp(char), 'g');
-    escaped = escaped.replace(regex, '\\' + char);
-  }
-  
-  return escaped;
+  // Use Telegram's documented list of characters that need escaping in MarkdownV2
+  // https://core.telegram.org/bots/api#markdownv2-style
+  return text
+    .replace(/\\/g, '\\\\') // Must be first to avoid double escaping
+    .replace(/_/g, '\\_')
+    .replace(/\*/g, '\\*')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/~/g, '\\~')
+    .replace(/`/g, '\\`')
+    .replace(/>/g, '\\>')
+    .replace(/\#/g, '\\#')
+    .replace(/\+/g, '\\+')
+    .replace(/\-/g, '\\-')
+    .replace(/=/g, '\\=')
+    .replace(/\|/g, '\\|')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}')
+    .replace(/\./g, '\\.')
+    .replace(/!/g, '\\!');
 }
 
 // Helper function to escape special characters in regex
@@ -1151,6 +1163,7 @@ export class TelegramBot {
         const config = await storage.getBotConfig();
         const welcomeMessage = config?.welcomeMessage || "Welcome to our support system! Use /menu to get started.";
 
+        // Don't use MarkdownV2 for welcome message to avoid escaping issues
         await ctx.reply(welcomeMessage);
         
         // Show category menu right after welcome message
@@ -1199,9 +1212,10 @@ export class TelegramBot {
                            ticket.status === "pending" ? "🟡" : "⚪";
         
         ticketInfo += `*Ticket #${ticket.id}*\n`;
-        ticketInfo += `*Category:* ${escapeMarkdown(categoryName)}\n`;
-        ticketInfo += `*Status:* ${statusEmoji} ${escapeMarkdown(ticket.status)}\n`;
-        ticketInfo += `*Created:* ${escapeMarkdown(ticket.createdAt.toDateString())}\n\n`;
+        ticketInfo += `*Category:* ${categoryName}\n`;
+        ticketInfo += `*Status:* ${statusEmoji} ${ticket.status}\n`;
+        // Don't include date with dots in the string that will be escaped later
+        ticketInfo += `*Created:* ${ticket.createdAt ? new Date(ticket.createdAt).toISOString().split('T')[0] : 'Unknown'}\n\n`;
       }
 
       await ctx.reply(escapeMarkdown(ticketInfo), {
