@@ -73,24 +73,54 @@ const USER_STATE_CLEANUP_INTERVAL = 300000; // 5 minutes
 const USER_INACTIVE_TIMEOUT = 3600000; // 1 hour
 const MAX_INACTIVE_STATES = 1000; // Maximum number of stored states
 
-function escapeMarkdown(text: string): string {
-  if (!text) return '';
-  
-  // Characters that need to be escaped in MarkdownV2
-  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-  
-  try {
-    // First try a simple approach for pure text
-    return simpleEscape(text, specialChars);
-  } catch (error) {
-    // Fallback to non-markdown if any errors occur
-    console.warn(`Error escaping markdown: ${error}. Using plain text fallback.`);
-    return removeMarkdown(text);
-  }
-}
+//Original simpleEscape function has been replaced with enhanced version
+
+// Thread-safe markdown escaping function with caching
+const markdownCache = new Map<string, string>();
+const MAX_CACHE_SIZE = 1000; // Maximum number of cached entries
+const DEFAULT_SPECIAL_CHARS = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
 
 // Simpler and more robust function to escape markdown
-function simpleEscape(text: string, specialChars: string[]): string {
+function simpleEscape(text: string, specialChars: string[] = DEFAULT_SPECIAL_CHARS): string {
+  if (!text) return '';
+  
+  // For empty or very short strings, don't use cache
+  if (text.length < 5) {
+    return escapeWithoutCache(text, specialChars);
+  }
+  
+  // Create a cache key that includes the text and special chars
+  const cacheKey = `${text}|${specialChars.join('')}`;
+  
+  // Check if we have this in cache already
+  if (markdownCache.has(cacheKey)) {
+    return markdownCache.get(cacheKey)!;
+  }
+  
+  // Not in cache, do the escaping
+  const result = escapeWithoutCache(text, specialChars);
+  
+  // Cache the result if cache isn't too big
+  if (markdownCache.size < MAX_CACHE_SIZE) {
+    markdownCache.set(cacheKey, result);
+  } else {
+    // If cache is full, clear 20% of it (the oldest entries)
+    const entriesToDelete = Math.floor(MAX_CACHE_SIZE * 0.2);
+    let count = 0;
+    for (const key of markdownCache.keys()) {
+      markdownCache.delete(key);
+      count++;
+      if (count >= entriesToDelete) break;
+    }
+    // Now add the new entry
+    markdownCache.set(cacheKey, result);
+  }
+  
+  return result;
+}
+
+// The actual escaping logic
+function escapeWithoutCache(text: string, specialChars: string[]): string {
   let result = '';
   
   // Process character by character
@@ -110,13 +140,21 @@ function simpleEscape(text: string, specialChars: string[]): string {
 
 // Remove markdown to create plain text as a fallback
 function removeMarkdown(text: string): string {
-  return text.replace(/\*\*/g, '')
-             .replace(/\*/g, '')
-             .replace(/__/g, '')
-             .replace(/_/g, '')
-             .replace(/```/g, '')
-             .replace(/`/g, '')
-             .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  if (!text) return '';
+  
+  try {
+    return text.replace(/\*\*/g, '')
+               .replace(/\*/g, '')
+               .replace(/__/g, '')
+               .replace(/_/g, '')
+               .replace(/```/g, '')
+               .replace(/`/g, '')
+               .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  } catch (error) {
+    // If any error occurs, return the original text
+    console.warn(`Error removing markdown: ${error}`);
+    return text;
+  }
 }
 
 export class TelegramBot {
@@ -576,7 +614,7 @@ export class TelegramBot {
         throw new Error("Bot not initialized");
       }
 
-      await this.bot.telegram.sendMessage(chatId, escapeMarkdown(text), {
+      await this.bot.telegram.sendMessage(chatId, simpleEscape(text), {
         parse_mode: "MarkdownV2"
       });
     } catch (error) {
@@ -599,19 +637,19 @@ export class TelegramBot {
         const response = await fetch(photo);
         const buffer = await response.buffer();
         sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: buffer }, {
-          caption: caption ? escapeMarkdown(caption) : undefined,
+          caption: caption ? simpleEscape(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       } else if (photo instanceof Buffer) {
         // Handle buffer by using InputFile format
         sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: photo }, {
-          caption: caption ? escapeMarkdown(caption) : undefined,
+          caption: caption ? simpleEscape(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       } else {
         // Handle file_id string
         sentMessage = await this.bot.telegram.sendPhoto(chatId, photo, {
-          caption: caption ? escapeMarkdown(caption) : undefined,
+          caption: caption ? simpleEscape(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       }
@@ -638,7 +676,7 @@ export class TelegramBot {
       }
 
       await this.bot.telegram.sendPhoto(chatId, fileId, {
-        caption: caption ? escapeMarkdown(caption) : undefined,
+        caption: caption ? simpleEscape(caption) : undefined,
         parse_mode: "MarkdownV2"
       });
 
@@ -797,7 +835,7 @@ export class TelegramBot {
         keyboard.push(currentRow);
       }
 
-      // Use simple escapeMarkdown to avoid Markdown parsing errors
+      // Use simple simpleEscape to avoid Markdown parsing errors
       const welcomeMessage = simpleEscape(botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:", ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']);
 
       try {
@@ -866,7 +904,7 @@ export class TelegramBot {
           await ctx.replyWithPhoto(
             category.serviceImageUrl,
             {
-              caption: category.serviceSummary ? escapeMarkdown(category.serviceSummary) : undefined,
+              caption: category.serviceSummary ? simpleEscape(category.serviceSummary) : undefined,
               parse_mode: "MarkdownV2"
             }
           );
@@ -874,14 +912,14 @@ export class TelegramBot {
           log(`Error sending service image: ${error}`, "error");
           // If image fails, still show the summary as text
           if (category.serviceSummary) {
-            await ctx.reply(escapeMarkdown(category.serviceSummary), {
+            await ctx.reply(simpleEscape(category.serviceSummary), {
               parse_mode: "MarkdownV2"
             });
           }
         }
       } else if (category.serviceSummary) {
         // If no image but has summary, show summary as text
-        await ctx.reply(escapeMarkdown(category.serviceSummary), {
+        await ctx.reply(simpleEscape(category.serviceSummary), {
           parse_mode: "MarkdownV2"
         });
       }
@@ -911,7 +949,7 @@ export class TelegramBot {
       this.setState(userId, state);
 
       // Ask first question
-      await ctx.reply(escapeMarkdown(questions[0]), {
+      await ctx.reply(simpleEscape(questions[0]), {
         parse_mode: "MarkdownV2"
       });
 
@@ -966,14 +1004,14 @@ export class TelegramBot {
       const message = `Please select a service from ${submenu.name}:`;
 
       try {
-        await ctx.editMessageText(escapeMarkdown(message), {
+        await ctx.editMessageText(simpleEscape(message), {
           parse_mode: "MarkdownV2",
           reply_markup: { inline_keyboard: keyboard }
         });
       } catch (error) {
         // If editing fails, send a new message
         if (error.message?.includes("message can't be edited")) {
-          await ctx.reply(escapeMarkdown(message), {
+          await ctx.reply(simpleEscape(message), {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
@@ -1047,7 +1085,7 @@ export class TelegramBot {
           const activeTicket = await storage.getActiveTicketByUserId(user.id);
           if (activeTicket) {
             const category = await storage.getCategory(activeTicket.categoryId);
-            const categoryName = escapeMarkdown(category?.name || "Unknown");
+            const categoryName = simpleEscape(category?.name || "Unknown");
             await ctx.reply(
               `❌ You already have an active ticket in *${categoryName}* category.\n\n` +
               "You cannot create a new ticket while you have an active one.\n" +
@@ -1453,82 +1491,6 @@ export class TelegramBot {
     }
   }
 
-  private async handleCategorySelection(ctx: Context, categoryId: number) {
-    try {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      if (!this.checkRateLimit(userId, 'command', 'category')) {
-        await ctx.reply("⚠️ Please wait before selecting another category.");
-        return;
-      }
-
-      const category = await storage.getCategory(categoryId);
-      if (!category) {
-        await ctx.reply("❌ Category not found.");
-        return;
-      }
-
-      // Display service image and summary if available
-      if (category.serviceImageUrl) {
-        try {
-          await ctx.replyWithPhoto(
-            category.serviceImageUrl,
-            {
-              caption: category.serviceSummary ? escapeMarkdown(category.serviceSummary) : undefined,
-              parse_mode: "MarkdownV2"
-            }
-          );
-        } catch (error) {
-          log(`Error sending service image: ${error}`, "error");
-          // If image fails, still show the summary as text
-          if (category.serviceSummary) {
-            await ctx.reply(escapeMarkdown(category.serviceSummary), {
-              parse_mode: "MarkdownV2"
-            });
-          }
-        }
-      } else if (category.serviceSummary) {
-        // If no image but has summary, show summary as text
-        await ctx.reply(escapeMarkdown(category.serviceSummary), {
-          parse_mode: "MarkdownV2"
-        });
-      }
-
-      // Get the questions for this category
-      const questions = category.questions || [];
-      if (questions.length === 0) {
-        await ctx.reply("❌ No questions configured for this category.");
-        return;
-      }
-
-      // Initialize questionnaire state
-      const state: UserState = {
-        categoryId,
-        currentQuestion: 0,
-        answers: [],
-        inQuestionnaire: true,
-        rateLimits: {
-          commands: new Map(),
-          messages: { timestamp: 0, count: 0 },
-          bucket: {
-            tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
-            lastRefill: Date.now()
-          }
-        }
-      };
-      this.setState(userId, state);
-
-      // Ask first question
-      await ctx.reply(escapeMarkdown(questions[0]), {
-        parse_mode: "MarkdownV2"
-      });
-
-    } catch (error) {
-      log(`Error in handleCategorySelection: ${error}`, "error");
-      await ctx.reply("❌ There was an error processing your selection. Please try again.");
-    }
-  }
 
   private async handleSubmenuClick(ctx: Context, submenuId: number) {
     try {
@@ -1575,14 +1537,14 @@ export class TelegramBot {
       const message = `Please select a service from ${submenu.name}:`;
 
       try {
-        await ctx.editMessageText(escapeMarkdown(message), {
+        await ctx.editMessageText(simpleEscape(message), {
           parse_mode: "MarkdownV2",
           reply_markup: { inline_keyboard: keyboard }
         });
       } catch (error) {
         // If editing fails, send a new message
         if (error.message?.includes("message can't be edited")) {
-          await ctx.reply(escapeMarkdown(message), {
+          await ctx.reply(simpleEscape(message), {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
