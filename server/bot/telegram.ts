@@ -75,7 +75,11 @@ const MAX_INACTIVE_STATES = 1000; // Maximum number of stored states
 
 function escapeMarkdown(text: string): string {
   if (!text) return '';
-  const specialChars = ['[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+  
+  // Characters that need to be escaped in MarkdownV2
+  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+  
+  // Pre-defined format patterns to preserve during escaping
   const formatPatterns = [
     { start: '**', end: '**', marker: '*' },
     { start: '__', end: '__', marker: '_' },
@@ -83,21 +87,37 @@ function escapeMarkdown(text: string): string {
     { start: '`', end: '`', marker: '`' }
   ];
 
+  // Check if text has specific formatting patterns
   for (const pattern of formatPatterns) {
     if (text.startsWith(pattern.start) && text.endsWith(pattern.end)) {
       const content = text.slice(pattern.start.length, -pattern.end.length);
-      let escaped = content;
-      for (const char of specialChars) {
-        escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+      
+      // Escape all special characters within the content
+      let escaped = '';
+      for (let i = 0; i < content.length; i++) {
+        const char = content[i];
+        if (specialChars.includes(char)) {
+          escaped += '\\' + char;
+        } else {
+          escaped += char;
+        }
       }
+      
       return `${pattern.marker}${escaped}${pattern.marker}`;
     }
   }
 
-  let escaped = text;
-  for (const char of [...specialChars, '*', '_', '`']) {
-    escaped = escaped.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+  // If no special formatting, escape all special characters
+  let escaped = '';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (specialChars.includes(char)) {
+      escaped += '\\' + char;
+    } else {
+      escaped += char;
+    }
   }
+  
   return escaped;
 }
 
@@ -784,10 +804,19 @@ export class TelegramBot {
       try {
         // Try to edit existing message if this was triggered by a callback
         if (ctx.callbackQuery) {
-          await ctx.editMessageText(welcomeMessage, {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
+          try {
+            await ctx.editMessageText(welcomeMessage, {
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            });
+          } catch (error) {
+            // If we can't edit the message (e.g., too old or not sent by bot), send a new one
+            log(`Error editing welcome message: ${error}`, "warn");
+            await ctx.reply(welcomeMessage, {
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            });
+          }
         } else {
           // Otherwise send a new message
           await ctx.reply(welcomeMessage, {
