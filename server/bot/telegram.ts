@@ -79,46 +79,44 @@ function escapeMarkdown(text: string): string {
   // Characters that need to be escaped in MarkdownV2
   const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
   
-  // Pre-defined format patterns to preserve during escaping
-  const formatPatterns = [
-    { start: '**', end: '**', marker: '*' },
-    { start: '__', end: '__', marker: '_' },
-    { start: '```', end: '```', marker: '`' },
-    { start: '`', end: '`', marker: '`' }
-  ];
-
-  // Check if text has specific formatting patterns
-  for (const pattern of formatPatterns) {
-    if (text.startsWith(pattern.start) && text.endsWith(pattern.end)) {
-      const content = text.slice(pattern.start.length, -pattern.end.length);
-      
-      // Escape all special characters within the content
-      let escaped = '';
-      for (let i = 0; i < content.length; i++) {
-        const char = content[i];
-        if (specialChars.includes(char)) {
-          escaped += '\\' + char;
-        } else {
-          escaped += char;
-        }
-      }
-      
-      return `${pattern.marker}${escaped}${pattern.marker}`;
-    }
+  try {
+    // First try a simple approach for pure text
+    return simpleEscape(text, specialChars);
+  } catch (error) {
+    // Fallback to non-markdown if any errors occur
+    console.warn(`Error escaping markdown: ${error}. Using plain text fallback.`);
+    return removeMarkdown(text);
   }
+}
 
-  // If no special formatting, escape all special characters
-  let escaped = '';
+// Simpler and more robust function to escape markdown
+function simpleEscape(text: string, specialChars: string[]): string {
+  let result = '';
+  
+  // Process character by character
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
+    
+    // Escape special characters
     if (specialChars.includes(char)) {
-      escaped += '\\' + char;
+      result += '\\' + char;
     } else {
-      escaped += char;
+      result += char;
     }
   }
   
-  return escaped;
+  return result;
+}
+
+// Remove markdown to create plain text as a fallback
+function removeMarkdown(text: string): string {
+  return text.replace(/\*\*/g, '')
+             .replace(/\*/g, '')
+             .replace(/__/g, '')
+             .replace(/_/g, '')
+             .replace(/```/g, '')
+             .replace(/`/g, '')
+             .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
 }
 
 export class TelegramBot {
@@ -799,7 +797,8 @@ export class TelegramBot {
         keyboard.push(currentRow);
       }
 
-      const welcomeMessage = escapeMarkdown(botConfig?.welcomeMessage || "**Welcome to the support bot!** Please select a service:");
+      // Use simple escapeMarkdown to avoid Markdown parsing errors
+      const welcomeMessage = simpleEscape(botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:", ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']);
 
       try {
         // Try to edit existing message if this was triggered by a callback
