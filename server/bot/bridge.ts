@@ -73,7 +73,8 @@ export class BridgeManager {
         this.imageCache.delete(key);
         if (entry.buffer) {
           deletedSize += entry.buffer.length;
-          this.currentImageCacheSize -= entry.buffer.length;
+          // Avoid potential negative values in case of race conditions
+          this.currentImageCacheSize = Math.max(0, this.currentImageCacheSize - entry.buffer.length);
         }
       }
     }
@@ -88,7 +89,8 @@ export class BridgeManager {
         this.imageCache.delete(key);
         if (entry.buffer) {
           deletedSize += entry.buffer.length;
-          this.currentImageCacheSize -= entry.buffer.length;
+          // Avoid potential negative values in case of race conditions
+          this.currentImageCacheSize = Math.max(0, this.currentImageCacheSize - entry.buffer.length);
         }
       }
     }
@@ -127,7 +129,8 @@ export class BridgeManager {
 
     if (Date.now() - entry.timestamp > this.imageCacheTTL) {
       if (entry.buffer) {
-        this.currentImageCacheSize -= entry.buffer.length;
+        // Avoid potential negative values in case of race conditions
+        this.currentImageCacheSize = Math.max(0, this.currentImageCacheSize - entry.buffer.length);
       }
       this.imageCache.delete(key);
       return undefined;
