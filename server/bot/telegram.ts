@@ -1085,11 +1085,17 @@ export class TelegramBot {
           const activeTicket = await storage.getActiveTicketByUserId(user.id);
           if (activeTicket) {
             const category = await storage.getCategory(activeTicket.categoryId);
-            const categoryName = simpleEscape(category?.name || "Unknown");
+            const categoryName = category?.name || "Unknown";
+            // Create a completely escaped message
+            const escapedMessage = simpleEscape(
+              `You already have an active ticket in the "${categoryName}" category.
+
+You cannot create a new ticket while you have an active one.
+Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.`
+            );
+            
             await ctx.reply(
-              `❌ You already have an active ticket in *${categoryName}* category.\n\n` +
-              "You cannot create a new ticket while you have an active one.\n" +
-              "Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.",
+              `❌ ${escapedMessage}`,
               { parse_mode: "MarkdownV2" }
             );
             return;
@@ -1194,13 +1200,21 @@ export class TelegramBot {
       }
 
       const category = await storage.getCategory(activeTicket.categoryId);
-      await ctx.reply(
-        `Your active ticket:\n\n` +
-        `Category: *${category?.name || "Unknown"}*\n` +
-        `Status: *${activeTicket.status}*\n` +
-        `Created: *${new Date(activeTicket.createdAt || Date.now()).toLocaleString()}*`,
-        { parse_mode: "Markdown" }
+      
+      // Using simpleEscape for Markdown formatting
+      const categoryName = category?.name || "Unknown";
+      const statusText = activeTicket.status;
+      const createdDate = new Date(activeTicket.createdAt || Date.now()).toLocaleString();
+      
+      const escapedMessage = simpleEscape(
+        `Your active ticket:
+
+Category: ${categoryName}
+Status: ${statusText}
+Created: ${createdDate}`
       );
+      
+      await ctx.reply(escapedMessage, { parse_mode: "MarkdownV2" });
     });
 
     this.bot.command("close", async (ctx) => {
