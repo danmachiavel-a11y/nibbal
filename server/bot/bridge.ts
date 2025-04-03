@@ -899,45 +899,117 @@ export class BridgeManager {
   }
 }
 
-async function uploadToImgbb(buffer: Buffer): Promise<string | null> {
-  try {
-    const formData = new URLSearchParams();
-    formData.append('image', buffer.toString('base64'));
-    formData.append('name', `telegram_photo_${Date.now()}`);
-    // Preserve image quality
-    formData.append('quality', '100');
-    // Don't auto-resize
-    formData.append('width', '0');
-    formData.append('height', '0');
-
-    const response = await fetch(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+async function uploadToImgbb(buffer: Buffer, retryCount: number = 3, delayMs: number = 1000): Promise<string | null> {
+  let lastError: Error | null = null;
+  const startTime = Date.now();
+  
+  for (let attempt = 1; attempt <= retryCount; attempt++) {
+    try {
+      // Log message for each attempt
+      if (attempt > 1) {
+        log(`ImgBB upload retry ${attempt}/${retryCount}...`, "warn");
       }
-    });
-
-    if (!response.ok) {
-      throw new BridgeError(`ImgBB API error: ${response.status}`, { context: "uploadToImgbb" });
+      
+      const formData = new URLSearchParams();
+      formData.append('image', buffer.toString('base64'));
+      formData.append('name', `bridge_upload_${Date.now()}`);
+      // Preserve image quality
+      formData.append('quality', '100');
+      // Don't auto-resize
+      formData.append('width', '0');
+      formData.append('height', '0');
+      
+      const apiKey = process.env.IMGBB_API_KEY;
+      if (!apiKey) {
+        throw new BridgeError('IMGBB_API_KEY is not defined', { context: "uploadToImgbb" });
+      }
+      
+      const url = `https://api.imgbb.com/1/upload?key=${apiKey}`;
+      
+      // Create request options
+      const requestOptions: RequestInit = {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        }
+      };
+      
+      // Set up an AbortController with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000) as unknown as number;
+      requestOptions.signal = controller.signal;
+      
+      // Make the request
+      const response = await fetch(url, requestOptions);
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        // If rate limited or server error, retry
+        if (response.status === 429 || response.status >= 500) {
+          throw new BridgeError(`ImgBB API error: ${response.status} ${response.statusText}`, 
+            { context: "uploadToImgbb", code: response.status.toString() });
+        }
+        
+        // For other error codes like 403, get the response body for more info
+        const errorBody = await response.text();
+        throw new BridgeError(`ImgBB API error: ${response.status} ${response.statusText} - ${errorBody}`, 
+          { context: "uploadToImgbb", code: response.status.toString() });
+      }
+      
+      const responseText = await response.text();
+      const data = JSON.parse(responseText);
+      
+      if (!data.success || !data.data?.url) {
+        throw new BridgeError('ImgBB upload failed: No URL returned', { context: "uploadToImgbb" });
+      }
+      
+      const elapsed = Date.now() - startTime;
+      
+      // Log detailed image information
+      log(`Successfully uploaded image to ImgBB in ${elapsed}ms (attempt ${attempt}/${retryCount}):
+      Original size: ${buffer.length} bytes
+      URL: ${data.data.url}
+      Display URL: ${data.data.display_url}
+      Size: ${data.data.size} bytes
+      Width: ${data.data.width}px
+      Height: ${data.data.height}px
+      Type: ${data.data.image.mime}`);
+      
+      // Use display_url which provides full resolution
+      return data.data.display_url || data.data.url;
+      
+    } catch (error) {
+      const bridgeError = error instanceof BridgeError ? error : new BridgeError(
+        error instanceof Error ? error.message : String(error),
+        { context: "uploadToImgbb" }
+      );
+      
+      lastError = bridgeError;
+      
+      // Handle different errors differently
+      const isRateLimit = bridgeError.code === '429' || bridgeError.message.includes('rate limit');
+      const isTimeout = bridgeError.message.includes('abort') || bridgeError.message.includes('timeout');
+      
+      handleBridgeError(bridgeError, `uploadToImgbb (attempt ${attempt}/${retryCount})`);
+      
+      // If this is the last attempt, don't wait
+      if (attempt < retryCount) {
+        // Use exponential backoff for rate limits
+        const waitTime = isRateLimit 
+          ? delayMs * Math.pow(2, attempt - 1) 
+          : isTimeout
+            ? delayMs * 2 // Longer delay for timeouts
+            : delayMs;
+        
+        log(`Waiting ${waitTime}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
     }
-
-    const data = await response.json();
-
-    // Log detailed image information
-    log(`Successfully uploaded image to ImgBB:
-    Original size: ${buffer.length} bytes
-    URL: ${data.data.url}
-    Display URL: ${data.data.display_url}
-    Size: ${data.data.size} bytes
-    Width: ${data.data.width}px
-    Height: ${data.data.height}px
-    Type: ${data.data.image.mime}`);
-
-    // Use display_url which provides full resolution
-    return data.data.display_url || data.data.url;
-  } catch (error) {
-    handleBridgeError(error as BridgeError, "uploadToImgbb");
-    return null;
   }
+  
+  // All attempts failed
+  const errorMessage = lastError ? lastError.message : 'Unknown error';
+  log(`All ${retryCount} ImgBB upload attempts failed: ${errorMessage}`, "error");
+  return null;
 }

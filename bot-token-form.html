@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Configuration</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #3a7bc8;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .info-panel {
+            background-color: #e8f4fd;
+            border: 1px solid #b8daff;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .warning-panel {
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .bot-status {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .status-item {
+            flex: 1;
+            padding: 15px;
+            border-radius: 4px;
+            margin-right: 10px;
+        }
+        .status-connected {
+            background-color: #dff0d8;
+            border: 1px solid #d6e9c6;
+        }
+        .status-disconnected {
+            background-color: #f2dede;
+            border: 1px solid #ebccd1;
+        }
+        h2 {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            margin-top: 30px;
+        }
+        code {
+            background-color: #f5f5f5;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Bot Configuration</h1>
+    
+    <div class="bot-status">
+        <div id="telegramStatus" class="status-item status-disconnected">
+            <h3>Telegram Bot</h3>
+            <p>Status: <span id="telegramStatusText">Checking...</span></p>
+        </div>
+        <div id="discordStatus" class="status-item status-disconnected">
+            <h3>Discord Bot</h3>
+            <p>Status: <span id="discordStatusText">Checking...</span></p>
+        </div>
+    </div>
+
+    <div id="currentConfig" style="margin-bottom: 20px; padding: 15px; background-color: #f5f5f5; border-radius: 4px;">
+        <h3>Current Configuration</h3>
+        <div id="currentConfigContent">Loading...</div>
+    </div>
+    
+    <div class="info-panel">
+        <h3>Bot Setup Instructions</h3>
+        <h4>Telegram Bot Setup:</h4>
+        <ol>
+            <li>Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a> on Telegram</li>
+            <li>Send the command <code>/newbot</code> and follow the instructions</li>
+            <li>Once created, BotFather will provide a token that looks like <code>123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ</code></li>
+            <li>Paste this token in the "Telegram Bot Token" field below</li>
+        </ol>
+        
+        <h4>Discord Bot Setup:</h4>
+        <ol>
+            <li>Go to the <a href="https://discord.com/developers/applications" target="_blank">Discord Developer Portal</a></li>
+            <li>Click "New Application" and give your bot a name</li>
+            <li>Go to the "Bot" tab and click "Add Bot"</li>
+            <li>Under the "TOKEN" section, click "Reset Token" and then "Copy"</li>
+            <li>Enable "Message Content Intent" under Privileged Gateway Intents</li>
+            <li>Paste the token in the "Discord Bot Token" field below</li>
+            <li>Go to the "OAuth2" tab, then "URL Generator"</li>
+            <li>Select "bot" scope and the following permissions: "Manage Channels", "Manage Webhooks", "Read Messages/View Channels", "Send Messages", "Manage Messages", "Embed Links", "Attach Files", "Read Message History", "Mention Everyone", "Use External Emojis"</li>
+            <li>Copy the generated URL and open it in a new tab to invite the bot to your server</li>
+        </ol>
+    </div>
+    
+    <div class="warning-panel">
+        <h3>⚠️ Important Notes</h3>
+        <ul>
+            <li>After updating tokens, the bots will automatically restart.</li>
+            <li>If you see a "409: Conflict" error for Telegram, it means your bot token is being used by another instance. Either wait a few minutes or revoke and create a new token.</li>
+            <li>For the Discord bot to function properly, it must be invited to your server with the correct permissions.</li>
+            <li>Changes to bot tokens may take up to 30 seconds to fully take effect.</li>
+        </ul>
+    </div>
+    
+    <h2>Update Configuration</h2>
+    <form id="botConfigForm">
+        <div class="form-group">
+            <label for="telegramToken">Telegram Bot Token</label>
+            <input type="text" id="telegramToken" name="telegramToken" placeholder="Enter Telegram Bot Token">
+        </div>
+        
+        <div class="form-group">
+            <label for="discordToken">Discord Bot Token</label>
+            <input type="text" id="discordToken" name="discordToken" placeholder="Enter Discord Bot Token">
+        </div>
+        
+        <div class="form-group">
+            <label for="welcomeMessage">Welcome Message</label>
+            <textarea id="welcomeMessage" name="welcomeMessage" rows="3" placeholder="Enter Welcome Message"></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label for="welcomeImageUrl">Welcome Image URL</label>
+            <input type="text" id="welcomeImageUrl" name="welcomeImageUrl" placeholder="Enter Welcome Image URL">
+        </div>
+        
+        <button type="submit">Save Changes</button>
+    </form>
+    
+    <div id="result" class="result"></div>
+
+    <script>
+        // Check bot statuses
+        async function checkBotStatus() {
+            try {
+                // Check Telegram bot status
+                const telegramResponse = await fetch('/api/bot/telegram/status');
+                const telegramData = await telegramResponse.json();
+                updateStatusDisplay('telegram', telegramData.connected);
+                
+                // Check Discord bot status
+                const discordResponse = await fetch('/api/bot/discord/status');
+                const discordData = await discordResponse.json();
+                updateStatusDisplay('discord', discordData.connected);
+            } catch (error) {
+                console.error('Error checking bot status:', error);
+            }
+        }
+        
+        function updateStatusDisplay(bot, isConnected) {
+            const statusElement = document.getElementById(`${bot}Status`);
+            const statusTextElement = document.getElementById(`${bot}StatusText`);
+            
+            if (isConnected) {
+                statusElement.className = 'status-item status-connected';
+                statusTextElement.textContent = 'Connected';
+            } else {
+                statusElement.className = 'status-item status-disconnected';
+                statusTextElement.textContent = 'Disconnected';
+            }
+        }
+
+        // Fetch current configuration
+        async function fetchCurrentConfig() {
+            try {
+                const response = await fetch('/api/bot-config');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch: ${response.statusText}`);
+                }
+                const config = await response.json();
+                displayCurrentConfig(config);
+                populateForm(config);
+            } catch (error) {
+                console.error('Error fetching config:', error);
+                document.getElementById('currentConfigContent').textContent = 'Error loading configuration: ' + error.message;
+            }
+        }
+
+        // Display current configuration
+        function displayCurrentConfig(config) {
+            const content = document.getElementById('currentConfigContent');
+            content.innerHTML = `
+                <p><strong>Welcome Message:</strong> ${config.welcomeMessage || '(None)'}</p>
+                <p><strong>Welcome Image URL:</strong> ${config.welcomeImageUrl || '(None)'}</p>
+                <p><strong>Telegram Token:</strong> ${config.telegramToken ? '[HIDDEN]' : '(None)'}</p>
+                <p><strong>Discord Token:</strong> ${config.discordToken ? '[HIDDEN]' : '(None)'}</p>
+            `;
+        }
+
+        // Populate form with current values
+        function populateForm(config) {
+            document.getElementById('welcomeMessage').value = config.welcomeMessage || '';
+            document.getElementById('welcomeImageUrl').value = config.welcomeImageUrl || '';
+            // We don't pre-fill tokens for security reasons
+        }
+
+        // Handle form submission
+        document.getElementById('botConfigForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = 'result';
+            resultDiv.style.display = 'none';
+            
+            const formData = {
+                telegramToken: document.getElementById('telegramToken').value,
+                discordToken: document.getElementById('discordToken').value,
+                welcomeMessage: document.getElementById('welcomeMessage').value,
+                welcomeImageUrl: document.getElementById('welcomeImageUrl').value || null
+            };
+            
+            // Remove empty tokens so they don't override existing values
+            if (!formData.telegramToken) delete formData.telegramToken;
+            if (!formData.discordToken) delete formData.discordToken;
+            
+            try {
+                const response = await fetch('/api/bot-config', {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Failed to update configuration');
+                }
+                
+                const updatedConfig = await response.json();
+                
+                resultDiv.className = 'result success';
+                resultDiv.textContent = 'Configuration updated successfully! Bot services are restarting with the new configuration. Please wait about 30 seconds for changes to take effect.';
+                resultDiv.style.display = 'block';
+                
+                // Update display
+                displayCurrentConfig(updatedConfig);
+                
+                // Clear token fields for security
+                document.getElementById('telegramToken').value = '';
+                document.getElementById('discordToken').value = '';
+                
+                // Check bot status after a delay to allow for restart
+                setTimeout(checkBotStatus, 15000);
+                
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = 'Error: ' + error.message;
+                resultDiv.style.display = 'block';
+            }
+        });
+
+        // Load current configuration and check bot status when page loads
+        fetchCurrentConfig();
+        checkBotStatus();
+        
+        // Check bot status periodically
+        setInterval(checkBotStatus, 30000);
+    </script>
+</body>
+</html>

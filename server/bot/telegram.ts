@@ -279,7 +279,7 @@ export class TelegramBot {
 
   private startCleanupInterval(): void {
     // Cleanup stale states every 5 minutes
-    setInterval(() => this.cleanupStaleStates(), this.USER_STATE_CLEANUP_INTERVAL);
+    setInterval(() => this.cleanupStaleStates(), USER_STATE_CLEANUP_INTERVAL);
     log("Started user state cleanup interval");
   }
 

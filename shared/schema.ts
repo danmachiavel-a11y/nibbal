@@ -7,6 +7,8 @@ export const botConfig = pgTable("bot_config", {
   id: serial("id").primaryKey(),
   welcomeMessage: text("welcome_message").default("Welcome to the support bot! Please select a service:"),
   welcomeImageUrl: text("welcome_image_url"),
+  telegramToken: text("telegram_token"),
+  discordToken: text("discord_token"),
 });
 
 export const users = pgTable("users", {
