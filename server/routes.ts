@@ -424,29 +424,77 @@ export async function registerRoutes(app: Express) {
         Array.from({ length: 100 }).map((_, i) => storage.getUser(i + 1))
       );
 
-      // Get paid tickets for each user
+      // Get all categories
+      const categories = await storage.getCategories();
+
+      // Get stats for each user
       const usersWithStats = await Promise.all(
         users
           .filter(user => user !== undefined)
           .map(async user => {
-            // Get all tickets from all categories for this user
-            let paidTicketCount = 0;
-
-            // Get all categories
-            const categories = await storage.getCategories();
-
-            // Check each category for paid tickets
+            // Initialize ticket counters
+            let totalTickets = 0;
+            let openTickets = 0;
+            let closedTickets = 0;
+            let paidTickets = 0;
+            let deletedTickets = 0;
+            
+            // Track tickets by category
+            const ticketsByCategory: Record<number, { 
+              categoryId: number;
+              categoryName: string;
+              count: number;
+            }> = {};
+            
+            // Initialize categories
             for (const category of categories) {
-              const tickets = await storage.getTicketsByCategory(category.id);
-              paidTicketCount += tickets.filter(t =>
-                t.userId === user?.id &&
-                t.status === "paid"
-              ).length;
+              ticketsByCategory[category.id] = {
+                categoryId: category.id,
+                categoryName: category.name,
+                count: 0
+              };
             }
 
+            // Get all tickets for this user
+            const userTickets = await storage.getTicketsByUserId(user!.id);
+            
+            // Process ticket data
+            if (userTickets && userTickets.length > 0) {
+              totalTickets = userTickets.length;
+              
+              // Count by status
+              for (const ticket of userTickets) {
+                if (ticket.status === "open") openTickets++;
+                else if (ticket.status === "closed") closedTickets++;
+                else if (ticket.status === "paid") paidTickets++;
+                else if (ticket.status === "deleted") deletedTickets++;
+                
+                // Count by category
+                if (ticket.categoryId && ticketsByCategory[ticket.categoryId]) {
+                  ticketsByCategory[ticket.categoryId].count++;
+                }
+              }
+            }
+            
+            // Convert ticketsByCategory to array and filter out categories with no tickets
+            const categorySummary = Object.values(ticketsByCategory)
+              .filter(c => c.count > 0)
+              .sort((a, b) => b.count - a.count); // Sort by count, descending
+            
+            // Get the user's display name (for Telegram users)
+            const displayName = user!.telegramName || user!.telegramUsername || user!.username;
+            
             return {
               ...user,
-              paidTicketCount
+              displayName,
+              ticketStats: {
+                total: totalTickets,
+                open: openTickets,
+                closed: closedTickets,
+                paid: paidTickets,
+                deleted: deletedTickets
+              },
+              categorySummary
             };
           })
       );
