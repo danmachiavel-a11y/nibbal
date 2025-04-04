@@ -68,7 +68,7 @@ function CategoryList({ categories }: { categories: Category[] }) {
   const DeleteButton = ({ category, message }: { category: Category, message: string }) => (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <div onClick={(e) => e.stopPropagation()}>
+        <span onClick={(e) => e.stopPropagation()} className="inline-block">
           <Button
             variant="destructive"
             size="sm"
@@ -77,7 +77,7 @@ function CategoryList({ categories }: { categories: Category[] }) {
             <Trash2 className="h-4 w-4" />
             Delete
           </Button>
-        </div>
+        </span>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -790,25 +790,45 @@ function SettingsPage() {
   };
 
   return (
-    <div>
-      <Card>
-        <CardHeader>
-          <CardTitle>Categories & Submenus</CardTitle>
-        </CardHeader>
-        <CardContent>
+    <div className="container max-w-6xl py-6">
+      <h1 className="text-3xl font-bold mb-6">Settings</h1>
+      
+      <Card className="border shadow-sm">
+        <CardContent className="p-6">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList>
-              <TabsTrigger value="existing">Existing Categories</TabsTrigger>
-              <TabsTrigger value="new">Create New</TabsTrigger>
-              <TabsTrigger value="bot-config">Bot Configuration</TabsTrigger>
+            <TabsList className="mb-6 grid w-full grid-cols-3">
+              <TabsTrigger value="existing">
+                <div className="flex items-center gap-2">
+                  <Tag className="h-4 w-4" />
+                  <span>Existing Categories</span>
+                </div>
+              </TabsTrigger>
+              <TabsTrigger value="new">
+                <div className="flex items-center gap-2">
+                  <Tag className="h-4 w-4" />
+                  <span>Create New</span>
+                </div>
+              </TabsTrigger>
+              <TabsTrigger value="bot-config">
+                <div className="flex items-center gap-2">
+                  <Info className="h-4 w-4" />
+                  <span>Bot Configuration</span>
+                </div>
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="existing">
-              {categories ? (
-                <CategoryList categories={categories} />
-              ) : (
-                <div>Loading categories...</div>
-              )}
+              <div className="mt-4">
+                <h2 className="text-xl font-semibold mb-4">Category Management</h2>
+                {categories ? (
+                  <CategoryList categories={categories} />
+                ) : (
+                  <div className="py-8 text-center flex flex-col items-center gap-4">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                    <p className="text-muted-foreground">Loading categories...</p>
+                  </div>
+                )}
+              </div>
             </TabsContent>
 
             <TabsContent value="new">
