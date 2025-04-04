@@ -21,7 +21,7 @@ import { z } from "zod";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useState, useEffect } from 'react';
-import { Folder, FolderOpen, Tag, Info, Trash2 } from 'lucide-react';
+import { Folder, FolderOpen, Tag, Info, Trash2, Check } from 'lucide-react';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 function CategoryList({ categories }: { categories: Category[] }) {
@@ -67,17 +67,14 @@ function CategoryList({ categories }: { categories: Category[] }) {
 
   const DeleteButton = ({ category, message }: { category: Category, message: string }) => (
     <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <span onClick={(e) => e.stopPropagation()} className="inline-block ml-4">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="flex items-center gap-2"
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete
-          </Button>
-        </span>
+      <AlertDialogTrigger>
+        <div 
+          onClick={(e) => e.stopPropagation()} 
+          className="px-3 py-1.5 rounded-md bg-red-50 border border-red-200 text-red-600 font-medium text-sm flex items-center gap-1.5 hover:bg-red-100 hover:border-red-300 transition-colors ml-4"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          <span>Delete</span>
+        </div>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -381,19 +378,25 @@ function CategoryEditor({ category, categories }: { category: Category; categori
               control={form.control}
               name="newRow"
               render={({ field }) => (
-                <FormItem className="flex items-center space-x-3">
+                <FormItem className="flex items-center gap-2.5">
                   <FormControl>
                     <div className="relative flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={field.value}
-                        onChange={field.onChange}
-                        id="newRowCheckbox"
-                        className="rounded border-gray-300 text-primary w-5 h-5 focus:ring-primary/20"
-                      />
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={field.value}
+                          onChange={field.onChange}
+                          id="newRowCheckbox"
+                          className="peer sr-only"
+                        />
+                        <div className="h-5 w-5 rounded border border-gray-300 bg-white peer-checked:bg-primary peer-checked:border-primary transition-colors"></div>
+                        {field.value && (
+                          <Check className="h-3.5 w-3.5 text-white absolute top-[3px] left-[3px]" />
+                        )}
+                      </div>
                     </div>
                   </FormControl>
-                  <FormLabel htmlFor="newRowCheckbox" className="m-0 font-medium cursor-pointer">Start New Row</FormLabel>
+                  <FormLabel htmlFor="newRowCheckbox" className="m-0 font-medium cursor-pointer select-none">Start New Row</FormLabel>
                 </FormItem>
               )}
             />
@@ -402,22 +405,28 @@ function CategoryEditor({ category, categories }: { category: Category; categori
               control={form.control}
               name="isClosed"
               render={({ field }) => (
-                <FormItem className="flex items-center">
+                <FormItem className="flex items-center gap-2.5">
                   <FormControl>
                     <div className="relative flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={field.value}
-                        onChange={field.onChange}
-                        id="serviceClosedCheckbox"
-                        className="rounded border-gray-300 text-primary w-5 h-5 focus:ring-primary/20"
-                      />
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={field.value}
+                          onChange={field.onChange}
+                          id="serviceClosedCheckbox"
+                          className="peer sr-only"
+                        />
+                        <div className="h-5 w-5 rounded border border-gray-300 bg-white peer-checked:bg-primary peer-checked:border-primary transition-colors"></div>
+                        {field.value && (
+                          <Check className="h-3.5 w-3.5 text-white absolute top-[3px] left-[3px]" />
+                        )}
+                      </div>
                     </div>
                   </FormControl>
-                  <FormLabel htmlFor="serviceClosedCheckbox" className="m-0 ml-3 font-medium cursor-pointer">Service Closed</FormLabel>
+                  <FormLabel htmlFor="serviceClosedCheckbox" className="m-0 font-medium cursor-pointer select-none">Service Closed</FormLabel>
                   <TooltipProvider>
                     <Tooltip>
-                      <TooltipTrigger className="ml-1.5">
+                      <TooltipTrigger className="ml-0.5">
                         <Info className="h-4 w-4 text-muted-foreground" />
                       </TooltipTrigger>
                       <TooltipContent>
