@@ -128,10 +128,12 @@ function CategoryList({ categories }: { categories: Category[] }) {
                     <Tag className="h-4 w-4 text-muted-foreground" />
                     <span>{category.name}</span>
                   </div>
-                  <DeleteButton
-                    category={category}
-                    message={`Are you sure you want to delete "${category.name}"? This action cannot be undone.`}
-                  />
+                  <div className="flex items-center gap-4">
+                    <DeleteButton
+                      category={category}
+                      message={`Are you sure you want to delete "${category.name}"? This action cannot be undone.`}
+                    />
+                  </div>
                 </div>
               </AccordionTrigger>
               <AccordionContent className="px-4 pb-3">
@@ -177,10 +179,12 @@ function CategoryList({ categories }: { categories: Category[] }) {
                       ({categories.filter(cat => cat.parentId === submenu.id).length} categories)
                     </span>
                   </div>
-                  <DeleteButton
-                    category={submenu}
-                    message={`Are you sure you want to delete "${submenu.name}"? This will also delete all categories within this submenu. This action cannot be undone.`}
-                  />
+                  <div className="flex items-center gap-4">
+                    <DeleteButton
+                      category={submenu}
+                      message={`Are you sure you want to delete "${submenu.name}"? This will also delete all categories within this submenu. This action cannot be undone.`}
+                    />
+                  </div>
                 </div>
               </AccordionTrigger>
               <AccordionContent className="border-l-2 ml-6 pl-4">
@@ -211,10 +215,12 @@ function CategoryList({ categories }: { categories: Category[] }) {
                                 <Tag className="h-4 w-4 text-muted-foreground" />
                                 <span>{category.name}</span>
                               </div>
-                              <DeleteButton
-                                category={category}
-                                message={`Are you sure you want to delete "${category.name}"? This action cannot be undone.`}
-                              />
+                              <div className="flex items-center gap-4">
+                                <DeleteButton
+                                  category={category}
+                                  message={`Are you sure you want to delete "${category.name}"? This action cannot be undone.`}
+                                />
+                              </div>
                             </div>
                           </AccordionTrigger>
                           <AccordionContent className="px-4 pb-3">
