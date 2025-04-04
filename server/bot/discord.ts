@@ -65,6 +65,7 @@ export class DiscordBot {
   };
   private cleanupInterval: NodeJS.Timeout | null = null;
   private connectionTimeout: NodeJS.Timeout | null = null;
+  private lastError: Error | null = null;
 
   // Rate limit configurations
   private readonly LIMITS = {
@@ -1090,7 +1091,9 @@ export class DiscordBot {
       const guilds = await this.client.guilds.fetch();
       const firstGuild = guilds.first();
       if (!firstGuild) {
-        throw new Error("Bot is not in any servers");
+        const error = new Error("Bot is not in any servers");
+        this.lastError = error;
+        throw error;
       }
 
       // Fetch the complete guild object
@@ -1107,16 +1110,21 @@ export class DiscordBot {
 
       return categoryChannels;
     } catch (error) {
+      this.lastError = error instanceof Error ? error : new Error(String(error));
       log(`Error getting Discord categories: ${error}`, "error");
       throw error;
     }
   }
 
-  private async getRoles() {
+  async getRoles() {
     try {
       const guilds = await this.client.guilds.fetch();
       const guild = await guilds.first()?.fetch();
-      if (!guild) throw new Error("No guild found");
+      if (!guild) {
+        const error = new Error("No guild found");
+        this.lastError = error;
+        throw error;
+      }
 
       return guild.roles.cache.sort((roleA, roleB) => {
         return (roleB?.position || 0) - (roleA?.position || 0);
@@ -1126,6 +1134,7 @@ export class DiscordBot {
         color: role.hexColor
       }));
     } catch (error) {
+      this.lastError = error instanceof Error ? error : new Error(String(error));
       log(`Error getting Discord roles: ${error}`, "error");
       throw error;
     }
@@ -1133,14 +1142,16 @@ export class DiscordBot {
 
   async start() {
     try {
-      // Clear any existing timeouts
+      // Clear any existing timeouts and reset last error
       if (this.connectionTimeout) {
         clearTimeout(this.connectionTimeout);
       }
+      this.lastError = null;
 
       // Set connection timeout
       this.connectionTimeout = setTimeout(() => {
         log("Connection timeout reached, destroying client...", "warn");
+        this.lastError = new Error("Connection timeout reached");
         this.client.destroy()
           .catch(error => log(`Error destroying client: ${error}`, "error"));
       }, this.wsCleanupConfig.connectionTimeout);
@@ -1155,6 +1166,7 @@ export class DiscordBot {
 
       log("Discord bot started successfully");
     } catch (error) {
+      this.lastError = error instanceof Error ? error : new Error(String(error));
       log(`Error starting Discord bot: ${error}`, "error");
       throw error;
     }
@@ -1198,5 +1210,10 @@ export class DiscordBot {
 
   isReady() {
     return this.client.isReady();
+  }
+  
+  // Get the last error that occurred
+  getLastError(): string | undefined {
+    return this.lastError?.message;
   }
 }

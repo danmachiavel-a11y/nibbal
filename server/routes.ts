@@ -23,19 +23,73 @@ export async function registerRoutes(app: Express) {
       // Check bot health if bridge exists
       if (bridge) {
         const botHealth = await bridge.healthCheck();
+        
+        // Get detailed status for each bot
+        let telegramStatus: Record<string, any> = { connected: botHealth.telegram };
+        let discordStatus: Record<string, any> = { connected: botHealth.discord };
+        
+        // Add detailed information for Discord
+        if (botHealth.discord) {
+          try {
+            const discordBot = bridge.getDiscordBot();
+            try {
+              await discordBot.getCategories();
+              discordStatus.serverConnected = true;
+            } catch (err) {
+              const error = err as Error;
+              if (error.message?.includes("Bot is not in any servers")) {
+                discordStatus.serverConnected = false;
+                discordStatus.errorCode = "NO_SERVER_CONNECTED";
+                discordStatus.errorMessage = "Bot is authenticated but not invited to any servers";
+              }
+            }
+            
+            // Also check for last error in Discord
+            if (typeof discordBot.getLastError === 'function') {
+              const lastError = discordBot.getLastError();
+              if (lastError) {
+                discordStatus.lastError = lastError;
+              }
+            }
+          } catch (err) {
+            // Handle Discord bot access errors
+            const error = err as Error;
+            discordStatus.errorMessage = error.message || String(err);
+          }
+        }
+
+        // Add detailed information for Telegram
+        if (!botHealth.telegram) {
+          telegramStatus.errorCode = "TELEGRAM_CONNECTION_FAILED";
+          // Check for common errors
+          try {
+            const telegramBot = bridge.getTelegramBot();
+            // Use the new method that is publicly accessible
+            if (typeof telegramBot.isStartingProcess === 'function') {
+              telegramStatus.isStarting = telegramBot.isStartingProcess();
+            }
+            if (typeof telegramBot.getLastError === 'function') {
+              telegramStatus.lastError = telegramBot.getLastError();
+            }
+          } catch (err) {
+            const error = err as Error;
+            telegramStatus.errorMessage = "Cannot access Telegram bot details: " + (error.message || String(err));
+          }
+        }
+        
         res.json({
           ...serverHealth,
           bots: {
-            telegram: botHealth.telegram,
-            discord: botHealth.discord
+            telegram: telegramStatus,
+            discord: discordStatus
           }
         });
       } else {
         res.json({
           ...serverHealth,
           bots: {
-            telegram: false,
-            discord: false,
+            telegram: { connected: false, errorCode: "BOT_BRIDGE_INITIALIZING" },
+            discord: { connected: false, errorCode: "BOT_BRIDGE_INITIALIZING" },
             message: "Bot bridge initializing"
           }
         });
@@ -150,18 +204,39 @@ export async function registerRoutes(app: Express) {
   app.get("/api/discord/categories", async (req, res) => {
     try {
       if (!bridge) {
-        return res.status(503).json({ message: "Bot bridge not initialized" });
+        return res.status(503).json({ 
+          message: "Bot bridge not initialized",
+          error: "BOT_BRIDGE_UNAVAILABLE" 
+        });
       }
       const discordBot = bridge.getDiscordBot();
       if (!discordBot) {
-        throw new Error("Discord bot not initialized");
+        return res.status(503).json({ 
+          message: "Discord bot not initialized",
+          error: "DISCORD_BOT_UNAVAILABLE"
+        });
       }
 
-      const categories = await discordBot.getCategories();
-      res.json(categories);
+      try {
+        const categories = await discordBot.getCategories();
+        res.json(categories);
+      } catch (error) {
+        if (error.message?.includes("Bot is not in any servers")) {
+          return res.status(503).json({
+            message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
+            error: "NO_SERVER_CONNECTED",
+            details: "The Discord bot token is valid but the bot hasn't been invited to any servers. Use the Discord Developer Portal to generate an invite link."
+          });
+        }
+        throw error; // Re-throw to be caught by the outer catch
+      }
     } catch (error) {
       log(`Error fetching Discord categories: ${error}`, "error");
-      res.status(500).json({ message: "Failed to fetch Discord categories" });
+      res.status(500).json({ 
+        message: "Failed to fetch Discord categories", 
+        error: "DISCORD_CATEGORIES_ERROR",
+        details: error.message
+      });
     }
   });
 
@@ -169,18 +244,39 @@ export async function registerRoutes(app: Express) {
   app.get("/api/discord/roles", async (req, res) => {
     try {
       if (!bridge) {
-        return res.status(503).json({ message: "Bot bridge not initialized" });
+        return res.status(503).json({ 
+          message: "Bot bridge not initialized",
+          error: "BOT_BRIDGE_UNAVAILABLE" 
+        });
       }
       const discordBot = bridge.getDiscordBot();
       if (!discordBot) {
-        throw new Error("Discord bot not initialized");
+        return res.status(503).json({ 
+          message: "Discord bot not initialized",
+          error: "DISCORD_BOT_UNAVAILABLE"
+        });
       }
 
-      const roles = await discordBot.getRoles();
-      res.json(roles);
+      try {
+        const roles = await discordBot.getRoles();
+        res.json(roles);
+      } catch (error) {
+        if (error.message?.includes("No guild found")) {
+          return res.status(503).json({
+            message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
+            error: "NO_SERVER_CONNECTED",
+            details: "The Discord bot token is valid but the bot hasn't been invited to any servers. Use the Discord Developer Portal to generate an invite link."
+          });
+        }
+        throw error; // Re-throw to be caught by the outer catch
+      }
     } catch (error) {
       log(`Error fetching Discord roles: ${error}`, "error");
-      res.status(500).json({ message: "Failed to fetch Discord roles" });
+      res.status(500).json({ 
+        message: "Failed to fetch Discord roles", 
+        error: "DISCORD_ROLES_ERROR",
+        details: error.message
+      });
     }
   });
 
@@ -208,9 +304,9 @@ export async function registerRoutes(app: Express) {
     const schema = z.object({
       name: z.string(),
       isSubmenu: z.boolean(),
-      discordRoleId: z.string().optional(),
-      discordCategoryId: z.string().optional(),
-      questions: z.array(z.string()).optional(),
+      discordRoleId: z.string().optional().default(""),
+      discordCategoryId: z.string().optional().default(""),
+      questions: z.array(z.string()).optional().default([]),
       serviceSummary: z.string().optional(),
       serviceImageUrl: z.string().nullable().optional(),
       parentId: z.number().nullable().optional(),

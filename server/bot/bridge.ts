@@ -835,59 +835,111 @@ export class BridgeManager {
   // Image processing methods
   async forwardImageToDiscord(channelId: string, buffer: Buffer, content: string | null, username: string, avatarUrl?: string): Promise<void> {
     try {
-      // Try ImgBB upload without waiting for previous operations
-      const imageUrlPromise = uploadToImgbb(buffer);
-
-      // Prepare message data while upload is in progress
+      // Generate unique ID for this image transfer for better logging
+      const transferId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
+      log(`[${transferId}] Starting image transfer to Discord: ${buffer.length} bytes`);
+      
+      // Prepare base message data regardless of upload method
       const baseMessageData = {
         content: content ? content.toString().trim() : "\u200B",
         username,
         avatarURL: avatarUrl
       };
-
+      
+      // Check if image size is within reasonable limits (1KB to 10MB)
+      if (buffer.length < 1024 || buffer.length > 10 * 1024 * 1024) {
+        log(`[${transferId}] Image size outside acceptable range (${buffer.length} bytes), skipping ImgBB`, "warn");
+        // Skip ImgBB attempt for extremely small or large images to avoid wasting API calls
+        await this.sendDirectImageToDiscord(channelId, buffer, baseMessageData, username, transferId);
+        return;
+      }
+      
       try {
-        // Wait for ImgBB upload with timeout
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Upload timeout')), 30000)
-        );
-
+        // Start ImgBB upload with retry and timeout
+        log(`[${transferId}] Attempting ImgBB upload first...`);
+        
+        // Use improved uploadToImgbb with retry logic
+        // Create a timer for overall timeout (different from internal retry timeouts)
+        const uploadTimeout = 25000; // 25 seconds max total time
+        
+        // Set upload start time
+        const uploadStart = Date.now();
+        
+        // Use a Promise.race between the upload and a timeout
+        const timeoutPromise = new Promise<null>((_, reject) => {
+          setTimeout(() => reject(new Error('ImgBB upload timeout (global)')), uploadTimeout);
+        });
+        
+        // Start the upload process with retry capability (3 attempts, 2 second initial delay)
         const imageUrl = await Promise.race([
-          imageUrlPromise,
+          uploadToImgbb(buffer, 3, 2000),
           timeoutPromise
-        ]) as string | null;
-
+        ]);
+        
+        const uploadTime = Date.now() - uploadStart;
+        
         if (imageUrl) {
-          // Send as URL if ImgBB upload succeeded
+          // ImgBB upload succeeded - send message with the URL
+          log(`[${transferId}] ImgBB upload successful in ${uploadTime}ms, sending as URL`);
+          
+          // Create message with the URL at the end
           const messageData = {
             ...baseMessageData,
-            content: `${baseMessageData.content}\n${imageUrl}`.trim()
+            content: baseMessageData.content ? 
+              `${baseMessageData.content}\n${imageUrl}`.trim() : 
+              imageUrl
           };
-
+          
+          // Send via Discord webhook
           await this.discordBot.sendMessage(channelId, messageData, username);
-          log(`Successfully sent image via ImgBB URL: ${imageUrl}`);
+          log(`[${transferId}] Successfully sent image via ImgBB URL`);
           return;
+        } else {
+          // Upload returned null without throwing (unlikely but possible)
+          log(`[${transferId}] ImgBB upload returned null without error after ${uploadTime}ms`, "warn");
         }
       } catch (error) {
-        log(`ImgBB upload failed, falling back to direct upload: ${error}`, "warn");
+        // Handle ImgBB upload failure
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        log(`[${transferId}] ImgBB upload failed: ${errorMessage}`, "warn");
+        
+        // Check if error suggests API key issues
+        if (errorMessage.includes('API key') || errorMessage.includes('401') || errorMessage.includes('403')) {
+          log(`[${transferId}] Possible API key issues detected with ImgBB`, "error");
+        }
       }
-
-      // Fallback to direct buffer upload
-      log("Using direct buffer upload");
-      const messageData = {
-        ...baseMessageData,
-        files: [{
-          attachment: buffer,
-          name: `photo_${Date.now()}.jpg`,
-          description: 'Photo from Telegram'
-        }]
-      };
-
-      await this.discordBot.sendMessage(channelId, messageData, username);
-      log("Successfully sent image via direct buffer upload");
+      
+      // Fallback to direct upload
+      await this.sendDirectImageToDiscord(channelId, buffer, baseMessageData, username, transferId);
     } catch (error) {
       handleBridgeError(error as BridgeError, "forwardImageToDiscord");
       throw error;
     }
+  }
+  
+  // Helper method for direct Discord image uploads
+  private async sendDirectImageToDiscord(
+    channelId: string, 
+    buffer: Buffer, 
+    baseMessageData: any, 
+    username: string,
+    transferId: string
+  ): Promise<void> {
+    log(`[${transferId}] Using direct buffer upload to Discord (${buffer.length} bytes)`);
+    
+    // Build message with file attachment
+    const messageData = {
+      ...baseMessageData,
+      files: [{
+        attachment: buffer,
+        name: `photo_${transferId}.jpg`, // Use transfer ID for consistent naming
+        description: 'Photo from Telegram'
+      }]
+    };
+    
+    // Send to Discord
+    await this.discordBot.sendMessage(channelId, messageData, username);
+    log(`[${transferId}] Successfully sent image via direct buffer upload`);
   }
 
   getTelegramBot(): TelegramBot {

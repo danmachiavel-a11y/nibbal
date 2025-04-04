@@ -607,6 +607,16 @@ export class TelegramBot {
   getIsConnected(): boolean {
     return this._isConnected && this.bot !== null;
   }
+  
+  // Public method to check if bot is in the process of starting
+  isStartingProcess(): boolean {
+    return this.isStarting;
+  }
+  
+  // Public method to get the last error that occurred
+  getLastError(): string | undefined {
+    return this.connectionState.lastError;
+  }
 
   async sendMessage(chatId: number, text: string) {
     try {
