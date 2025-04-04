@@ -68,7 +68,7 @@ function CategoryList({ categories }: { categories: Category[] }) {
   const DeleteButton = ({ category, message }: { category: Category, message: string }) => (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <span onClick={(e) => e.stopPropagation()} className="inline-block">
+        <span onClick={(e) => e.stopPropagation()} className="inline-block ml-4">
           <Button
             variant="destructive"
             size="sm"
@@ -370,52 +370,60 @@ function CategoryEditor({ category, categories }: { category: Category; categori
             )}
           />
 
-          <FormField
-            control={form.control}
-            name="newRow"
-            render={({ field }) => (
-              <FormItem className="flex items-center space-x-2">
-                <FormControl>
-                  <input
-                    type="checkbox"
-                    checked={field.value}
-                    onChange={field.onChange}
-                    className="h-4 w-4"
-                  />
-                </FormControl>
-                <FormLabel className="m-0">Start New Row</FormLabel>
-              </FormItem>
-            )}
-          />
+          <div className="flex flex-wrap gap-6 items-center">
+            <FormField
+              control={form.control}
+              name="newRow"
+              render={({ field }) => (
+                <FormItem className="flex items-center space-x-3">
+                  <FormControl>
+                    <div className="relative flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={field.value}
+                        onChange={field.onChange}
+                        id="newRowCheckbox"
+                        className="rounded border-gray-300 text-primary w-5 h-5 focus:ring-primary/20"
+                      />
+                    </div>
+                  </FormControl>
+                  <FormLabel htmlFor="newRowCheckbox" className="m-0 font-medium cursor-pointer">Start New Row</FormLabel>
+                </FormItem>
+              )}
+            />
 
-          <FormField
-            control={form.control}
-            name="isClosed"
-            render={({ field }) => (
-              <FormItem className="flex items-center space-x-2">
-                <FormControl>
-                  <input
-                    type="checkbox"
-                    checked={field.value}
-                    onChange={field.onChange}
-                    className="h-4 w-4"
-                  />
-                </FormControl>
-                <FormLabel className="m-0">Service Closed</FormLabel>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Info className="h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>When closed, users will see a message saying</p>
-                      <p>"This service is currently closed. Try again later."</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </FormItem>
-            )}
-          />
+            <FormField
+              control={form.control}
+              name="isClosed"
+              render={({ field }) => (
+                <FormItem className="flex items-center">
+                  <FormControl>
+                    <div className="relative flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={field.value}
+                        onChange={field.onChange}
+                        id="serviceClosedCheckbox"
+                        className="rounded border-gray-300 text-primary w-5 h-5 focus:ring-primary/20"
+                      />
+                    </div>
+                  </FormControl>
+                  <FormLabel htmlFor="serviceClosedCheckbox" className="m-0 ml-3 font-medium cursor-pointer">Service Closed</FormLabel>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger className="ml-1.5">
+                        <Info className="h-4 w-4 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>When closed, users will see a message saying</p>
+                        <p>"This service is currently closed. Try again later."</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         <FormField
