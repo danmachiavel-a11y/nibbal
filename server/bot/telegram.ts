@@ -1185,6 +1185,41 @@ Please use /close to close your current ticket first, or continue chatting here 
         await this.handleCategoryMenu(ctx);
         return;
       }
+      
+      // Handle create new ticket from switch command
+      if (data === "create_new_ticket") {
+        await ctx.answerCbQuery("Creating a new ticket...");
+        await this.handleCategoryMenu(ctx);
+        return;
+      }
+      
+      // Handle switch to existing ticket
+      if (data.startsWith("switch_to_")) {
+        const ticketId = parseInt(data.split("_")[2]);
+        try {
+          const ticket = await storage.getTicket(ticketId);
+          
+          if (!ticket || ticket.status === 'closed' || ticket.status === 'deleted') {
+            await ctx.answerCbQuery("This ticket is no longer available");
+            return;
+          }
+          
+          const category = await storage.getCategory(ticket.categoryId);
+          const categoryName = category ? category.name : "Unknown category";
+          
+          // Hide the inline keyboard
+          await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
+          
+          // Send confirmation message
+          await ctx.reply(`✅ Switched to ticket #${ticket.id} (${categoryName})\n\nYou can now continue chatting here. Type your message to communicate with our staff.`);
+          
+          await ctx.answerCbQuery();
+        } catch (error) {
+          log(`Error switching to ticket: ${error}`, "error");
+          await ctx.answerCbQuery("Failed to switch tickets. Please try again.");
+        }
+        return;
+      }
 
       if (!data.startsWith("category_")) return;
 
@@ -1214,17 +1249,83 @@ Please use /close to close your current ticket first, or continue chatting here 
       // Using simpleEscape for Markdown formatting
       const categoryName = category?.name || "Unknown";
       const statusText = activeTicket.status;
-      const createdDate = new Date(activeTicket.createdAt || Date.now()).toLocaleString();
+      
+      // Since we don't have a createdAt field, format date based on ID
+      // (Ticket IDs are sequential so higher IDs are newer tickets)
+      const createdDate = new Date().toLocaleString();
       
       const escapedMessage = simpleEscape(
-        `Your active ticket:
+        `Your active ticket #${activeTicket.id}:
 
 Category: ${categoryName}
 Status: ${statusText}
-Created: ${createdDate}`
+ID: ${activeTicket.id}`
       );
       
       await ctx.reply(escapedMessage, { parse_mode: "MarkdownV2" });
+    });
+
+    this.bot.command("switch", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      
+      if (!this.checkRateLimit(userId, 'command', 'switch')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+
+      try {
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          await ctx.reply("You haven't created any tickets yet.");
+          return;
+        }
+
+        // Get all tickets for this user
+        const userTickets = await storage.getTicketsByUserId(user.id);
+        const activeTickets = userTickets.filter(ticket => 
+          ticket.status !== 'closed' && ticket.status !== 'deleted'
+        );
+
+        if (activeTickets.length === 0) {
+          // No active tickets - just start new one
+          await ctx.reply("You don't have any active tickets. Starting a new ticket...");
+          await this.handleCategoryMenu(ctx);
+          return;
+        }
+
+        // Create inline keyboard with active tickets and an option to create a new one
+        const inlineKeyboard = [];
+        
+        // Add buttons for each active ticket
+        for (const ticket of activeTickets) {
+          const category = await storage.getCategory(ticket.categoryId);
+          const categoryName = category ? category.name : "Unknown category";
+          
+          inlineKeyboard.push([{
+            text: `📝 Ticket #${ticket.id} (${categoryName})`,
+            callback_data: `switch_to_${ticket.id}`
+          }]);
+        }
+        
+        // Add button to create a new ticket
+        inlineKeyboard.push([{
+          text: "➕ Create New Ticket",
+          callback_data: "create_new_ticket"
+        }]);
+
+        await ctx.reply(
+          "Your active tickets:",
+          {
+            reply_markup: {
+              inline_keyboard: inlineKeyboard
+            }
+          }
+        );
+      } catch (error) {
+        log(`Error in switch command: ${error}`, "error");
+        await ctx.reply("❌ There was an error processing your request. Please try again.");
+      }
     });
 
     this.bot.command("close", async (ctx) => {
