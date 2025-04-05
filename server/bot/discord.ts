@@ -301,7 +301,13 @@ export class DiscordBot {
               name: 'telegramid',
               description: 'The Telegram ID of the user to ban',
               type: ApplicationCommandOptionType.String,
-              required: true
+              required: false
+            },
+            {
+              name: 'ticketid',
+              description: 'The Ticket ID to find and ban the user who created it',
+              type: ApplicationCommandOptionType.Integer,
+              required: false
             }
           ]
         }
@@ -836,18 +842,55 @@ export class DiscordBot {
         }
         
         try {
-          // Get the Telegram ID from the command options
-          const telegramId = interaction.options.getString('telegramid', true);
+          // Get params from the command options
+          const telegramId = interaction.options.getString('telegramid');
+          const ticketId = interaction.options.getInteger('ticketid');
           
-          // Find the user by Telegram ID
-          const user = await storage.getUserByTelegramId(telegramId);
-          
-          if (!user) {
+          // Require at least one parameter
+          if (!telegramId && !ticketId) {
             await interaction.reply({
-              content: "User not found with that Telegram ID.",
+              content: "You must provide either a Telegram ID or a Ticket ID",
               ephemeral: true
             });
             return;
+          }
+          
+          let user;
+          let userTelegramId;
+          
+          // Find the user based on provided information
+          if (ticketId) {
+            // Find the ticket
+            const ticket = await storage.getTicket(ticketId);
+            if (!ticket) {
+              await interaction.reply({
+                content: `No ticket found with ID ${ticketId}`,
+                ephemeral: true
+              });
+              return;
+            }
+            
+            // Find the user associated with the ticket
+            user = await storage.getUser(ticket.userId);
+            if (!user || !user.telegramId) {
+              await interaction.reply({
+                content: `Unable to find Telegram user for ticket ID ${ticketId}`,
+                ephemeral: true
+              });
+              return;
+            }
+            userTelegramId = user.telegramId;
+          } else {
+            // Find user by Telegram ID
+            user = await storage.getUserByTelegramId(telegramId!);
+            if (!user) {
+              await interaction.reply({
+                content: `No user found with Telegram ID ${telegramId}`,
+                ephemeral: true
+              });
+              return;
+            }
+            userTelegramId = telegramId!;
           }
           
           // Ban the user
@@ -859,11 +902,16 @@ export class DiscordBot {
             .setTitle('🚫 User Banned')
             .addFields(
               { name: 'Telegram Username', value: `@${user.username || 'Unknown'}`, inline: true },
-              { name: 'Telegram ID', value: telegramId, inline: true },
+              { name: 'Telegram ID', value: userTelegramId, inline: true },
               { name: 'Banned by', value: interaction.user.username, inline: true }
             )
             .setDescription('This user has been banned from creating new tickets.')
             .setTimestamp();
+          
+          // Add ticket ID information if banned through ticket
+          if (ticketId) {
+            embed.addFields({ name: 'Banned from Ticket', value: `#${ticketId}`, inline: true });
+          }
           
           // Send confirmation
           await interaction.reply({ 
@@ -873,7 +921,7 @@ export class DiscordBot {
           // Try to notify the user on Telegram
           try {
             await this.bridge.getTelegramBot().sendMessage(
-              parseInt(telegramId),
+              parseInt(userTelegramId),
               `⚠️ *Account Restricted*\n\nYour account has been banned from creating new tickets in our system.\n\nIf you believe this is an error, please contact the administrators.`
             );
           } catch (notifyError) {
