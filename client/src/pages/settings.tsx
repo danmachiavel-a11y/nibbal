@@ -689,7 +689,8 @@ function SettingsPage() {
       discordToken: "",
       welcomeMessage: "",
       welcomeImageUrl: "",
-      adminTelegramIds: []
+      adminTelegramIds: [],
+      adminDiscordIds: []
     }
   });
 
@@ -709,6 +710,7 @@ function SettingsPage() {
         botConfigForm.setValue("welcomeMessage", config.welcomeMessage || "");
         botConfigForm.setValue("welcomeImageUrl", config.welcomeImageUrl || "");
         botConfigForm.setValue("adminTelegramIds", config.adminTelegramIds || []);
+        botConfigForm.setValue("adminDiscordIds", config.adminDiscordIds || []);
       } catch (error: any) {
         toast({
           title: "Error",
@@ -728,7 +730,8 @@ function SettingsPage() {
         discordToken: data.discordToken,
         welcomeMessage: data.welcomeMessage,
         welcomeImageUrl: data.welcomeImageUrl,
-        adminTelegramIds: data.adminTelegramIds
+        adminTelegramIds: data.adminTelegramIds,
+        adminDiscordIds: data.adminDiscordIds
       });
 
       if (!res.ok) {
@@ -1232,7 +1235,58 @@ function SettingsPage() {
                                 }}
                               >
                                 <Plus className="h-4 w-4 mr-2" />
-                                Add Admin
+                                Add Telegram Admin
+                              </Button>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={botConfigForm.control}
+                        name="adminDiscordIds"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Admin Discord IDs</FormLabel>
+                            <FormDescription>
+                              Enter Discord IDs of users who should have admin privileges. 
+                              Admins can use commands like /info, /delete, /nickname, /deleteall, and /closeall.
+                            </FormDescription>
+                            <div className="space-y-2">
+                              {(field.value || []).map((id: string, index: number) => (
+                                <div key={index} className="flex items-center gap-2">
+                                  <Input
+                                    value={id}
+                                    onChange={(e) => {
+                                      const newIds = [...(field.value || [])];
+                                      newIds[index] = e.target.value;
+                                      field.onChange(newIds);
+                                    }}
+                                    placeholder="Enter Discord ID"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="destructive"
+                                    size="icon"
+                                    onClick={() => {
+                                      const newIds = [...(field.value || [])];
+                                      newIds.splice(index, 1);
+                                      field.onChange(newIds);
+                                    }}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              ))}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  field.onChange([...(field.value || []), ""]);
+                                }}
+                              >
+                                <Plus className="h-4 w-4 mr-2" />
+                                Add Discord Admin
                               </Button>
                             </div>
                           </FormItem>
