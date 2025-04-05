@@ -64,14 +64,23 @@ export default function Customers() {
   
   // Ban user mutation
   const banUserMutation = useMutation({
-    mutationFn: ({ userId, banReason }: { userId: number; banReason: string }) => {
-      return apiRequest("POST", "/api/ban-user", { 
-        userId, 
-        banReason,
-        bannedBy: "Dashboard" 
-      });
+    mutationFn: async ({ userId, banReason }: { userId: number; banReason: string }) => {
+      console.log("Making API request to ban user with ID:", userId, "and reason:", banReason);
+      try {
+        const response = await apiRequest("POST", "/api/ban-user", { 
+          userId, 
+          banReason,
+          bannedBy: "Dashboard" 
+        });
+        console.log("Ban API response:", response);
+        return response;
+      } catch (error) {
+        console.error("Ban API error:", error);
+        throw error;
+      }
     },
     onSuccess: () => {
+      console.log("Ban mutation successful");
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/banned-users"] });
       toast({
@@ -80,12 +89,12 @@ export default function Customers() {
       });
     },
     onError: (error) => {
+      console.error("Ban mutation error:", error);
       toast({
         title: "Error",
         description: "Failed to ban user. Please try again later.",
         variant: "destructive",
       });
-      console.error("Failed to ban user:", error);
     },
   });
   
@@ -115,12 +124,15 @@ export default function Customers() {
   // Handle ban user
   const handleBanUser = () => {
     if (userToBan) {
+      console.log("Banning user:", userToBan, "Reason:", banReason);
       banUserMutation.mutate({ 
         userId: userToBan, 
         banReason: banReason || "No reason provided" 
       });
       setUserToBan(null);
       setBanReason("");
+    } else {
+      console.error("No user selected for banning");
     }
   };
   
@@ -445,9 +457,14 @@ export default function Customers() {
                                             <AlertDialogCancel onClick={() => setBanReason("")}>Cancel</AlertDialogCancel>
                                             <AlertDialogAction
                                               className="bg-destructive hover:bg-destructive/90"
-                                              onClick={() => {
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                console.log("Ban user action clicked for user ID:", user.id);
                                                 setUserToBan(user.id);
-                                                handleBanUser();
+                                                banUserMutation.mutate({ 
+                                                  userId: user.id, 
+                                                  banReason: banReason || "No reason provided" 
+                                                });
                                               }}
                                               disabled={banUserMutation.isPending}
                                             >
@@ -580,9 +597,13 @@ export default function Customers() {
                                     <AlertDialogCancel onClick={() => setBanReason("")}>Cancel</AlertDialogCancel>
                                     <AlertDialogAction
                                       className="bg-destructive hover:bg-destructive/90"
-                                      onClick={() => {
-                                        setUserToBan(user.id);
-                                        handleBanUser();
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        console.log("Compact view - Ban user action clicked for user ID:", user.id);
+                                        banUserMutation.mutate({ 
+                                          userId: user.id, 
+                                          banReason: banReason || "No reason provided" 
+                                        });
                                       }}
                                     >
                                       Ban User
