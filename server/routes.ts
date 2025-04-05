@@ -134,6 +134,7 @@ export async function registerRoutes(app: Express) {
         welcomeImageUrl: z.string().nullable().optional(),
         telegramToken: z.string().optional(),
         discordToken: z.string().optional(),
+        adminTelegramIds: z.array(z.string()).optional(),
       });
 
       const result = schema.safeParse(req.body);

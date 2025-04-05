@@ -21,7 +21,7 @@ import { z } from "zod";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useState, useEffect } from 'react';
-import { Folder, FolderOpen, Tag, Info, Trash2, Check } from 'lucide-react';
+import { Folder, FolderOpen, Tag, Info, Trash2, Check, X, Plus } from 'lucide-react';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 function CategoryList({ categories }: { categories: Category[] }) {
@@ -688,7 +688,8 @@ function SettingsPage() {
       telegramToken: "",
       discordToken: "",
       welcomeMessage: "",
-      welcomeImageUrl: ""
+      welcomeImageUrl: "",
+      adminTelegramIds: []
     }
   });
 
@@ -707,6 +708,7 @@ function SettingsPage() {
         botConfigForm.setValue("discordToken", config.discordToken || "");
         botConfigForm.setValue("welcomeMessage", config.welcomeMessage || "");
         botConfigForm.setValue("welcomeImageUrl", config.welcomeImageUrl || "");
+        botConfigForm.setValue("adminTelegramIds", config.adminTelegramIds || []);
       } catch (error: any) {
         toast({
           title: "Error",
@@ -725,7 +727,8 @@ function SettingsPage() {
         telegramToken: data.telegramToken,
         discordToken: data.discordToken,
         welcomeMessage: data.welcomeMessage,
-        welcomeImageUrl: data.welcomeImageUrl
+        welcomeImageUrl: data.welcomeImageUrl,
+        adminTelegramIds: data.adminTelegramIds
       });
 
       if (!res.ok) {
@@ -1181,6 +1184,57 @@ function SettingsPage() {
                             <FormControl>
                               <Input {...field} />
                             </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={botConfigForm.control}
+                        name="adminTelegramIds"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Admin Telegram IDs</FormLabel>
+                            <FormDescription>
+                              Enter Telegram IDs of users who should have admin privileges. 
+                              Admins can use commands like /ban, /unban, and /deleteall.
+                            </FormDescription>
+                            <div className="space-y-2">
+                              {field.value.map((id: string, index: number) => (
+                                <div key={index} className="flex items-center gap-2">
+                                  <Input
+                                    value={id}
+                                    onChange={(e) => {
+                                      const newIds = [...field.value];
+                                      newIds[index] = e.target.value;
+                                      field.onChange(newIds);
+                                    }}
+                                    placeholder="Enter Telegram ID"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="destructive"
+                                    size="icon"
+                                    onClick={() => {
+                                      const newIds = [...field.value];
+                                      newIds.splice(index, 1);
+                                      field.onChange(newIds);
+                                    }}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              ))}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  field.onChange([...field.value, ""]);
+                                }}
+                              >
+                                <Plus className="h-4 w-4 mr-2" />
+                                Add Admin
+                              </Button>
+                            </div>
                           </FormItem>
                         )}
                       />
