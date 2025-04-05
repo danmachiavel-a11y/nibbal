@@ -1198,12 +1198,12 @@ function SettingsPage() {
                               Admins can use commands like /ban, /unban, and /deleteall.
                             </FormDescription>
                             <div className="space-y-2">
-                              {field.value.map((id: string, index: number) => (
+                              {(field.value || []).map((id: string, index: number) => (
                                 <div key={index} className="flex items-center gap-2">
                                   <Input
                                     value={id}
                                     onChange={(e) => {
-                                      const newIds = [...field.value];
+                                      const newIds = [...(field.value || [])];
                                       newIds[index] = e.target.value;
                                       field.onChange(newIds);
                                     }}
@@ -1214,7 +1214,7 @@ function SettingsPage() {
                                     variant="destructive"
                                     size="icon"
                                     onClick={() => {
-                                      const newIds = [...field.value];
+                                      const newIds = [...(field.value || [])];
                                       newIds.splice(index, 1);
                                       field.onChange(newIds);
                                     }}
@@ -1228,7 +1228,7 @@ function SettingsPage() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => {
-                                  field.onChange([...field.value, ""]);
+                                  field.onChange([...(field.value || []), ""]);
                                 }}
                               >
                                 <Plus className="h-4 w-4 mr-2" />

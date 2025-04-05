@@ -45,7 +45,7 @@ export default function BannedUsersPage() {
 
   const unbanMutation = useMutation({
     mutationFn: (userId: number) => {
-      return apiRequest("/api/unban-user", "POST", { userId });
+      return apiRequest("POST", "/api/unban-user", { userId });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/banned-users"] });
