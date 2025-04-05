@@ -256,12 +256,12 @@ export class DiscordBot {
         },
         {
           name: 'delete',
-          description: 'Delete this ticket channel',
+          description: 'Delete this ticket channel (Admin only)',
           type: ApplicationCommandType.ChatInput
         },
         {
           name: 'deleteall',
-          description: 'Delete all tickets in a category',
+          description: 'Delete all tickets in a category (Admin only)',
           type: ApplicationCommandType.ChatInput,
           options: [
             {
@@ -593,6 +593,27 @@ export class DiscordBot {
           });
           return;
         }
+        
+        // Check if user is guild owner or has admin permissions
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.reply({
+            content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        const isOwner = interaction.user.id === guild.ownerId;
+        const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
+        
+        if (!isOwner && !isAdmin) {
+          await interaction.reply({
+            content: "⛔ This command can only be used by administrators!",
+            ephemeral: true
+          });
+          return;
+        }
 
         try {
           // Mark ticket as deleted in database
@@ -624,6 +645,27 @@ export class DiscordBot {
         if (!(categoryChannel instanceof CategoryChannel)) {
           await interaction.reply({
             content: "Please select a valid category!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Check if user is guild owner or has admin permissions
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.reply({
+            content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        const isOwner = interaction.user.id === guild.ownerId;
+        const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
+        
+        if (!isOwner && !isAdmin) {
+          await interaction.reply({
+            content: "⛔ This command can only be used by administrators!",
             ephemeral: true
           });
           return;

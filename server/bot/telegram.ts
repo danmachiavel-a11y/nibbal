@@ -1423,6 +1423,28 @@ ID: ${activeTicket.id}`
       }
     });
     
+    this.bot.command("ping", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      
+      if (!this.checkRateLimit(userId, 'command', 'ping')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+      
+      try {
+        const startTime = Date.now();
+        await ctx.reply("🏓 Checking bot response time...");
+        const endTime = Date.now();
+        const responseTime = endTime - startTime;
+        
+        await ctx.reply(`✅ Pong! Bot is online.\nResponse time: ${responseTime}ms`);
+      } catch (error) {
+        log(`Error in ping command: ${error}`, "error");
+        await ctx.reply("❌ Error checking bot status.");
+      }
+    });
+    
     this.bot.command("unban", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
