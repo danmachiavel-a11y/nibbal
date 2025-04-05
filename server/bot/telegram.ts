@@ -1297,13 +1297,13 @@ ID: ${activeTicket.id}`
         return;
       }
       
-      // Get command arguments: /ban [telegramId|ticketId] [reason]
+      // Get command arguments: /ban [telegramId|ticketId|username] [reason]
       const message = ctx.message?.text || "";
       const args = message.split(" ");
       args.shift(); // Remove the command itself
       
       if (args.length < 1) {
-        await ctx.reply("❌ Invalid command format. Use /ban [telegramId|ticketId] [reason]");
+        await ctx.reply("❌ Invalid command format. Use /ban [telegramId|ticketId|username] [reason]");
         return;
       }
       
@@ -1368,13 +1368,20 @@ ID: ${activeTicket.id}`
           } catch (error) {
             console.error("Error sending ban notification to user:", error);
           }
-        } else {
-          // Handle as telegramId
-          const telegramId = target.startsWith("@") ? target.substring(1) : target;
-          const targetUser = await storage.getUserByTelegramId(telegramId);
+        } else if (target.startsWith("@") || /^[a-zA-Z0-9_.]+$/.test(target)) {
+          // Try to find user by username or telegram ID
+          const identifier = target.startsWith("@") ? target.substring(1) : target;
+          
+          // First try to find by username
+          let targetUser = await storage.getUserByUsername(identifier);
+          
+          // If not found by username, try as telegram ID
+          if (!targetUser) {
+            targetUser = await storage.getUserByTelegramId(identifier);
+          }
           
           if (!targetUser) {
-            await ctx.reply(`❌ User with Telegram ID ${telegramId} not found.`);
+            await ctx.reply(`❌ User with username or Telegram ID "${identifier}" not found.`);
             return;
           }
           
@@ -1409,13 +1416,18 @@ ID: ${activeTicket.id}`
           
           // Send direct message to user if possible
           try {
-            await this.bot.telegram.sendMessage(
-              telegramId,
-              `⛔ You have been banned from using this bot for: ${reason}.`
-            );
+            if (targetUser.telegramId) {
+              await this.bot.telegram.sendMessage(
+                targetUser.telegramId,
+                `⛔ You have been banned from using this bot for: ${reason}.`
+              );
+            }
           } catch (error) {
             console.error("Error sending ban notification to user:", error);
           }
+        } else {
+          await ctx.reply("❌ Invalid format. Please provide a valid ticket ID, username, or Telegram ID.");
+          return;
         }
       } catch (error) {
         console.error("Error banning user:", error);
@@ -1461,13 +1473,13 @@ ID: ${activeTicket.id}`
         return;
       }
       
-      // Get command arguments: /unban [telegramId|userId]
+      // Get command arguments: /unban [telegramId|userId|username]
       const message = ctx.message?.text || "";
       const args = message.split(" ");
       args.shift(); // Remove the command itself
       
       if (args.length < 1) {
-        await ctx.reply("❌ Invalid command format. Use /unban [telegramId|userId]");
+        await ctx.reply("❌ Invalid command format. Use /unban [telegramId|userId|username]");
         return;
       }
       
@@ -1508,13 +1520,18 @@ ID: ${activeTicket.id}`
           } catch (error) {
             console.error("Error sending unban notification to user:", error);
           }
-        } else {
-          // Handle as telegramId
-          const telegramId = target.startsWith("@") ? target.substring(1) : target;
-          const targetUser = await storage.getUserByTelegramId(telegramId);
+        } else if (target.startsWith("@") || /^[a-zA-Z0-9_.]+$/.test(target)) {
+          // First, try to find by username
+          const username = target.startsWith("@") ? target.substring(1) : target;
+          let targetUser = await storage.getUserByUsername(username);
+          
+          // If not found by username, try as telegram ID
+          if (!targetUser) {
+            targetUser = await storage.getUserByTelegramId(username);
+          }
           
           if (!targetUser) {
-            await ctx.reply(`❌ User with Telegram ID ${telegramId} not found.`);
+            await ctx.reply(`❌ User with username or Telegram ID "${username}" not found.`);
             return;
           }
           
@@ -1530,13 +1547,18 @@ ID: ${activeTicket.id}`
           
           // Send direct message to user if possible
           try {
-            await this.bot.telegram.sendMessage(
-              telegramId,
-              `✅ You have been unbanned and can now use this bot again.`
-            );
+            if (targetUser.telegramId) {
+              await this.bot.telegram.sendMessage(
+                targetUser.telegramId,
+                `✅ You have been unbanned and can now use this bot again.`
+              );
+            }
           } catch (error) {
             console.error("Error sending unban notification to user:", error);
           }
+        } else {
+          await ctx.reply("❌ Invalid format. Please provide a valid user ID, username, or Telegram ID.");
+          return;
         }
       } catch (error) {
         console.error("Error unbanning user:", error);
