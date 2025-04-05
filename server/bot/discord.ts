@@ -310,6 +310,11 @@ export class DiscordBot {
           type: ApplicationCommandType.ChatInput
         },
         {
+          name: 'reopen',
+          description: 'Reopen a closed ticket and move it back to its original category',
+          type: ApplicationCommandType.ChatInput
+        },
+        {
           name: 'paid',
           description: 'Mark a ticket as paid with the specified amount',
           type: ApplicationCommandType.ChatInput,
@@ -573,6 +578,83 @@ export class DiscordBot {
         }
       }
 
+      if (interaction.commandName === 'reopen') {
+        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+
+        if (!ticket) {
+          await interaction.reply({
+            content: "This command can only be used in ticket channels!",
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          // Get category for original category ID with null safety
+          if (!ticket.categoryId) {
+            await interaction.reply({
+              content: "This ticket doesn't have a valid category. Please contact an administrator.",
+              ephemeral: true
+            });
+            return;
+          }
+          
+          const category = await storage.getCategory(ticket.categoryId);
+          if (!category?.discordCategoryId) {
+            await interaction.reply({
+              content: "No Discord category set for this service. Please set it in the dashboard.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          // Get ticket creator's info for notification
+          const user = await storage.getUser(ticket.userId!);
+          if (user?.telegramId) {
+            // Get staff member's display name with type safety
+            let staffName = "Discord Staff";
+            if (interaction.member && 'displayName' in interaction.member) {
+              staffName = interaction.member.displayName;
+            } else if (interaction.user && 'username' in interaction.user) {
+              staffName = interaction.user.username;
+            }
+
+            // Send notification
+            await this.bridge.getTelegramBot().sendMessage(
+              parseInt(user.telegramId),
+              `📝 Ticket Update\n\nYour ticket #${ticket.id} has been reopened by ${staffName}.`
+            );
+          }
+
+          // Move ticket back from transcripts to active category
+          try {
+            await this.bridge.moveFromTranscripts(ticket.id);
+          } catch (error) {
+            log(`Error moving ticket from transcripts: ${error}`, "error");
+            throw error;
+          }
+
+          // Send confirmation embed
+          const embed = new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle('🔄 Ticket Reopened')
+            .setDescription(`Ticket reopened by ${interaction.user.username}`)
+            .addFields(
+              { name: 'Status', value: 'Open', inline: true },
+              { name: 'Moved to', value: category.name, inline: true }
+            )
+            .setTimestamp();
+
+          await interaction.reply({ embeds: [embed] });
+        } catch (error) {
+          log(`Error reopening ticket: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to reopen ticket. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+        
       if (interaction.commandName === 'close') {
         const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
 

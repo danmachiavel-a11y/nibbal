@@ -436,6 +436,52 @@ export class BridgeManager {
       throw error;
     }
   }
+  
+  async moveFromTranscripts(ticketId: number): Promise<void> {
+    try {
+      const ticket = await storage.getTicket(ticketId);
+      log(`Moving ticket from transcripts back to active. Ticket data:`, JSON.stringify(ticket, null, 2));
+
+      if (!ticket || !ticket.discordChannelId) {
+        throw new BridgeError(`Invalid ticket or missing Discord channel: ${ticketId}`, { context: "moveFromTranscripts" });
+      }
+
+      // Get category info
+      const category = await storage.getCategory(ticket.categoryId!);
+      log(`Category data for ticket:`, JSON.stringify(category, null, 2));
+
+      if (!category) {
+        throw new BridgeError("Category not found", { context: "moveFromTranscripts" });
+      }
+
+      // Check if category has a Discord category ID
+      if (!category.discordCategoryId) {
+        log(`No Discord category ID found for category ${category.id}`);
+        throw new BridgeError("No Discord category set for this service", { context: "moveFromTranscripts" });
+      }
+
+      if (category.discordCategoryId.trim() === '') {
+        log(`Empty Discord category ID for category ${category.id}`);
+        throw new BridgeError("No Discord category set for this service", { context: "moveFromTranscripts" });
+      }
+
+      log(`Moving channel ${ticket.discordChannelId} back to category ${category.discordCategoryId}`);
+
+      // Move channel back to original category
+      await this.discordBot.moveChannelToCategory(
+        ticket.discordChannelId,
+        category.discordCategoryId
+      );
+
+      // Update ticket status
+      await storage.updateTicketStatus(ticket.id, "open");
+
+      log(`Successfully moved ticket ${ticketId} back to category ${category.discordCategoryId}`);
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "moveFromTranscripts");
+      throw error;
+    }
+  }
 
   async createTicketChannel(ticket: Ticket) {
     if (!ticket.categoryId) {
