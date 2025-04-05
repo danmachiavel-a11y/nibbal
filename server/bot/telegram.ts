@@ -1032,7 +1032,9 @@ export class TelegramBot {
         if (user) {
           const activeTicket = await storage.getActiveTicketByUserId(user.id);
           if (activeTicket) {
-            const category = await storage.getCategory(activeTicket.categoryId);
+            // Use a non-null assertion or provide a fallback for categoryId
+            const categoryId = activeTicket.categoryId ?? 0;
+            const category = await storage.getCategory(categoryId);
             const categoryName = category?.name || "Unknown";
             // Create a completely escaped message
             const escapedMessage = simpleEscape(
@@ -1109,31 +1111,35 @@ Please use /close to close your current ticket first, or continue chatting here 
     });
 
     this.bot.on("callback_query", async (ctx) => {
-      const data = ctx.callbackQuery?.data;
-      if (!data) return;
+      // Ensure callbackQuery exists
+      if (!ctx.callbackQuery) return;
 
-      if (data.startsWith("submenu_")) {
-        const submenuId = parseInt(data.split("_")[1]);
+      // Use type assertion for callbackQuery since the data property isn't correctly typed
+      const callbackData = (ctx.callbackQuery as any).data;
+      if (!callbackData) return;
+
+      if (callbackData.startsWith("submenu_")) {
+        const submenuId = parseInt(callbackData.split("_")[1]);
         await this.handleSubmenuClick(ctx, submenuId);
         return;
       }
 
       // Handle back to menu button
-      if (data === "back_to_main") {
+      if (callbackData === "back_to_main") {
         await this.handleCategoryMenu(ctx);
         return;
       }
       
       // Handle create new ticket from switch command
-      if (data === "create_new_ticket") {
+      if (callbackData === "create_new_ticket") {
         await ctx.answerCbQuery("Creating a new ticket...");
         await this.handleCategoryMenu(ctx);
         return;
       }
       
       // Handle switch to existing ticket
-      if (data.startsWith("switch_to_")) {
-        const ticketId = parseInt(data.split("_")[2]);
+      if (callbackData.startsWith("switch_to_")) {
+        const ticketId = parseInt(callbackData.split("_")[2]);
         try {
           const ticket = await storage.getTicket(ticketId);
           
@@ -1159,9 +1165,9 @@ Please use /close to close your current ticket first, or continue chatting here 
         return;
       }
 
-      if (!data.startsWith("category_")) return;
+      if (!callbackData.startsWith("category_")) return;
 
-      const categoryId = parseInt(data.split("_")[1]);
+      const categoryId = parseInt(callbackData.split("_")[1]);
       await this.handleCategorySelection(ctx, categoryId);
       await ctx.answerCbQuery();
     });
@@ -1182,7 +1188,8 @@ Please use /close to close your current ticket first, or continue chatting here 
         return;
       }
 
-      const category = await storage.getCategory(activeTicket.categoryId);
+      const categoryId = activeTicket.categoryId ?? 0;
+      const category = await storage.getCategory(categoryId);
       
       // Using simpleEscape for Markdown formatting
       const categoryName = category?.name || "Unknown";
@@ -1237,7 +1244,8 @@ ID: ${activeTicket.id}`
         
         // Add buttons for each active ticket
         for (const ticket of activeTickets) {
-          const category = await storage.getCategory(ticket.categoryId);
+          const categoryId = ticket.categoryId ?? 0;
+          const category = await storage.getCategory(categoryId);
           const categoryName = category ? category.name : "Unknown category";
           
           inlineKeyboard.push([{
@@ -1287,7 +1295,8 @@ ID: ${activeTicket.id}`
       }
 
       try {
-        const category = await storage.getCategory(activeTicket.categoryId);
+        const categoryId = activeTicket.categoryId ?? 0;
+        const category = await storage.getCategory(categoryId);
         if (!category?.transcriptCategoryId) {
           await ctx.reply(
             "❌ Cannot close ticket: No transcript category set for this service. " +
