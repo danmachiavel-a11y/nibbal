@@ -906,16 +906,28 @@ export class DiscordBot {
         try {
           // Get params from the command options
           const telegramId = interaction.options.getString('telegramid');
-          const ticketId = interaction.options.getInteger('ticketid');
+          let ticketId = interaction.options.getInteger('ticketid');
           const reason = interaction.options.getString('reason') || "No reason provided";
           
-          // Require at least one parameter
+          // Try to find the current ticket if no parameters are provided
           if (!telegramId && !ticketId) {
-            await interaction.reply({
-              content: "You must provide either a Telegram ID or a Ticket ID",
-              ephemeral: true
-            });
-            return;
+            // Get the current channel ID
+            const channelId = interaction.channelId;
+            
+            // Look up if this is a ticket channel
+            const currentTicket = await storage.getTicketByDiscordChannel(channelId);
+            
+            // If this is a ticket channel, use that ticket's ID
+            if (currentTicket) {
+              ticketId = currentTicket.id;
+            } else {
+              // If not in a ticket channel and no parameters provided, show error
+              await interaction.reply({
+                content: "You must provide either a Telegram ID or a Ticket ID, or use this command in a ticket channel",
+                ephemeral: true
+              });
+              return;
+            }
           }
           
           let user;
@@ -1015,15 +1027,27 @@ export class DiscordBot {
         try {
           // Get params from the command options
           const telegramId = interaction.options.getString('telegramid');
-          const ticketId = interaction.options.getInteger('ticketid');
+          let ticketId = interaction.options.getInteger('ticketid');
           
-          // Require at least one parameter
+          // Try to find the current ticket if no parameters are provided
           if (!telegramId && !ticketId) {
-            await interaction.reply({
-              content: "You must provide either a Telegram ID or a Ticket ID",
-              ephemeral: true
-            });
-            return;
+            // Get the current channel ID
+            const channelId = interaction.channelId;
+            
+            // Look up if this is a ticket channel
+            const currentTicket = await storage.getTicketByDiscordChannel(channelId);
+            
+            // If this is a ticket channel, use that ticket's ID
+            if (currentTicket) {
+              ticketId = currentTicket.id;
+            } else {
+              // If not in a ticket channel and no parameters provided, show error
+              await interaction.reply({
+                content: "You must provide either a Telegram ID or a Ticket ID, or use this command in a ticket channel",
+                ephemeral: true
+              });
+              return;
+            }
           }
           
           let user;
