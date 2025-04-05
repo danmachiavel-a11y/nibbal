@@ -16,6 +16,7 @@ export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByTelegramId(telegramId: string): Promise<User | undefined>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   banUser(id: number, banReason?: string, bannedBy?: string): Promise<void>;
   unbanUser(id: number): Promise<void>;
@@ -163,6 +164,11 @@ export class DatabaseStorage implements IStorage {
 
   async getUserByDiscordId(discordId: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.discordId, discordId));
+    return user;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
     return user;
   }
 
