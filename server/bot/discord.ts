@@ -1322,12 +1322,67 @@ export class DiscordBot {
       if (!category || category.type !== ChannelType.GuildCategory) {
         throw new Error(`Invalid category ${categoryId}`);
       }
-
-      const channel = await (category as CategoryChannel).guild.channels.create({
+      
+      // Get guild and roleId from category permissions
+      const guild = (category as CategoryChannel).guild;
+      if (!guild) {
+        throw new Error("Failed to get guild from category");
+      }
+      
+      // Find the role with ViewChannel permission in the category
+      const categoryPermissions = category.permissionOverwrites.cache;
+      let roleWithAccess: string | null = null;
+      
+      for (const [id, permOverwrite] of categoryPermissions.entries()) {
+        // Skip everyone role and bot permissions
+        if (id === guild.roles.everyone.id || id === guild.members.me?.id) {
+          continue;
+        }
+        
+        // Check if this role has ViewChannel permission
+        if (permOverwrite.allow.has(PermissionFlagsBits.ViewChannel)) {
+          roleWithAccess = id;
+          break;
+        }
+      }
+      
+      const channel = await guild.channels.create({
         name,
         parent: category,
-        type: ChannelType.GuildText
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          // Default deny everyone
+          {
+            id: guild.roles.everyone.id,
+            deny: [PermissionFlagsBits.ViewChannel]
+          },
+          // Bot permissions
+          {
+            id: guild.members.me?.id || "",
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory,
+              PermissionFlagsBits.AttachFiles,
+              PermissionFlagsBits.ManageChannels,
+              PermissionFlagsBits.ManageMessages
+            ]
+          }
+        ]
       });
+      
+      // Add the role permission if found
+      if (roleWithAccess) {
+        await channel.permissionOverwrites.edit(roleWithAccess, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true
+        });
+        log(`Set channel permissions for role ${roleWithAccess}`);
+      } else {
+        log(`Warning: No role with access found in category ${categoryId}`, "warn");
+      }
 
       log(`Successfully created channel ${channel.id}`);
       return channel.id;
