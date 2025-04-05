@@ -1580,8 +1580,64 @@ export class DiscordBot {
       if (!(category instanceof CategoryChannel)) {
         throw new Error(`Invalid category ${categoryId}`);
       }
-
+      
+      // Get guild from category
+      const guild = category.guild;
+      if (!guild) {
+        throw new Error("Failed to get guild from category");
+      }
+      
+      // Find the role with ViewChannel permission in the category
+      const categoryPermissions = category.permissionOverwrites.cache;
+      let roleWithAccess: string | null = null;
+      
+      for (const [id, permOverwrite] of categoryPermissions.entries()) {
+        // Skip everyone role and bot permissions
+        if (id === guild.roles.everyone.id || id === guild.members.me?.id) {
+          continue;
+        }
+        
+        // Check if this role has ViewChannel permission
+        if (permOverwrite.allow.has(PermissionFlagsBits.ViewChannel)) {
+          roleWithAccess = id;
+          break;
+        }
+      }
+      
+      // Move the channel to the new category
       await channel.setParent(category.id);
+      
+      // Update permissions for the moved channel
+      // First, reset permissions for @everyone
+      await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
+        ViewChannel: false
+      });
+      
+      // Set permissions for the role if found
+      if (roleWithAccess) {
+        await channel.permissionOverwrites.edit(roleWithAccess, {
+          ViewChannel: true,
+          SendMessages: false, // In transcript category, we don't want people to send messages
+          ReadMessageHistory: true,
+          AttachFiles: false
+        });
+        log(`Updated channel permissions for transcript category role ${roleWithAccess}`);
+      } else {
+        log(`Warning: No role with access found in category ${categoryId}`, "warn");
+      }
+      
+      // Ensure bot has needed permissions
+      if (guild.members.me) {
+        await channel.permissionOverwrites.edit(guild.members.me.id, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true,
+          ManageChannels: true,
+          ManageMessages: true
+        });
+      }
+      
       log(`Successfully moved channel ${channelId} to category ${categoryId}`);
     } catch (error) {
       log(`Error moving channel to category: ${error}`, "error");
