@@ -703,11 +703,8 @@ export class DiscordBot {
             );
           }
 
-          // Mark ticket as closed
-          await storage.updateTicketStatus(ticket.id, "closed");
-
           // Move channel to transcripts category using the Bridge's moveToTranscripts method
-          // This ensures consistent permission handling
+          // This ensures consistent permission handling - it will update the ticket status too
           try {
             await this.bridge.moveToTranscripts(ticket.id);
           } catch (error) {
