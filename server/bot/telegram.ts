@@ -4,24 +4,66 @@ import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 import fetch from 'node-fetch';
 
-// Add proper type definitions for rate limiting
+// Simple rate limiting approach
 interface RateLimit {
-  timestamp: number;
+  lastRequest: number;
   count: number;
 }
 
-interface CommandRateLimit extends RateLimit {
-  command: string;
-}
-
-interface MessageRateLimit extends RateLimit {
-  blockedUntil?: number;
-}
-
-// Add with other interfaces
-interface TokenBucket {
-  tokens: number;
-  lastRefill: number;
+// Rate limit manager to handle all rate limiting logic
+class RateLimitManager {
+  private userRateLimits = new Map<number, RateLimit>();
+  private readonly cleanupInterval: NodeJS.Timeout;
+  
+  constructor() {
+    // Clean up expired rate limits every 5 minutes
+    this.cleanupInterval = setInterval(() => this.cleanup(), 300000);
+  }
+  
+  // Check if a user is rate limited
+  isRateLimited(userId: number): boolean {
+    const now = Date.now();
+    const limit = this.userRateLimits.get(userId);
+    
+    // No previous requests or window expired
+    if (!limit || now - limit.lastRequest > RATE_LIMIT_WINDOW) {
+      this.userRateLimits.set(userId, { lastRequest: now, count: 1 });
+      return false;
+    }
+    
+    // Within window, increment count if below max
+    if (limit.count < RATE_LIMIT_MAX_COUNT) {
+      limit.count++;
+      limit.lastRequest = now;
+      return false;
+    }
+    
+    // User is rate limited
+    log(`Rate limit exceeded for user ${userId}. Max ${RATE_LIMIT_MAX_COUNT} requests per ${RATE_LIMIT_WINDOW}ms`);
+    return true;
+  }
+  
+  // Clean up old rate limits
+  private cleanup(): void {
+    const now = Date.now();
+    let cleanedCount = 0;
+    
+    for (const [userId, limit] of this.userRateLimits.entries()) {
+      if (now - limit.lastRequest > RATE_LIMIT_WINDOW) {
+        this.userRateLimits.delete(userId);
+        cleanedCount++;
+      }
+    }
+    
+    if (cleanedCount > 0) {
+      log(`Cleaned up ${cleanedCount} expired rate limits`);
+    }
+  }
+  
+  // Stop cleaning up when shutting down
+  stop(): void {
+    clearInterval(this.cleanupInterval);
+  }
 }
 
 // Proper type safety for user states
@@ -30,11 +72,7 @@ interface UserState {
   currentQuestion: number;
   answers: string[];
   inQuestionnaire: boolean;
-  rateLimits: {
-    commands: Map<string, CommandRateLimit>;
-    messages: MessageRateLimit;
-    bucket: TokenBucket;
-  };
+  activeTicketId?: number;
 }
 
 interface StateCleanup {
@@ -55,20 +93,11 @@ interface ConnectionState {
 }
 
 
-// Add at the top with other constants
-const RATE_LIMIT = {
-  COMMAND: {
-    WINDOW: parseInt(process.env.RATE_LIMIT_COMMAND_WINDOW || "60000", 10), // 1 minute default
-    MAX_COUNT: parseInt(process.env.RATE_LIMIT_COMMAND_MAX_COUNT || "5", 10) // 5 commands default
-  },
-  MESSAGE: {
-    WINDOW: parseInt(process.env.RATE_LIMIT_MESSAGE_WINDOW || "2000", 10), // 2 seconds default
-    MAX_COUNT: parseInt(process.env.RATE_LIMIT_MESSAGE_MAX_COUNT || "10", 10), // 10 messages default
-    BLOCK_DURATION: parseInt(process.env.RATE_LIMIT_MESSAGE_BLOCK_DURATION || "300000", 10) // 5 minutes default
-  }
-};
+// Simple rate limiting configuration
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW || "30000", 10); // 30 seconds default
+const RATE_LIMIT_MAX_COUNT = parseInt(process.env.RATE_LIMIT_MAX_COUNT || "20", 10); // 20 requests default
 
-// Add with other constants
+// User state cleanup configuration 
 const USER_STATE_CLEANUP_INTERVAL = 300000; // 5 minutes
 const USER_INACTIVE_TIMEOUT = 3600000; // 1 hour
 const MAX_INACTIVE_STATES = 1000; // Maximum number of stored states
@@ -162,6 +191,7 @@ export class TelegramBot {
   private bridge: BridgeManager;
   private userStates: Map<number, UserState> = new Map();
   private stateCleanups: Map<number, StateCleanup> = new Map();
+  private rateLimitManager: RateLimitManager = new RateLimitManager();
   private _isConnected: boolean = false;
   private isStarting: boolean = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
@@ -310,90 +340,12 @@ export class TelegramBot {
     }
   }
 
-  private cleanupRateLimits(userId: number): void {
-    const state = this.userStates.get(userId);
-    if (!state) return;
-
-    const now = Date.now();
-
-    // Clean up command rate limits
-    for (const [command, limit] of state.rateLimits.commands.entries()) {
-      if (now - limit.timestamp > RATE_LIMIT.COMMAND.WINDOW) {
-        state.rateLimits.commands.delete(command);
-        log(`Cleaned up rate limit for command ${command} for user ${userId}`);
-      }
-    }
-
-    // Clean up message rate limits
-    const messageLimit = state.rateLimits.messages;
-    if (messageLimit.blockedUntil && now > messageLimit.blockedUntil) {
-      state.rateLimits.messages = { timestamp: now, count: 0 };
-      log(`Reset message rate limit block for user ${userId}`);
-    } else if (now - messageLimit.timestamp > RATE_LIMIT.MESSAGE.WINDOW) {
-      state.rateLimits.messages = { timestamp: now, count: 0 };
-      log(`Reset message rate limit count for user ${userId}`);
-    }
-  }
-
+  // New consolidated rate limiting method
   private checkRateLimit(userId: number, type: 'command' | 'message', command?: string): boolean {
-    const state = this.userStates.get(userId);
-    if (!state) return true;
-
-    // Clean up old rate limits first
-    this.cleanupRateLimits(userId);
-
-    const now = Date.now();
-
-    if (type === 'command' && command) {
-      const limit = state.rateLimits.commands.get(command);
-      if (!limit || now - limit.timestamp > RATE_LIMIT.COMMAND.WINDOW) {
-        state.rateLimits.commands.set(command, { timestamp: now, count: 1, command });
-        return true;
-      }
-
-      if (limit.count >= RATE_LIMIT.COMMAND.MAX_COUNT) {
-        log(`Rate limit exceeded for command ${command} by user ${userId}`);
-        return false;
-      }
-
-      limit.count++;
-      return true;
-    }
-
-    if (type === 'message') {
-      // Initialize bucket if doesn't exist
-      if (!state.rateLimits.bucket) {
-        state.rateLimits.bucket = {
-          tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
-          lastRefill: now
-        };
-      }
-
-      const bucket = state.rateLimits.bucket;
-      const elapsedTime = now - bucket.lastRefill;
-      const refillAmount = Math.floor(elapsedTime / RATE_LIMIT.MESSAGE.WINDOW) * RATE_LIMIT.MESSAGE.MAX_COUNT;
-
-      bucket.tokens = Math.min(RATE_LIMIT.MESSAGE.MAX_COUNT, bucket.tokens + refillAmount);
-      bucket.lastRefill = now;
-
-      if (bucket.tokens > 0) {
-        bucket.tokens--;
-        return true;
-      }
-
-      // If no tokens and already blocked, check block duration
-      const messageLimit = state.rateLimits.messages;
-      if (messageLimit.blockedUntil && now < messageLimit.blockedUntil) {
-        log(`User ${userId} is blocked from sending messages until ${new Date(messageLimit.blockedUntil)}`);
-        return false;
-      }
-
-      // If no tokens and not blocked, apply block
-      messageLimit.blockedUntil = now + RATE_LIMIT.MESSAGE.BLOCK_DURATION;
-      log(`User ${userId} has been rate limited for messages until ${new Date(messageLimit.blockedUntil)}`);
+    // Use our simplified rate limit manager
+    if (this.rateLimitManager.isRateLimited(userId)) {
       return false;
     }
-
     return true;
   }
 
@@ -402,18 +354,6 @@ export class TelegramBot {
     const existing = this.stateCleanups.get(userId);
     if (existing?.timeout) {
       clearTimeout(existing.timeout);
-    }
-
-    // Initialize rate limits if not present
-    if (!state.rateLimits) {
-      state.rateLimits = {
-        commands: new Map(),
-        messages: { timestamp: Date.now(), count: 0 },
-        bucket: {
-          tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
-          lastRefill: Date.now()
-        }
-      };
     }
 
     // Set new state
@@ -578,6 +518,9 @@ export class TelegramBot {
     try {
       log("Stopping Telegram bot...");
       this.stopHeartbeat();
+      
+      // Stop the rate limit manager's cleanup interval
+      this.rateLimitManager.stop();
 
       if (this.bot) {
         try {
@@ -738,7 +681,7 @@ export class TelegramBot {
     try {
       // If we're in a questionnaire, handle that first
       if (state?.inQuestionnaire) {
-        await this.handleQuestionnaireResponse(ctx);
+        await this.handleQuestionnaireResponse(ctx, state);
         return;
       }
 
@@ -947,14 +890,7 @@ export class TelegramBot {
         currentQuestion: 0,
         answers: [],
         inQuestionnaire: true,
-        rateLimits: {
-          commands: new Map(),
-          messages: { timestamp: 0, count: 0 },
-          bucket: {
-            tokens: RATE_LIMIT.MESSAGE.MAX_COUNT,
-            lastRefill: Date.now()
-          }
-        }
+        activeTicketId: undefined
       };
       this.setState(userId, state);
 
