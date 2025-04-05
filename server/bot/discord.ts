@@ -706,18 +706,14 @@ export class DiscordBot {
           // Mark ticket as closed
           await storage.updateTicketStatus(ticket.id, "closed");
 
-          // Move channel to transcripts category
-          const channel = await this.client.channels.fetch(interaction.channelId);
-          if (!(channel instanceof TextChannel)) {
-            throw new Error("Invalid channel type");
+          // Move channel to transcripts category using the Bridge's moveToTranscripts method
+          // This ensures consistent permission handling
+          try {
+            await this.bridge.moveToTranscripts(ticket.id);
+          } catch (error) {
+            log(`Error in bridge.moveToTranscripts: ${error}`, "error");
+            throw error;
           }
-
-          const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
-          if (!(transcriptCategory instanceof CategoryChannel)) {
-            throw new Error("Invalid transcript category");
-          }
-
-          await channel.setParent(transcriptCategory.id);
 
           // Send confirmation embed
           const embed = new EmbedBuilder()
@@ -726,7 +722,7 @@ export class DiscordBot {
             .setDescription(`Ticket closed by ${interaction.user.username}`)
             .addFields(
               { name: 'Status', value: 'Closed', inline: true },
-              { name: 'Moved to', value: transcriptCategory.name, inline: true }
+              { name: 'Moved to', value: 'Transcripts', inline: true }
             )
             .setTimestamp();
 
@@ -949,8 +945,8 @@ export class DiscordBot {
                         );
                       }
 
-                      await channel.setParent(transcriptCategory.id);
-                      await storage.updateTicketStatus(ticket.id, "closed");
+                      // Use the bridge.moveToTranscripts method to ensure consistent permission handling
+                      await this.bridge.moveToTranscripts(ticket.id);
                       moveCount++;
                     }
                   }
@@ -1647,9 +1643,9 @@ export class DiscordBot {
     }
   }
 
-  async moveChannelToCategory(channelId: string, categoryId: string): Promise<void> {
+  async moveChannelToCategory(channelId: string, categoryId: string, isTranscriptCategory: boolean = false): Promise<void> {
     try {
-      log(`Moving channel ${channelId} to category ${categoryId}`);
+      log(`Moving channel ${channelId} to category ${categoryId} (transcript category: ${isTranscriptCategory})`);
 
       await this.checkRateLimit('channelEdit'); //Added rate limit check
 
@@ -1669,9 +1665,9 @@ export class DiscordBot {
         throw new Error("Failed to get guild from category");
       }
       
-      // Find the role with ViewChannel permission in the category
+      // Find the roles with ViewChannel permission in the category
       const categoryPermissions = category.permissionOverwrites.cache;
-      let roleWithAccess: string | null = null;
+      const rolesWithAccess: string[] = [];
       
       for (const [id, permOverwrite] of categoryPermissions.entries()) {
         // Skip everyone role and bot permissions
@@ -1681,8 +1677,7 @@ export class DiscordBot {
         
         // Check if this role has ViewChannel permission
         if (permOverwrite.allow.has(PermissionFlagsBits.ViewChannel)) {
-          roleWithAccess = id;
-          break;
+          rolesWithAccess.push(id);
         }
       }
       
@@ -1690,22 +1685,41 @@ export class DiscordBot {
       await channel.setParent(category.id);
       
       // Update permissions for the moved channel
-      // First, reset permissions for @everyone
+      // First, explicitly deny access for @everyone to ensure the channel is private
       await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
-        ViewChannel: false
+        ViewChannel: false,
+        SendMessages: false,
+        ReadMessageHistory: false
       });
       
-      // Set permissions for the role if found
-      if (roleWithAccess) {
-        await channel.permissionOverwrites.edit(roleWithAccess, {
-          ViewChannel: true,
-          SendMessages: false, // In transcript category, we don't want people to send messages
-          ReadMessageHistory: true,
-          AttachFiles: false
-        });
-        log(`Updated channel permissions for transcript category role ${roleWithAccess}`);
+      // Log the permission update for clarity
+      log(`Updated permissions for @everyone role - denied access`, "info");
+      
+      // Set permissions for the roles found
+      if (rolesWithAccess.length > 0) {
+        for (const roleId of rolesWithAccess) {
+          if (isTranscriptCategory) {
+            // For transcript categories, staff can view but not send messages
+            await channel.permissionOverwrites.edit(roleId, {
+              ViewChannel: true,
+              SendMessages: false,
+              ReadMessageHistory: true,
+              AttachFiles: false
+            });
+            log(`Updated transcript permissions for role ${roleId} - read-only mode`);
+          } else {
+            // For regular categories, staff can view and send messages
+            await channel.permissionOverwrites.edit(roleId, {
+              ViewChannel: true,
+              SendMessages: true,
+              ReadMessageHistory: true,
+              AttachFiles: true
+            });
+            log(`Updated active category permissions for role ${roleId} - full access mode`);
+          }
+        }
       } else {
-        log(`Warning: No role with access found in category ${categoryId}`, "warn");
+        log(`Warning: No roles with access found in category ${categoryId}`, "warn");
       }
       
       // Ensure bot has needed permissions
@@ -1787,9 +1801,10 @@ export class DiscordBot {
    * Set up permissions for a category with a specific role
    * @param categoryId Discord category ID
    * @param roleId Discord role ID
+   * @param isTranscriptCategory Whether this is a transcript category (read-only)
    * @returns {Promise<boolean>} Success status
    */
-  async setupCategoryPermissions(categoryId: string, roleId: string): Promise<boolean> {
+  async setupCategoryPermissions(categoryId: string, roleId: string, isTranscriptCategory: boolean = false): Promise<boolean> {
     try {
       if (!this.isReady()) {
         throw new Error("Discord bot is not ready");
@@ -1815,19 +1830,36 @@ export class DiscordBot {
         throw new Error(`Role with ID ${roleId} not found`);
       }
       
-      log(`Setting up permissions for category ${category.name} with role ${role.name}`, "info");
+      log(`Setting up permissions for category ${category.name} with role ${role.name} (transcript: ${isTranscriptCategory})`, "info");
       
       // Set permissions on the category
+      // Explicitly deny @everyone from viewing channels
       await category.permissionOverwrites.edit(guild.roles.everyone, {
         ViewChannel: false,
+        SendMessages: false,
+        ReadMessageHistory: false
       });
       
-      await category.permissionOverwrites.edit(role, {
-        ViewChannel: true,
-        SendMessages: true,
-        ReadMessageHistory: true,
-        AttachFiles: true,
-      });
+      // Set role permissions based on category type
+      if (isTranscriptCategory) {
+        // For transcript categories, staff can view but not send messages
+        await category.permissionOverwrites.edit(role, {
+          ViewChannel: true,
+          SendMessages: false,
+          ReadMessageHistory: true,
+          AttachFiles: false,
+        });
+        log(`Set up transcript category permissions for role ${role.name} - read-only`, "info");
+      } else {
+        // For regular categories, staff can view and send messages
+        await category.permissionOverwrites.edit(role, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true,
+        });
+        log(`Set up regular category permissions for role ${role.name} - full access`, "info");
+      }
       
       // Also set permissions for the bot
       const botMember = guild.members.me;

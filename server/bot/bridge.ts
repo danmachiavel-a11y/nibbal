@@ -421,10 +421,11 @@ export class BridgeManager {
 
       log(`Moving channel ${ticket.discordChannelId} to transcript category ${category.transcriptCategoryId}`);
 
-      // Move channel to transcripts category
+      // Move channel to transcripts category with isTranscriptCategory=true
       await this.discordBot.moveChannelToCategory(
         ticket.discordChannelId,
-        category.transcriptCategoryId
+        category.transcriptCategoryId,
+        true // Specify this is a transcript category for proper permissions
       );
 
       // Update ticket status
@@ -468,9 +469,11 @@ export class BridgeManager {
       log(`Moving channel ${ticket.discordChannelId} back to category ${category.discordCategoryId}`);
 
       // Move channel back to original category
+      // Setting isTranscriptCategory to false will apply the appropriate permissions
       await this.discordBot.moveChannelToCategory(
         ticket.discordChannelId,
-        category.discordCategoryId
+        category.discordCategoryId,
+        false  // Specify this is NOT a transcript category for proper permissions
       );
 
       // Update ticket status

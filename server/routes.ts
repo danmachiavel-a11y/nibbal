@@ -334,10 +334,11 @@ export async function registerRoutes(app: Express) {
             if (!discordBot) {
               log("Discord bot not initialized, cannot set up permissions", "warn");
             } else {
-              // Attempt to set up permissions
+              // Attempt to set up permissions for regular category
               const success = await discordBot.setupCategoryPermissions(
                 category.discordCategoryId,
-                category.discordRoleId
+                category.discordRoleId,
+                false // Regular category, not transcript
               );
               
               if (success) {
@@ -407,10 +408,15 @@ export async function registerRoutes(app: Express) {
           if (!discordBot) {
             log("Discord bot not initialized, cannot set up permissions", "warn");
           } else {
-            // Attempt to set up permissions
+            // Check if this is a transcript category
+            const isTranscriptCategory = category.transcriptCategoryId === category.discordCategoryId;
+            log(`Setting up permissions for category ${category.name} (transcript: ${isTranscriptCategory})`, "info");
+            
+            // Attempt to set up permissions for the updated category
             const success = await discordBot.setupCategoryPermissions(
               category.discordCategoryId,
-              category.discordRoleId
+              category.discordRoleId,
+              isTranscriptCategory // Pass the transcript status
             );
             
             if (success) {
