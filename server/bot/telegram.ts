@@ -273,12 +273,13 @@ export class TelegramBot {
       this.failedHeartbeats = 0;
       this.lastHeartbeatSuccess = Date.now();
       log("Heartbeat successful");
-    } catch (error) {
+    } catch (error: any) {
       log(`Heartbeat check failed: ${error}`, "warn");
       this.failedHeartbeats++;
 
       // Only disconnect on critical errors or after multiple failures
-      if ((error.message?.includes('restart') || error.message?.includes('unauthorized')) ||
+      if ((error && typeof error === 'object' && error.message?.includes('restart') || 
+           error && typeof error === 'object' && error.message?.includes('unauthorized')) ||
         this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
         this._isConnected = false;
         await this.handleDisconnect();

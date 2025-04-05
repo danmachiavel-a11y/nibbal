@@ -11,6 +11,7 @@ export interface IStorage {
   getBotConfig(): Promise<BotConfig | undefined>;
   updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig>;
   isAdmin(telegramId: string): Promise<boolean>;
+  isDiscordAdmin(discordId: string): Promise<boolean>;
 
   // User operations
   getUser(id: number): Promise<User | undefined>;
@@ -119,7 +120,8 @@ export class DatabaseStorage implements IStorage {
         welcomeImageUrl: null,
         telegramToken: null,
         discordToken: null,
-        adminTelegramIds: []
+        adminTelegramIds: [],
+        adminDiscordIds: []
       };
     }
     return config;
@@ -131,6 +133,14 @@ export class DatabaseStorage implements IStorage {
       return false;
     }
     return config.adminTelegramIds.includes(telegramId);
+  }
+  
+  async isDiscordAdmin(discordId: string): Promise<boolean> {
+    const config = await this.getBotConfig();
+    if (!config?.adminDiscordIds || config.adminDiscordIds.length === 0) {
+      return false;
+    }
+    return config.adminDiscordIds.includes(discordId);
   }
 
   async updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig> {

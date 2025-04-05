@@ -47,7 +47,8 @@ import {
   ApplicationCommandType,
   ApplicationCommandOptionType,
   WebhookClient,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  Guild
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -168,6 +169,38 @@ export class DiscordBot {
   // Convenience methods for rate limiting
   private async globalCheck(): Promise<void> {
     return this.checkRateLimit('global');
+  }
+  
+  /**
+   * Check if a Discord user has admin privileges
+   * First checks if they're the server owner, then server admin, then configured admin
+   * @param userId Discord user ID to check
+   * @param guild Discord guild (server) object
+   * @returns {Promise<boolean>} True if the user is an admin
+   */
+  private async isUserAdmin(userId: string, guild: Guild): Promise<boolean> {
+    // Always allow server owner
+    if (userId === guild.ownerId) {
+      return true;
+    }
+    
+    try {
+      // Check if user is in the configured admin list
+      const isConfiguredAdmin = await storage.isDiscordAdmin(userId);
+      if (isConfiguredAdmin) {
+        return true;
+      }
+      
+      // Check Discord admin permission
+      const member = await guild.members.fetch(userId);
+      if (member && member.permissions.has(PermissionFlagsBits.Administrator)) {
+        return true;
+      }
+    } catch (error) {
+      log(`Error checking admin status: ${error}`, "error");
+    }
+    
+    return false;
   }
 
   private async webhookCheck(webhookId: string): Promise<void> {
@@ -335,7 +368,7 @@ export class DiscordBot {
         },
         {
           name: 'nickname',
-          description: 'Get Telegram username of ticket creator (Owner only)',
+          description: 'Get Telegram username of ticket creator (Admin only)',
           type: ApplicationCommandType.ChatInput
         }
       ];
@@ -401,11 +434,20 @@ export class DiscordBot {
           return;
         }
 
-        // Check if user is guild owner
+        // Check if user is an admin
         const guild = interaction.guild;
-        if (!guild || interaction.user.id !== guild.ownerId) {
+        if (!guild) {
           await interaction.reply({
-            content: "This command can only be used by the server owner!",
+            content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        if (!isAdmin) {
+          await interaction.reply({
+            content: "This command can only be used by administrators!",
             ephemeral: true
           });
           return;
@@ -627,7 +669,7 @@ export class DiscordBot {
           return;
         }
         
-        // Check if user is guild owner or has admin permissions
+        // Check if user is an admin
         const guild = interaction.guild;
         if (!guild) {
           await interaction.reply({
@@ -637,10 +679,8 @@ export class DiscordBot {
           return;
         }
         
-        const isOwner = interaction.user.id === guild.ownerId;
-        const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
-        
-        if (!isOwner && !isAdmin) {
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        if (!isAdmin) {
           await interaction.reply({
             content: "⛔ This command can only be used by administrators!",
             ephemeral: true
@@ -683,7 +723,7 @@ export class DiscordBot {
           return;
         }
         
-        // Check if user is guild owner or has admin permissions
+        // Check if user is an admin
         const guild = interaction.guild;
         if (!guild) {
           await interaction.reply({
@@ -693,10 +733,8 @@ export class DiscordBot {
           return;
         }
         
-        const isOwner = interaction.user.id === guild.ownerId;
-        const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
-        
-        if (!isOwner && !isAdmin) {
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        if (!isAdmin) {
           await interaction.reply({
             content: "⛔ This command can only be used by administrators!",
             ephemeral: true
@@ -755,6 +793,25 @@ export class DiscordBot {
         if (!(categoryChannel instanceof CategoryChannel)) {
           await interaction.reply({
             content: "Please select a valid category!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Check if user is an admin
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.reply({
+            content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        if (!isAdmin) {
+          await interaction.reply({
+            content: "⛔ This command can only be used by administrators!",
             ephemeral: true
           });
           return;
@@ -851,11 +908,20 @@ export class DiscordBot {
           return;
         }
 
-        // Check if user is guild owner
+        // Check if user is an admin
         const guild = interaction.guild;
-        if (!guild || interaction.user.id !== guild.ownerId) {
+        if (!guild) {
           await interaction.reply({
-            content: "This command can only be used by the server owner!",
+            content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        if (!isAdmin) {
+          await interaction.reply({
+            content: "This command can only be used by administrators!",
             ephemeral: true
           });
           return;
@@ -898,6 +964,16 @@ export class DiscordBot {
         if (!guild) {
           await interaction.reply({
             content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Check if user is an admin
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        if (!isAdmin) {
+          await interaction.reply({
+            content: "⛔ This command can only be used by administrators!",
             ephemeral: true
           });
           return;
@@ -1018,6 +1094,16 @@ export class DiscordBot {
         if (!guild) {
           await interaction.reply({
             content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Check if user is an admin
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        if (!isAdmin) {
+          await interaction.reply({
+            content: "⛔ This command can only be used by administrators!",
             ephemeral: true
           });
           return;

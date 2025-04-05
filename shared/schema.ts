@@ -10,6 +10,7 @@ export const botConfig = pgTable("bot_config", {
   telegramToken: text("telegram_token"),
   discordToken: text("discord_token"),
   adminTelegramIds: text("admin_telegram_ids").array().default([]),
+  adminDiscordIds: text("admin_discord_ids").array().default([]),
 });
 
 export const users = pgTable("users", {
