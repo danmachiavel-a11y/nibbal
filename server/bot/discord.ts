@@ -74,6 +74,7 @@ export class DiscordBot {
     channelCreate: { capacity: 9, refillTime: 10000 }, // 9 per 10 seconds
     channelEdit: { capacity: 4, refillTime: 10000 }, // 4 per 10 seconds
     messagesFetch: { capacity: 45, refillTime: 1000 }, // 45 per second
+    application: { capacity: 5, refillTime: 20000 }, // 5 per 20 seconds - for application commands
   };
 
   // Webhook management constants
@@ -294,8 +295,22 @@ export class DiscordBot {
 
       // Register commands with rate limit handling
       for (const command of commands) {
+        await this.checkRateLimit('application');
         try {
-          await this.client.application?.commands.create(command);
+          if (!this.client.application) {
+            log("Discord application not available for command registration", "warn");
+            continue;
+          }
+          
+          // Type assertion for ApplicationCommandData to ensure compatibility
+          const commandData = {
+            ...command,
+            type: command.type === ApplicationCommandType.ChatInput ? 
+                  ApplicationCommandType.ChatInput : command.type
+          };
+          
+          await this.client.application.commands.create(commandData as any);
+          
           // Add delay between each command registration
           await new Promise(resolve => setTimeout(resolve, 1000));
           log(`Registered command: ${command.name}`);
@@ -365,7 +380,7 @@ export class DiscordBot {
             .addFields(
               { name: 'Telegram Username', value: `@${user.username}`, inline: true },
               { name: 'Telegram ID', value: user.telegramId, inline: true },
-              { name: 'Full Name', value: user.fullName || 'Not Available', inline: true },
+              { name: 'Full Name', value: user.telegramName || 'Not Available', inline: true },
               { name: 'Total Paid Tickets', value: paidTickets.length.toString(), inline: false }
             )
             .setTimestamp();
@@ -403,10 +418,13 @@ export class DiscordBot {
           }
 
           // Use member's display name if available, fallback to username
-          const displayName = interaction.member?.displayName ||
-            interaction.user.displayName ||
-            interaction.user.username ||
-            "Discord User";
+          // Get display name with fallbacks
+          let displayName = "Discord User";
+          if (interaction.member && 'displayName' in interaction.member) {
+            displayName = interaction.member.displayName;
+          } else if (interaction.user && 'username' in interaction.user) {
+            displayName = interaction.user.username;
+          }
 
           // Forward ping through bridge
           await this.bridge.forwardPingToTelegram(ticket.id, displayName);
@@ -443,7 +461,7 @@ export class DiscordBot {
           const embed = new EmbedBuilder()
             .setColor(0x00FF00)
             .setTitle('💰 Payment Recorded')
-            .setDescription(`Ticket marked as paid by ${interaction.member?.displayName || interaction.user.username} on Discord`)
+            .setDescription(`Ticket marked as paid by ${interaction.user.username} on Discord`)
             .addFields(
               { name: 'Amount', value: `$${amount}`, inline: true },
               { name: 'Status', value: 'Completed & Paid', inline: true }
@@ -472,7 +490,15 @@ export class DiscordBot {
         }
 
         try {
-          // Get category for transcript category ID
+          // Get category for transcript category ID with null safety
+          if (!ticket.categoryId) {
+            await interaction.reply({
+              content: "This ticket doesn't have a valid category. Please contact an administrator.",
+              ephemeral: true
+            });
+            return;
+          }
+          
           const category = await storage.getCategory(ticket.categoryId);
           if (!category?.transcriptCategoryId) {
             await interaction.reply({
@@ -485,10 +511,13 @@ export class DiscordBot {
           // Get ticket creator's info for notification
           const user = await storage.getUser(ticket.userId!);
           if (user?.telegramId) {
-            // Get staff member's display name
-            const staffName = interaction.member?.displayName ||
-              interaction.user.displayName ||
-              interaction.user.username;
+            // Get staff member's display name with type safety
+            let staffName = "Discord Staff";
+            if (interaction.member && 'displayName' in interaction.member) {
+              staffName = interaction.member.displayName;
+            } else if (interaction.user && 'username' in interaction.user) {
+              staffName = interaction.user.username;
+            }
 
             // Send notification
             await this.bridge.getTelegramBot().sendMessage(
@@ -659,17 +688,20 @@ export class DiscordBot {
             ephemeral: true
           });
 
-          // Get staff member's display name
-          const staffName = interaction.member?.displayName ||
-            interaction.user.displayName ||
-            interaction.user.username;
+          // Get staff member's display name with type safety
+          let staffName = "Discord Staff";
+          if (interaction.member && 'displayName' in interaction.member) {
+            staffName = interaction.member.displayName;
+          } else if (interaction.user && 'username' in interaction.user) {
+            staffName = interaction.user.username;
+          }
 
           // Process all channels
           for (const [_, channel] of channels) {
             if (channel instanceof TextChannel) {
               try {
                 const ticket = await storage.getTicketByDiscordChannel(channel.id);
-                if (ticket) {
+                if (ticket && ticket.categoryId) {
                   const category = await storage.getCategory(ticket.categoryId);
                   if (category?.transcriptCategoryId) {
                     const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
@@ -800,11 +832,18 @@ export class DiscordBot {
           /\.(jpg|jpeg|png|gif|webp)$/i.test(attachment.name || '')
         );
 
-        // Forward content to Telegram
+        // Forward content to Telegram with safer member handling
+        let displayName = "Unknown Discord User";
+        if (message.member && 'displayName' in message.member) {
+          displayName = message.member.displayName;
+        } else if (message.author && message.author.username) {
+          displayName = message.author.username;
+        }
+        
         await this.bridge.forwardToTelegram(
           message.content,
           ticket.id,
-          message.member?.displayName || message.author.username || "Unknown Discord User",
+          displayName,
           imageAttachments.size > 0 ? Array.from(imageAttachments.values()) : undefined
         );
 
@@ -824,10 +863,18 @@ export class DiscordBot {
 
       log(`Processing edited Discord message for ticket ${ticket.id}`);
 
+      // Get display name with proper type handling
+      let displayName = "Unknown Discord User";
+      if (newMessage.member && 'displayName' in newMessage.member) {
+        displayName = newMessage.member.displayName;
+      } else if (newMessage.author && newMessage.author.username) {
+        displayName = newMessage.author.username;
+      }
+      
       await this.bridge.forwardToTelegram(
         `[EDITED] ${newMessage.content}`,
         ticket.id,
-        newMessage.member?.displayName || newMessage.author?.username || "Unknown Discord User"
+        displayName
       );
     });
   }
@@ -1252,17 +1299,11 @@ export class DiscordBot {
         this.connectionTimeout = null;
       }
 
-      // Cleanup all webhooks
-      for (const [channelId, webhooks] of this.webhooks) {
-        for (const webhook of webhooks) {
-          try {
-            await webhook.webhook.deleteIfExists();
-          } catch (error) {
-            log(`Error deleting webhook for channel ${channelId}: ${error}`, "warn");
-          }
-        }
-      }
+      // Cleanup all webhooks by just clearing the map
+      // WebhookClient doesn't have deleteIfExists method, and we can't directly delete
+      // the webhooks from Discord since we only have WebhookClient instances
       this.webhooks.clear();
+      log("Cleared webhook cache");
 
       // Destroy the client
       if (this.client) {
