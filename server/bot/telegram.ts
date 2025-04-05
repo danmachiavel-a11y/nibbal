@@ -826,7 +826,8 @@ export class TelegramBot {
         }
       }
     } catch (error) {
-      log(`Error in handleCategoryMenu: ${error}`, "error");
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      log(`Error in handleCategoryMenu: ${errorMsg}`, "error");
       await ctx.reply("❌ There was an error displaying the menu. Please try again.");
     }
 
@@ -956,7 +957,7 @@ export class TelegramBot {
         });
       } catch (error) {
         // If editing fails, send a new message
-        if (error.message?.includes("message can't be edited")) {
+        if (error instanceof Error && error.message?.includes("message can't be edited")) {
           await ctx.reply(simpleEscape(message), {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
@@ -968,7 +969,8 @@ export class TelegramBot {
 
       log(`Successfully displayed submenu options for submenu ${submenuId}`);
     } catch (error) {
-      log(`Error in handleSubmenuClick: ${error}`, "error");
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      log(`Error in handleSubmenuClick: ${errorMsg}`, "error");
       await ctx.reply("❌ There was an error displaying the menu. Please try again.");
     }
   }
@@ -1549,75 +1551,6 @@ ID: ${activeTicket.id}`
       this.userStates.delete(userId);
       this.stateCleanups.delete(userId);
       this.activeUsers.delete(userId);
-    }
-  }
-
-
-  private async handleSubmenuClick(ctx: Context, submenuId: number) {
-    try {
-      const submenu = await storage.getCategory(submenuId);
-      if (!submenu) {
-        await ctx.reply("❌ Submenu not found.");
-        return;
-      }
-
-      const categories = await storage.getCategories();
-      const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
-
-      const keyboard: { text: string; callback_data: string; }[][] = [];
-      let currentRow: { text: string; callback_data: string; }[] = [];
-
-      for (const category of submenuCategories) {
-        const button = {
-          text: category.isClosed ? `🔴 ${category.name}` : category.name,
-          callback_data: `category_${category.id}`
-        };
-
-        if (category.newRow && currentRow.length > 0) {
-          keyboard.push([...currentRow]);
-          currentRow = [button];
-        } else {
-          currentRow.push(button);
-          if (currentRow.length >= 2) {
-            keyboard.push([...currentRow]);
-            currentRow = [];
-          }
-        }
-      }
-
-      if (currentRow.length > 0) {
-        keyboard.push(currentRow);
-      }
-
-      // Add a "Back" button
-      keyboard.push([{
-        text: "↩️ Back",
-        callback_data: "back_to_main"
-      }]);
-
-      const message = `Please select a service from ${submenu.name}:`;
-
-      try {
-        await ctx.editMessageText(simpleEscape(message), {
-          parse_mode: "MarkdownV2",
-          reply_markup: { inline_keyboard: keyboard }
-        });
-      } catch (error) {
-        // If editing fails, send a new message
-        if (error.message?.includes("message can't be edited")) {
-          await ctx.reply(simpleEscape(message), {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
-        } else {
-          throw error; // Re-throw other errors
-        }
-      }
-
-      log(`Successfully displayed submenu options for submenu ${submenuId}`);
-    } catch (error) {
-      log(`Error in handleSubmenuClick: ${error}`, "error");
-      await ctx.reply("❌ There was an error displaying the menu. Please try again.");
     }
   }
 
