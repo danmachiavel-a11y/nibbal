@@ -121,7 +121,7 @@ export async function registerRoutes(app: Express) {
     try {
       const config = await storage.getBotConfig();
       res.json(config);
-    } catch (error) {
+    } catch (error: any) {
       log(`Error getting bot config: ${error}`, "error");
       res.status(500).json({ message: "Failed to get bot configuration" });
     }
@@ -162,7 +162,7 @@ export async function registerRoutes(app: Express) {
       }
 
       res.json(config);
-    } catch (error) {
+    } catch (error: any) {
       log(`Error updating bot config: ${error}`, "error");
       res.status(500).json({ message: "Failed to update bot configuration" });
     }
@@ -179,7 +179,7 @@ export async function registerRoutes(app: Express) {
       res.json({
         connected: telegramBot?.getIsConnected() || false,
       });
-    } catch (error) {
+    } catch (error: any) {
       log(`Error checking Telegram bot status: ${error}`, "error");
       res.status(500).json({ message: "Failed to check Telegram bot status" });
     }
@@ -194,7 +194,7 @@ export async function registerRoutes(app: Express) {
       res.json({
         connected: !!discordBot?.isReady(),
       });
-    } catch (error) {
+    } catch (error: any) {
       log(`Error checking Discord bot status: ${error}`, "error");
       res.status(500).json({ message: "Failed to check Discord bot status" });
     }
@@ -220,7 +220,7 @@ export async function registerRoutes(app: Express) {
       try {
         const categories = await discordBot.getCategories();
         res.json(categories);
-      } catch (error) {
+      } catch (error: any) {
         if (error.message?.includes("Bot is not in any servers")) {
           return res.status(503).json({
             message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
@@ -230,7 +230,7 @@ export async function registerRoutes(app: Express) {
         }
         throw error; // Re-throw to be caught by the outer catch
       }
-    } catch (error) {
+    } catch (error: any) {
       log(`Error fetching Discord categories: ${error}`, "error");
       res.status(500).json({ 
         message: "Failed to fetch Discord categories", 
@@ -260,7 +260,7 @@ export async function registerRoutes(app: Express) {
       try {
         const roles = await discordBot.getRoles();
         res.json(roles);
-      } catch (error) {
+      } catch (error: any) {
         if (error.message?.includes("No guild found")) {
           return res.status(503).json({
             message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
@@ -270,7 +270,7 @@ export async function registerRoutes(app: Express) {
         }
         throw error; // Re-throw to be caught by the outer catch
       }
-    } catch (error) {
+    } catch (error: any) {
       log(`Error fetching Discord roles: ${error}`, "error");
       res.status(500).json({ 
         message: "Failed to fetch Discord roles", 
@@ -345,14 +345,14 @@ export async function registerRoutes(app: Express) {
               }
             }
           }
-        } catch (error) {
+        } catch (error: any) {
           log(`Error setting up category permissions: ${error}`, "error");
           // We don't fail the request if permissions setup fails
         }
       }
       
       res.json(category);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating category:", error);
       res.status(500).json({ message: "Failed to create category" });
     }
@@ -418,7 +418,7 @@ export async function registerRoutes(app: Express) {
             }
           }
         }
-      } catch (error) {
+      } catch (error: any) {
         log(`Error setting up category permissions: ${error}`, "error");
         // We don't fail the request if permissions setup fails
       }
@@ -436,7 +436,7 @@ export async function registerRoutes(app: Express) {
     try {
       await storage.deleteCategory(id);
       res.json({ message: "Category deleted successfully" });
-    } catch (error) {
+    } catch (error: any) {
       res.status(500).json({ message: "Failed to delete category" });
     }
   });
@@ -462,7 +462,7 @@ export async function registerRoutes(app: Express) {
 
         res.json(allTickets);
       }
-    } catch (error) {
+    } catch (error: any) {
       log(`Error fetching tickets: ${error}`, "error");
       res.status(500).json({ message: "Failed to fetch tickets" });
     }
@@ -562,7 +562,7 @@ export async function registerRoutes(app: Express) {
       );
 
       res.json(usersWithStats);
-    } catch (error) {
+    } catch (error: any) {
       log(`Error fetching users: ${error}`, "error");
       res.status(500).json({ message: "Failed to fetch users" });
     }
@@ -593,7 +593,7 @@ export async function registerRoutes(app: Express) {
       }
 
       res.json(allClosedTickets);
-    } catch (error) {
+    } catch (error: any) {
       log(`Error fetching closed tickets: ${error}`, "error");
       res.status(500).json({ message: "Failed to fetch closed tickets" });
     }
@@ -614,7 +614,7 @@ export async function registerRoutes(app: Express) {
         stats = await storage.getUserStatsByPeriod(discordId, period || 'all');
       }
       res.json(stats);
-    } catch (error) {
+    } catch (error: any) {
       res.status(500).json({ message: "Failed to fetch user stats" });
     }
   });
@@ -632,7 +632,7 @@ export async function registerRoutes(app: Express) {
         stats = await storage.getAllWorkerStatsByPeriod(period || 'all');
       }
       res.json(stats);
-    } catch (error) {
+    } catch (error: any) {
       res.status(500).json({ message: "Failed to fetch worker stats" });
     }
   });
