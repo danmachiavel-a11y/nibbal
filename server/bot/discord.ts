@@ -969,15 +969,7 @@ export class DiscordBot {
           return;
         }
         
-        // Check if user is an admin
-        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
-        if (!isAdmin) {
-          await interaction.reply({
-            content: "⛔ This command can only be used by administrators!",
-            ephemeral: true
-          });
-          return;
-        }
+        // No admin check needed - all staff can use this command
         
         try {
           // Get params from the command options
@@ -1099,15 +1091,7 @@ export class DiscordBot {
           return;
         }
         
-        // Check if user is an admin
-        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
-        if (!isAdmin) {
-          await interaction.reply({
-            content: "⛔ This command can only be used by administrators!",
-            ephemeral: true
-          });
-          return;
-        }
+        // No admin check needed - all staff can use this command
         
         try {
           // Get params from the command options
