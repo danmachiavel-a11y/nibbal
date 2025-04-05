@@ -9,6 +9,7 @@ export const botConfig = pgTable("bot_config", {
   welcomeImageUrl: text("welcome_image_url"),
   telegramToken: text("telegram_token"),
   discordToken: text("discord_token"),
+  adminTelegramIds: text("admin_telegram_ids").array().default([]),
 });
 
 export const users = pgTable("users", {
@@ -17,6 +18,9 @@ export const users = pgTable("users", {
   discordId: text("discord_id").unique(),
   username: text("username").notNull(),
   isBanned: boolean("is_banned").default(false),
+  banReason: text("ban_reason"),
+  bannedAt: timestamp("banned_at"),
+  bannedBy: text("banned_by"),
   telegramUsername: text("telegram_username"),
   telegramName: text("telegram_name"),
 });

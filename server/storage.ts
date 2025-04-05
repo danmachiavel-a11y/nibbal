@@ -1,8 +1,3 @@
-import { 
-  User, InsertUser, Category, InsertCategory,
-  Ticket, InsertTicket, Message, InsertMessage,
-  BotConfig, InsertBotConfig
-} from "@shared/schema";
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from './db';
 import {
@@ -15,13 +10,16 @@ export interface IStorage {
   // Bot config operations
   getBotConfig(): Promise<BotConfig | undefined>;
   updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig>;
+  isAdmin(telegramId: string): Promise<boolean>;
 
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByTelegramId(telegramId: string): Promise<User | undefined>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  banUser(id: number): Promise<void>;
+  banUser(id: number, banReason?: string, bannedBy?: string): Promise<void>;
+  unbanUser(id: number): Promise<void>;
+  getBannedUsers(): Promise<User[]>;
 
   // Category operations
   getCategories(): Promise<Category[]>;
@@ -117,10 +115,21 @@ export class DatabaseStorage implements IStorage {
       return {
         id: 1,
         welcomeMessage: "Welcome to the support bot! Please select a service:",
-        welcomeImageUrl: null
+        welcomeImageUrl: null,
+        telegramToken: null,
+        discordToken: null,
+        adminTelegramIds: []
       };
     }
     return config;
+  }
+  
+  async isAdmin(telegramId: string): Promise<boolean> {
+    const config = await this.getBotConfig();
+    if (!config?.adminTelegramIds || config.adminTelegramIds.length === 0) {
+      return false;
+    }
+    return config.adminTelegramIds.includes(telegramId);
   }
 
   async updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig> {
@@ -162,8 +171,26 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async banUser(id: number): Promise<void> {
-    await db.update(users).set({ isBanned: true }).where(eq(users.id, id));
+  async banUser(id: number, banReason?: string, bannedBy?: string): Promise<void> {
+    await db.update(users).set({ 
+      isBanned: true,
+      banReason: banReason || "No reason provided",
+      bannedAt: new Date(),
+      bannedBy: bannedBy || "System" 
+    }).where(eq(users.id, id));
+  }
+  
+  async unbanUser(id: number): Promise<void> {
+    await db.update(users).set({ 
+      isBanned: false,
+      banReason: null,
+      bannedAt: null,
+      bannedBy: null 
+    }).where(eq(users.id, id));
+  }
+  
+  async getBannedUsers(): Promise<User[]> {
+    return db.select().from(users).where(eq(users.isBanned, true)).orderBy(desc(users.bannedAt));
   }
 
   // Category operations
@@ -304,8 +331,8 @@ export class DatabaseStorage implements IStorage {
       totalEarnings: result[0]?.earnings || 0,
       ticketCount: result[0]?.count || 0,
       categoryStats: categoryStats.map(stat => ({
-        categoryId: stat.categoryId,
-        categoryName: stat.categoryName,
+        categoryId: stat.categoryId || 0,
+        categoryName: stat.categoryName || "Uncategorized",
         earnings: stat.earnings || 0,
         ticketCount: stat.ticketCount
       }))
@@ -401,8 +428,8 @@ export class DatabaseStorage implements IStorage {
       totalEarnings: result[0]?.earnings || 0,
       ticketCount: result[0]?.count || 0,
       categoryStats: categoryStats.map(stat => ({
-        categoryId: stat.categoryId,
-        categoryName: stat.categoryName,
+        categoryId: stat.categoryId || 0,
+        categoryName: stat.categoryName || "Uncategorized",
         earnings: stat.earnings || 0,
         ticketCount: stat.ticketCount
       })),
@@ -458,7 +485,18 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async getUserStatsByDateRange(discordId: string, startDate: Date, endDate: Date) {
+  async getUserStatsByDateRange(discordId: string, startDate: Date, endDate: Date): Promise<{
+    totalEarnings: number;
+    ticketCount: number;
+    categoryStats: Array<{
+      categoryId: number;
+      categoryName: string;
+      earnings: number;
+      ticketCount: number;
+    }>;
+    periodStart: Date;
+    periodEnd: Date;
+  }> {
     const result = await db.select({
       earnings: sql<number>`sum(${tickets.amount})::int`,
       count: sql<number>`count(*)::int`
@@ -495,8 +533,8 @@ export class DatabaseStorage implements IStorage {
       totalEarnings: result[0]?.earnings || 0,
       ticketCount: result[0]?.count || 0,
       categoryStats: categoryStats.map(stat => ({
-        categoryId: stat.categoryId,
-        categoryName: stat.categoryName,
+        categoryId: stat.categoryId || 0,
+        categoryName: stat.categoryName || "Uncategorized",
         earnings: stat.earnings || 0,
         ticketCount: stat.ticketCount
       })),
@@ -505,7 +543,14 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getAllWorkerStatsByDateRange(startDate: Date, endDate: Date) {
+  async getAllWorkerStatsByDateRange(startDate: Date, endDate: Date): Promise<Array<{
+    discordId: string;
+    username: string;
+    totalEarnings: number;
+    ticketCount: number;
+    periodStart: Date;
+    periodEnd: Date;
+  }>> {
     const stats = await db.select({
       discordId: tickets.claimedBy,
       earnings: sql<number>`sum(${tickets.amount})::int`,

@@ -7,6 +7,7 @@ import Settings from "@/pages/settings";
 import Stats from "@/pages/stats";
 import Customers from "@/pages/customers";
 import Transcripts from "@/pages/transcripts";
+import BannedUsers from "@/pages/banned-users";
 import NotFound from "@/pages/not-found";
 import { Navbar } from "@/components/Navbar";
 
@@ -21,6 +22,7 @@ function Router() {
           <Route path="/transcripts" component={Transcripts} />
           <Route path="/settings" component={Settings} />
           <Route path="/stats" component={Stats} />
+          <Route path="/banned-users" component={BannedUsers} />
           <Route component={NotFound} />
         </Switch>
       </main>

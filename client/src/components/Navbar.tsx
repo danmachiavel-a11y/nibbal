@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Settings, BarChart, Users, Archive } from "lucide-react";
+import { LayoutDashboard, Settings, BarChart, Users, Archive, Ban } from "lucide-react";
 
 export function Navbar() {
   const [location] = useLocation();
@@ -10,6 +10,7 @@ export function Navbar() {
     { href: "/customers", label: "Customers", icon: Users },
     { href: "/transcripts", label: "Transcripts", icon: Archive },
     { href: "/stats", label: "Stats", icon: BarChart },
+    { href: "/banned-users", label: "Banned Users", icon: Ban },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 

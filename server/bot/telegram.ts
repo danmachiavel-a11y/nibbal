@@ -1025,10 +1025,17 @@ export class TelegramBot {
         await ctx.reply("⚠️ Please wait before using this command again.");
         return;
       }
-
+      
       try {
+        // Check if user is banned
+        let user = await storage.getUserByTelegramId(userId.toString());
+        if (user?.isBanned) {
+          const banReason = user.banReason || "No reason provided";
+          await ctx.reply(`⛔ You are banned from using this bot.\nReason: ${banReason}`);
+          return;
+        }
+        
         // Check for existing active ticket first
-        const user = await storage.getUserByTelegramId(userId.toString());
         if (user) {
           const activeTicket = await storage.getActiveTicketByUserId(user.id);
           if (activeTicket) {
@@ -1274,6 +1281,247 @@ ID: ${activeTicket.id}`
       }
     });
 
+    this.bot.command("ban", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      
+      if (!this.checkRateLimit(userId, 'command', 'ban')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+      
+      // Check if user is an admin
+      const isAdmin = await storage.isAdmin(userId.toString());
+      if (!isAdmin) {
+        await ctx.reply("❌ You don't have permission to use this command.");
+        return;
+      }
+      
+      // Get command arguments: /ban [telegramId|ticketId] [reason]
+      const message = ctx.message?.text || "";
+      const args = message.split(" ");
+      args.shift(); // Remove the command itself
+      
+      if (args.length < 1) {
+        await ctx.reply("❌ Invalid command format. Use /ban [telegramId|ticketId] [reason]");
+        return;
+      }
+      
+      const target = args[0];
+      const reason = args.slice(1).join(" ") || "No reason provided";
+      const adminName = ctx.from.username || 
+        [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ") || 
+        "Admin";
+      
+      try {
+        // Check if target is a ticket ID
+        if (/^\d+$/.test(target) && !target.startsWith("@")) {
+          const ticketId = parseInt(target);
+          const ticket = await storage.getTicket(ticketId);
+          
+          if (!ticket) {
+            await ctx.reply(`❌ Ticket with ID ${ticketId} not found.`);
+            return;
+          }
+          
+          const targetUser = await storage.getUser(ticket.userId || 0);
+          if (!targetUser) {
+            await ctx.reply(`❌ User associated with ticket ${ticketId} not found.`);
+            return;
+          }
+          
+          // Ban user
+          await storage.banUser(targetUser.id, reason, adminName);
+          
+          await ctx.reply(`✅ User ${targetUser.username} has been banned for: ${reason}.`);
+          
+          // Notify user on Discord if channel exists
+          if (ticket.discordChannelId) {
+            await this.bridge.forwardToDiscord(
+              `⛔ **BANNED**: This user has been banned by ${adminName} for: ${reason}`,
+              ticket.id,
+              "SYSTEM",
+            );
+          }
+          
+          // Close ticket if active
+          if (ticket.status !== "closed" && ticket.status !== "deleted") {
+            await storage.updateTicketStatus(ticket.id, "closed");
+            
+            if (ticket.discordChannelId) {
+              try {
+                await this.bridge.moveToTranscripts(ticket.id);
+              } catch (error) {
+                console.error("Error moving banned user's ticket to transcripts:", error);
+              }
+            }
+          }
+          
+          // Send direct message to user if possible
+          try {
+            if (targetUser.telegramId) {
+              await this.bot.telegram.sendMessage(
+                targetUser.telegramId,
+                `⛔ You have been banned from using this bot for: ${reason}.`
+              );
+            }
+          } catch (error) {
+            console.error("Error sending ban notification to user:", error);
+          }
+        } else {
+          // Handle as telegramId
+          const telegramId = target.startsWith("@") ? target.substring(1) : target;
+          const targetUser = await storage.getUserByTelegramId(telegramId);
+          
+          if (!targetUser) {
+            await ctx.reply(`❌ User with Telegram ID ${telegramId} not found.`);
+            return;
+          }
+          
+          // Ban user
+          await storage.banUser(targetUser.id, reason, adminName);
+          
+          await ctx.reply(`✅ User ${targetUser.username} has been banned for: ${reason}.`);
+          
+          // Get active ticket if any
+          const activeTicket = await storage.getActiveTicketByUserId(targetUser.id);
+          if (activeTicket) {
+            // Notify on Discord if channel exists
+            if (activeTicket.discordChannelId) {
+              await this.bridge.forwardToDiscord(
+                `⛔ **BANNED**: This user has been banned by ${adminName} for: ${reason}`,
+                activeTicket.id,
+                "SYSTEM",
+              );
+            }
+            
+            // Close ticket
+            await storage.updateTicketStatus(activeTicket.id, "closed");
+            
+            if (activeTicket.discordChannelId) {
+              try {
+                await this.bridge.moveToTranscripts(activeTicket.id);
+              } catch (error) {
+                console.error("Error moving banned user's ticket to transcripts:", error);
+              }
+            }
+          }
+          
+          // Send direct message to user if possible
+          try {
+            await this.bot.telegram.sendMessage(
+              telegramId,
+              `⛔ You have been banned from using this bot for: ${reason}.`
+            );
+          } catch (error) {
+            console.error("Error sending ban notification to user:", error);
+          }
+        }
+      } catch (error) {
+        console.error("Error banning user:", error);
+        await ctx.reply("❌ An error occurred while trying to ban the user. Please try again.");
+      }
+    });
+    
+    this.bot.command("unban", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      
+      if (!this.checkRateLimit(userId, 'command', 'unban')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+      
+      // Check if user is an admin
+      const isAdmin = await storage.isAdmin(userId.toString());
+      if (!isAdmin) {
+        await ctx.reply("❌ You don't have permission to use this command.");
+        return;
+      }
+      
+      // Get command arguments: /unban [telegramId|userId]
+      const message = ctx.message?.text || "";
+      const args = message.split(" ");
+      args.shift(); // Remove the command itself
+      
+      if (args.length < 1) {
+        await ctx.reply("❌ Invalid command format. Use /unban [telegramId|userId]");
+        return;
+      }
+      
+      const target = args[0];
+      const adminName = ctx.from.username || 
+        [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ") || 
+        "Admin";
+      
+      try {
+        // Check if target is a user ID
+        if (/^\d+$/.test(target) && !target.startsWith("@")) {
+          const userId = parseInt(target);
+          const targetUser = await storage.getUser(userId);
+          
+          if (!targetUser) {
+            await ctx.reply(`❌ User with ID ${userId} not found.`);
+            return;
+          }
+          
+          if (!targetUser.isBanned) {
+            await ctx.reply(`User ${targetUser.username} is not banned.`);
+            return;
+          }
+          
+          // Unban user
+          await storage.unbanUser(targetUser.id);
+          
+          await ctx.reply(`✅ User ${targetUser.username} has been unbanned by ${adminName}.`);
+          
+          // Send direct message to user if possible
+          try {
+            if (targetUser.telegramId) {
+              await this.bot.telegram.sendMessage(
+                targetUser.telegramId,
+                `✅ You have been unbanned and can now use this bot again.`
+              );
+            }
+          } catch (error) {
+            console.error("Error sending unban notification to user:", error);
+          }
+        } else {
+          // Handle as telegramId
+          const telegramId = target.startsWith("@") ? target.substring(1) : target;
+          const targetUser = await storage.getUserByTelegramId(telegramId);
+          
+          if (!targetUser) {
+            await ctx.reply(`❌ User with Telegram ID ${telegramId} not found.`);
+            return;
+          }
+          
+          if (!targetUser.isBanned) {
+            await ctx.reply(`User ${targetUser.username} is not banned.`);
+            return;
+          }
+          
+          // Unban user
+          await storage.unbanUser(targetUser.id);
+          
+          await ctx.reply(`✅ User ${targetUser.username} has been unbanned by ${adminName}.`);
+          
+          // Send direct message to user if possible
+          try {
+            await this.bot.telegram.sendMessage(
+              telegramId,
+              `✅ You have been unbanned and can now use this bot again.`
+            );
+          } catch (error) {
+            console.error("Error sending unban notification to user:", error);
+          }
+        }
+      } catch (error) {
+        console.error("Error unbanning user:", error);
+        await ctx.reply("❌ An error occurred while trying to unban the user. Please try again.");
+      }
+    });
+    
     this.bot.command("close", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;

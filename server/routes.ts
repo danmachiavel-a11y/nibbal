@@ -638,5 +638,62 @@ export async function registerRoutes(app: Express) {
   });
 
   log("Routes registered successfully");
+  // Banned Users Routes
+  app.get("/api/banned-users", async (req, res) => {
+    try {
+      const bannedUsers = await storage.getBannedUsers();
+      res.json(bannedUsers);
+    } catch (error: any) {
+      log(`Error fetching banned users: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch banned users" });
+    }
+  });
+
+  app.post("/api/ban-user", async (req, res) => {
+    try {
+      const schema = z.object({
+        userId: z.number(),
+        banReason: z.string().optional(),
+        bannedBy: z.string().optional()
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid request body", errors: result.error.errors });
+      }
+
+      await storage.banUser(
+        result.data.userId, 
+        result.data.banReason || "No reason provided", 
+        result.data.bannedBy || "System"
+      );
+      
+      res.json({ message: "User banned successfully" });
+    } catch (error: any) {
+      log(`Error banning user: ${error}`, "error");
+      res.status(500).json({ message: "Failed to ban user" });
+    }
+  });
+
+  app.post("/api/unban-user", async (req, res) => {
+    try {
+      const schema = z.object({
+        userId: z.number()
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid request body", errors: result.error.errors });
+      }
+
+      await storage.unbanUser(result.data.userId);
+      
+      res.json({ message: "User unbanned successfully" });
+    } catch (error: any) {
+      log(`Error unbanning user: ${error}`, "error");
+      res.status(500).json({ message: "Failed to unban user" });
+    }
+  });
+
   return httpServer;
 }
