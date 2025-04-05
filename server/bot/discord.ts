@@ -294,7 +294,7 @@ export class DiscordBot {
         },
         {
           name: 'ban',
-          description: 'Ban a user from creating tickets (Owner/Admin only)',
+          description: 'Ban a user from creating tickets',
           type: ApplicationCommandType.ChatInput,
           options: [
             {
@@ -306,6 +306,31 @@ export class DiscordBot {
             {
               name: 'ticketid',
               description: 'The Ticket ID to find and ban the user who created it',
+              type: ApplicationCommandOptionType.Integer,
+              required: false
+            },
+            {
+              name: 'reason',
+              description: 'Reason for banning the user',
+              type: ApplicationCommandOptionType.String,
+              required: false
+            }
+          ]
+        },
+        {
+          name: 'unban',
+          description: 'Unban a user so they can create tickets again',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'telegramid',
+              description: 'The Telegram ID of the user to unban',
+              type: ApplicationCommandOptionType.String,
+              required: false
+            },
+            {
+              name: 'ticketid',
+              description: 'The Ticket ID to find and unban the user who created it',
               type: ApplicationCommandOptionType.Integer,
               required: false
             }
@@ -861,7 +886,6 @@ export class DiscordBot {
       
       // Ban command handler
       if (interaction.commandName === 'ban') {
-        // Check if user is guild owner or admin
         const guild = interaction.guild;
         if (!guild) {
           await interaction.reply({
@@ -871,13 +895,110 @@ export class DiscordBot {
           return;
         }
         
-        // Check if user is owner or has admin permissions
-        const isOwner = interaction.user.id === guild.ownerId;
-        const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
-        
-        if (!isOwner && !isAdmin) {
+        try {
+          // Get params from the command options
+          const telegramId = interaction.options.getString('telegramid');
+          const ticketId = interaction.options.getInteger('ticketid');
+          const reason = interaction.options.getString('reason') || "No reason provided";
+          
+          // Require at least one parameter
+          if (!telegramId && !ticketId) {
+            await interaction.reply({
+              content: "You must provide either a Telegram ID or a Ticket ID",
+              ephemeral: true
+            });
+            return;
+          }
+          
+          let user;
+          let userTelegramId;
+          
+          // Find the user based on provided information
+          if (ticketId) {
+            // Find the ticket
+            const ticket = await storage.getTicket(ticketId);
+            if (!ticket) {
+              await interaction.reply({
+                content: `No ticket found with ID ${ticketId}`,
+                ephemeral: true
+              });
+              return;
+            }
+            
+            // Find the user associated with the ticket
+            user = await storage.getUser(ticket.userId);
+            if (!user || !user.telegramId) {
+              await interaction.reply({
+                content: `Unable to find Telegram user for ticket ID ${ticketId}`,
+                ephemeral: true
+              });
+              return;
+            }
+            userTelegramId = user.telegramId;
+          } else {
+            // Find user by Telegram ID
+            user = await storage.getUserByTelegramId(telegramId!);
+            if (!user) {
+              await interaction.reply({
+                content: `No user found with Telegram ID ${telegramId}`,
+                ephemeral: true
+              });
+              return;
+            }
+            userTelegramId = telegramId!;
+          }
+          
+          // Ban the user with the provided reason
+          await storage.banUser(user.id, reason, interaction.user.username);
+          
+          // Create a nice embed for the ban confirmation
+          const embed = new EmbedBuilder()
+            .setColor(0xFF0000)
+            .setTitle('🚫 User Banned')
+            .addFields(
+              { name: 'Telegram Username', value: `@${user.username || 'Unknown'}`, inline: true },
+              { name: 'Telegram ID', value: userTelegramId, inline: true },
+              { name: 'Banned by', value: interaction.user.username, inline: true },
+              { name: 'Reason', value: reason, inline: false }
+            )
+            .setDescription('This user has been banned from creating new tickets.')
+            .setTimestamp();
+          
+          // Add ticket ID information if banned through ticket
+          if (ticketId) {
+            embed.addFields({ name: 'Banned from Ticket', value: `#${ticketId}`, inline: true });
+          }
+          
+          // Send confirmation
+          await interaction.reply({ 
+            embeds: [embed]
+          });
+          
+          // Try to notify the user on Telegram
+          try {
+            await this.bridge.getTelegramBot().sendMessage(
+              parseInt(userTelegramId),
+              `⚠️ *Account Restricted*\n\nYour account has been banned from creating new tickets in our system.\n\n*Reason:* ${reason}\n\nIf you believe this is an error, please contact the administrators.`
+            );
+          } catch (notifyError) {
+            log(`Error notifying banned user: ${notifyError}`, "warn");
+          }
+          
+        } catch (error) {
+          log(`Error banning user: ${error}`, "error");
           await interaction.reply({
-            content: "This command can only be used by the server owner or administrators!",
+            content: "Failed to ban user. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+      
+      // Unban command handler
+      if (interaction.commandName === 'unban') {
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.reply({
+            content: "This command can only be used in a server!",
             ephemeral: true
           });
           return;
@@ -935,24 +1056,24 @@ export class DiscordBot {
             userTelegramId = telegramId!;
           }
           
-          // Ban the user
-          await storage.banUser(user.id);
+          // Unban the user
+          await storage.unbanUser(user.id);
           
-          // Create a nice embed for the ban confirmation
+          // Create a nice embed for the unban confirmation
           const embed = new EmbedBuilder()
-            .setColor(0xFF0000)
-            .setTitle('🚫 User Banned')
+            .setColor(0x00FF00)
+            .setTitle('✅ User Unbanned')
             .addFields(
               { name: 'Telegram Username', value: `@${user.username || 'Unknown'}`, inline: true },
               { name: 'Telegram ID', value: userTelegramId, inline: true },
-              { name: 'Banned by', value: interaction.user.username, inline: true }
+              { name: 'Unbanned by', value: interaction.user.username, inline: true }
             )
-            .setDescription('This user has been banned from creating new tickets.')
+            .setDescription('This user can now create tickets again.')
             .setTimestamp();
           
-          // Add ticket ID information if banned through ticket
+          // Add ticket ID information if unbanned through ticket
           if (ticketId) {
-            embed.addFields({ name: 'Banned from Ticket', value: `#${ticketId}`, inline: true });
+            embed.addFields({ name: 'Referenced Ticket', value: `#${ticketId}`, inline: true });
           }
           
           // Send confirmation
@@ -964,16 +1085,16 @@ export class DiscordBot {
           try {
             await this.bridge.getTelegramBot().sendMessage(
               parseInt(userTelegramId),
-              `⚠️ *Account Restricted*\n\nYour account has been banned from creating new tickets in our system.\n\nIf you believe this is an error, please contact the administrators.`
+              `✅ *Account Restored*\n\nYour account has been unbanned. You can now create new tickets in our system again.`
             );
           } catch (notifyError) {
-            log(`Error notifying banned user: ${notifyError}`, "warn");
+            log(`Error notifying unbanned user: ${notifyError}`, "warn");
           }
           
         } catch (error) {
-          log(`Error banning user: ${error}`, "error");
+          log(`Error unbanning user: ${error}`, "error");
           await interaction.reply({
-            content: "Failed to ban user. Please try again.",
+            content: "Failed to unban user. Please try again.",
             ephemeral: true
           });
         }

@@ -1290,12 +1290,7 @@ ID: ${activeTicket.id}`
         return;
       }
       
-      // Check if user is an admin
-      const isAdmin = await storage.isAdmin(userId.toString());
-      if (!isAdmin) {
-        await ctx.reply("❌ You don't have permission to use this command.");
-        return;
-      }
+      // Anyone can use the ban command now
       
       // Get command arguments: /ban [telegramId|ticketId] [reason]
       const message = ctx.message?.text || "";
@@ -1454,12 +1449,7 @@ ID: ${activeTicket.id}`
         return;
       }
       
-      // Check if user is an admin
-      const isAdmin = await storage.isAdmin(userId.toString());
-      if (!isAdmin) {
-        await ctx.reply("❌ You don't have permission to use this command.");
-        return;
-      }
+      // Anyone can use the unban command now
       
       // Get command arguments: /unban [telegramId|userId]
       const message = ctx.message?.text || "";
