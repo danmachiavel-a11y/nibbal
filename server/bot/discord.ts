@@ -46,7 +46,8 @@ import {
   EmbedBuilder,
   ApplicationCommandType,
   ApplicationCommandOptionType,
-  WebhookClient
+  WebhookClient,
+  PermissionFlagsBits
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -290,6 +291,19 @@ export class DiscordBot {
           name: 'nickname',
           description: 'Get Telegram username of ticket creator (Owner only)',
           type: ApplicationCommandType.ChatInput
+        },
+        {
+          name: 'ban',
+          description: 'Ban a user from creating tickets (Owner/Admin only)',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'telegramid',
+              description: 'The Telegram ID of the user to ban',
+              type: ApplicationCommandOptionType.String,
+              required: true
+            }
+          ]
         }
       ];
 
@@ -792,6 +806,84 @@ export class DiscordBot {
           log(`Error getting ticket creator info: ${error}`, "error");
           await interaction.reply({
             content: "An error occurred while fetching user information.",
+            ephemeral: true
+          });
+        }
+      }
+      
+      // Ban command handler
+      if (interaction.commandName === 'ban') {
+        // Check if user is guild owner or admin
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.reply({
+            content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Check if user is owner or has admin permissions
+        const isOwner = interaction.user.id === guild.ownerId;
+        const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
+        
+        if (!isOwner && !isAdmin) {
+          await interaction.reply({
+            content: "This command can only be used by the server owner or administrators!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        try {
+          // Get the Telegram ID from the command options
+          const telegramId = interaction.options.getString('telegramid', true);
+          
+          // Find the user by Telegram ID
+          const user = await storage.getUserByTelegramId(telegramId);
+          
+          if (!user) {
+            await interaction.reply({
+              content: "User not found with that Telegram ID.",
+              ephemeral: true
+            });
+            return;
+          }
+          
+          // Ban the user
+          await storage.banUser(user.id);
+          
+          // Create a nice embed for the ban confirmation
+          const embed = new EmbedBuilder()
+            .setColor(0xFF0000)
+            .setTitle('🚫 User Banned')
+            .addFields(
+              { name: 'Telegram Username', value: `@${user.username || 'Unknown'}`, inline: true },
+              { name: 'Telegram ID', value: telegramId, inline: true },
+              { name: 'Banned by', value: interaction.user.username, inline: true }
+            )
+            .setDescription('This user has been banned from creating new tickets.')
+            .setTimestamp();
+          
+          // Send confirmation
+          await interaction.reply({ 
+            embeds: [embed]
+          });
+          
+          // Try to notify the user on Telegram
+          try {
+            await this.bridge.getTelegramBot().sendMessage(
+              parseInt(telegramId),
+              `⚠️ *Account Restricted*\n\nYour account has been banned from creating new tickets in our system.\n\nIf you believe this is an error, please contact the administrators.`
+            );
+          } catch (notifyError) {
+            log(`Error notifying banned user: ${notifyError}`, "warn");
+          }
+          
+        } catch (error) {
+          log(`Error banning user: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to ban user. Please try again.",
             ephemeral: true
           });
         }
