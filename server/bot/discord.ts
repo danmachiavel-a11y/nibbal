@@ -971,12 +971,11 @@ export class DiscordBot {
           // Ban the user with the provided reason
           await storage.banUser(user.id, reason, interaction.user.username);
           
-          // Create a nice embed for the ban confirmation
+          // Create a nice embed for the ban confirmation - without showing the username
           const embed = new EmbedBuilder()
             .setColor(0xFF0000)
             .setTitle('🚫 User Banned')
             .addFields(
-              { name: 'Telegram Username', value: `@${user.username || 'Unknown'}`, inline: true },
               { name: 'Telegram ID', value: userTelegramId, inline: true },
               { name: 'Banned by', value: interaction.user.username, inline: true },
               { name: 'Reason', value: reason, inline: false }
@@ -1091,12 +1090,11 @@ export class DiscordBot {
           // Unban the user
           await storage.unbanUser(user.id);
           
-          // Create a nice embed for the unban confirmation
+          // Create a nice embed for the unban confirmation - without showing the username
           const embed = new EmbedBuilder()
             .setColor(0x00FF00)
             .setTitle('✅ User Unbanned')
             .addFields(
-              { name: 'Telegram Username', value: `@${user.username || 'Unknown'}`, inline: true },
               { name: 'Telegram ID', value: userTelegramId, inline: true },
               { name: 'Unbanned by', value: interaction.user.username, inline: true }
             )
