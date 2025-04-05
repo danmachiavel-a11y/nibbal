@@ -1139,6 +1139,74 @@ export class DiscordBot {
       throw error;
     }
   }
+  
+  /**
+   * Set up permissions for a category with a specific role
+   * @param categoryId Discord category ID
+   * @param roleId Discord role ID
+   * @returns {Promise<boolean>} Success status
+   */
+  async setupCategoryPermissions(categoryId: string, roleId: string): Promise<boolean> {
+    try {
+      if (!this.isReady()) {
+        throw new Error("Discord bot is not ready");
+      }
+      
+      await this.globalCheck();
+      
+      // Get guild
+      const guilds = await this.client.guilds.fetch();
+      const guild = await guilds.first()?.fetch();
+      if (!guild) {
+        throw new Error("No guild found");
+      }
+      
+      // Get category and role
+      const category = await guild.channels.fetch(categoryId);
+      if (!category || category.type !== ChannelType.GuildCategory) {
+        throw new Error(`Category with ID ${categoryId} not found or is not a category`);
+      }
+      
+      const role = await guild.roles.fetch(roleId);
+      if (!role) {
+        throw new Error(`Role with ID ${roleId} not found`);
+      }
+      
+      log(`Setting up permissions for category ${category.name} with role ${role.name}`, "info");
+      
+      // Set permissions on the category
+      await category.permissionOverwrites.edit(guild.roles.everyone, {
+        ViewChannel: false,
+      });
+      
+      await category.permissionOverwrites.edit(role, {
+        ViewChannel: true,
+        SendMessages: true,
+        ReadMessageHistory: true,
+        AttachFiles: true,
+      });
+      
+      // Also set permissions for the bot
+      const botMember = guild.members.me;
+      if (botMember) {
+        await category.permissionOverwrites.edit(botMember, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true,
+          ManageChannels: true,
+          ManageMessages: true,
+        });
+      }
+      
+      log(`Successfully set up permissions for category ${category.name}`, "info");
+      return true;
+    } catch (error) {
+      this.lastError = error instanceof Error ? error : new Error(String(error));
+      log(`Error setting up category permissions: ${error}`, "error");
+      return false;
+    }
+  }
 
   async start() {
     try {

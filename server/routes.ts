@@ -94,7 +94,7 @@ export async function registerRoutes(app: Express) {
           }
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       log(`Health check failed: ${error}`, "error");
       res.status(503).json({
         status: "unhealthy",
@@ -111,7 +111,7 @@ export async function registerRoutes(app: Express) {
     try {
       await bridge.start();
       log("Bot bridge initialized successfully");
-    } catch (error) {
+    } catch (error: any) {
       log(`Error initializing bots: ${error.message}`, "error");
     }
   });
@@ -321,6 +321,36 @@ export async function registerRoutes(app: Express) {
     try {
       const category = await storage.createCategory(result.data);
       console.log("Category created:", category);
+      
+      // If both category ID and role ID are set, automatically set up permissions
+      if (category.discordCategoryId && category.discordRoleId) {
+        try {
+          if (!bridge) {
+            log("Bridge not initialized, cannot set up permissions", "warn");
+          } else {
+            const discordBot = bridge.getDiscordBot();
+            if (!discordBot) {
+              log("Discord bot not initialized, cannot set up permissions", "warn");
+            } else {
+              // Attempt to set up permissions
+              const success = await discordBot.setupCategoryPermissions(
+                category.discordCategoryId,
+                category.discordRoleId
+              );
+              
+              if (success) {
+                log(`Successfully set up permissions for category ${category.name}`, "info");
+              } else {
+                log(`Failed to set up permissions for category ${category.name}`, "warn");
+              }
+            }
+          }
+        } catch (error) {
+          log(`Error setting up category permissions: ${error}`, "error");
+          // We don't fail the request if permissions setup fails
+        }
+      }
+      
       res.json(category);
     } catch (error) {
       console.error("Error creating category:", error);
@@ -362,6 +392,38 @@ export async function registerRoutes(app: Express) {
     }
 
     console.log(`Updated category ${id}:`, JSON.stringify(category, null, 2));
+    
+    // If both category ID and role ID are present, automatically set up permissions
+    if (category.discordCategoryId && category.discordRoleId && 
+        (result.data.discordCategoryId || result.data.discordRoleId)) {
+      
+      try {
+        if (!bridge) {
+          log("Bridge not initialized, cannot set up permissions", "warn");
+        } else {
+          const discordBot = bridge.getDiscordBot();
+          if (!discordBot) {
+            log("Discord bot not initialized, cannot set up permissions", "warn");
+          } else {
+            // Attempt to set up permissions
+            const success = await discordBot.setupCategoryPermissions(
+              category.discordCategoryId,
+              category.discordRoleId
+            );
+            
+            if (success) {
+              log(`Successfully set up permissions for category ${category.name}`, "info");
+            } else {
+              log(`Failed to set up permissions for category ${category.name}`, "warn");
+            }
+          }
+        }
+      } catch (error) {
+        log(`Error setting up category permissions: ${error}`, "error");
+        // We don't fail the request if permissions setup fails
+      }
+    }
+    
     res.json(category);
   });
 
