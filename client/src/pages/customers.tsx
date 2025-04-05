@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { User } from "@shared/schema";
@@ -6,11 +6,26 @@ import { Badge } from "@/components/ui/badge";
 import { SiTelegram, SiDiscord } from "react-icons/si";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronRight, User as UserIcon, Ticket, BellOff, CheckCircle, CircleDollarSign, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, User as UserIcon, Ticket, BellOff, CheckCircle, CircleDollarSign, Trash2, Ban, Check, AlertTriangle, X, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Search } from "@/components/ui/search";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { apiRequest } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
 
 // Category summary type
 interface CategorySummary {
@@ -38,10 +53,81 @@ interface UserWithStats extends User {
 export default function Customers() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [expandedUsers, setExpandedUsers] = useState<number[]>([]);
+  const [banReason, setBanReason] = useState<string>("");
+  const [userToBan, setUserToBan] = useState<number | null>(null);
+  
+  const { toast } = useToast();
   
   const { data: users, isLoading } = useQuery<UserWithStats[]>({
     queryKey: ["/api/users"],
   });
+  
+  // Ban user mutation
+  const banUserMutation = useMutation({
+    mutationFn: ({ userId, banReason }: { userId: number; banReason: string }) => {
+      return apiRequest("POST", "/api/ban-user", { 
+        userId, 
+        banReason,
+        bannedBy: "Dashboard" 
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/banned-users"] });
+      toast({
+        title: "User banned",
+        description: "The user has been banned successfully.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "Failed to ban user. Please try again later.",
+        variant: "destructive",
+      });
+      console.error("Failed to ban user:", error);
+    },
+  });
+  
+  // Unban user mutation
+  const unbanUserMutation = useMutation({
+    mutationFn: (userId: number) => {
+      return apiRequest("POST", "/api/unban-user", { userId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/banned-users"] });
+      toast({
+        title: "User unbanned",
+        description: "The user has been unbanned successfully.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "Failed to unban user. Please try again later.",
+        variant: "destructive",
+      });
+      console.error("Failed to unban user:", error);
+    },
+  });
+  
+  // Handle ban user
+  const handleBanUser = () => {
+    if (userToBan) {
+      banUserMutation.mutate({ 
+        userId: userToBan, 
+        banReason: banReason || "No reason provided" 
+      });
+      setUserToBan(null);
+      setBanReason("");
+    }
+  };
+  
+  // Handle unban user
+  const handleUnbanUser = (userId: number) => {
+    unbanUserMutation.mutate(userId);
+  };
   
   // Handle toggling user expansion
   const toggleUserExpanded = (userId: number) => {
@@ -294,6 +380,94 @@ export default function Customers() {
                                 </div>
                               </div>
                             )}
+                            
+                            {/* User actions card */}
+                            <div>
+                              <Separator className="my-2" />
+                              <Card className="overflow-hidden shadow-none border">
+                                <CardHeader className="p-3 bg-muted/50">
+                                  <CardTitle className="text-base">User Actions</CardTitle>
+                                </CardHeader>
+                                <CardContent className="p-3">
+                                  <div className="flex flex-wrap gap-2">
+                                    {user.isBanned ? (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="flex items-center gap-2"
+                                        onClick={() => handleUnbanUser(user.id)}
+                                        disabled={unbanUserMutation.isPending}
+                                      >
+                                        {unbanUserMutation.isPending ? (
+                                          <>
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            <span>Unbanning...</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Check className="h-4 w-4" />
+                                            <span>Unban User</span>
+                                          </>
+                                        )}
+                                      </Button>
+                                    ) : (
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="flex items-center gap-2 text-destructive border-destructive hover:bg-destructive hover:text-white"
+                                          >
+                                            <Ban className="h-4 w-4" />
+                                            <span>Ban User</span>
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>Ban {user.displayName}</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              This will prevent the user from creating new tickets or sending messages.
+                                              You can unban the user later if needed.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <div className="py-4">
+                                            <label htmlFor="banReason" className="text-sm font-medium block mb-2">
+                                              Ban Reason (optional)
+                                            </label>
+                                            <Input
+                                              id="banReason"
+                                              placeholder="Enter reason for banning..."
+                                              value={banReason}
+                                              onChange={(e) => setBanReason(e.target.value)}
+                                            />
+                                          </div>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel onClick={() => setBanReason("")}>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction
+                                              className="bg-destructive hover:bg-destructive/90"
+                                              onClick={() => {
+                                                setUserToBan(user.id);
+                                                handleBanUser();
+                                              }}
+                                              disabled={banUserMutation.isPending}
+                                            >
+                                              {banUserMutation.isPending ? (
+                                                <>
+                                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                                  <span>Banning...</span>
+                                                </>
+                                              ) : (
+                                                <span>Ban User</span>
+                                              )}
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    )}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </div>
                           </div>
                         </CollapsibleContent>
                       </Collapsible>
@@ -349,14 +523,75 @@ export default function Customers() {
                             )}
                           </div>
                           
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="w-full"
-                            onClick={() => toggleUserExpanded(user.id)}
-                          >
-                            {expandedUsers.includes(user.id) ? "Hide Details" : "View Details"}
-                          </Button>
+                          <div className="flex gap-2 mb-2">
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="flex-1"
+                              onClick={() => toggleUserExpanded(user.id)}
+                            >
+                              {expandedUsers.includes(user.id) ? "Hide Details" : "View Details"}
+                            </Button>
+                            
+                            {user.isBanned ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="flex items-center gap-1"
+                                onClick={() => handleUnbanUser(user.id)}
+                                disabled={unbanUserMutation.isPending}
+                              >
+                                {unbanUserMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Check className="h-4 w-4" />
+                                )}
+                              </Button>
+                            ) : (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="flex items-center gap-1 text-destructive"
+                                  >
+                                    <Ban className="h-4 w-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Ban {user.displayName}</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This will prevent the user from creating new tickets or sending messages.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <div className="py-4">
+                                    <label htmlFor="banReasonCompact" className="text-sm font-medium block mb-2">
+                                      Ban Reason (optional)
+                                    </label>
+                                    <Input
+                                      id="banReasonCompact"
+                                      placeholder="Enter reason for banning..."
+                                      value={banReason}
+                                      onChange={(e) => setBanReason(e.target.value)}
+                                    />
+                                  </div>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel onClick={() => setBanReason("")}>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="bg-destructive hover:bg-destructive/90"
+                                      onClick={() => {
+                                        setUserToBan(user.id);
+                                        handleBanUser();
+                                      }}
+                                    >
+                                      Ban User
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+                          </div>
                           
                           {expandedUsers.includes(user.id) && (
                             <div className="mt-3 pt-3 border-t space-y-2 text-sm">
