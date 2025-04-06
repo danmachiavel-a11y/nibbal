@@ -1001,27 +1001,486 @@ export class TelegramBot {
   }
 
   private async handleQuestionnaireResponse(ctx: Context, state: UserState) {
-    // Implementation for handling user responses to questionnaire questions
-    // (This would handle collecting answers and creating tickets)
+    if (!ctx.from?.id || !ctx.message || !('text' in ctx.message)) return;
+    
+    try {
+      const userId = ctx.from.id;
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("❌ Error: User not found. Please use /start to begin again.");
+        return;
+      }
+      
+      const category = await storage.getCategory(state.categoryId);
+      if (!category) {
+        await ctx.reply("❌ Error: Category not found. Please use /start to begin again.");
+        return;
+      }
+      
+      // Get the questions for this category
+      const questions = category.questions || [];
+      if (questions.length === 0) {
+        await ctx.reply("❌ Error: No questions found for this category. Please contact an admin.");
+        this.userStates.delete(userId);
+        return;
+      }
+      
+      // Store the answer
+      state.answers[state.currentQuestion] = ctx.message.text;
+      
+      // Move to the next question or create ticket if all questions answered
+      if (state.currentQuestion + 1 < questions.length) {
+        // Move to next question
+        state.currentQuestion++;
+        this.setState(userId, state);
+        
+        // Ask the next question
+        await ctx.reply(preserveMarkdown(questions[state.currentQuestion]), {
+          parse_mode: "MarkdownV2"
+        });
+      } else {
+        // All questions answered, create the ticket
+        await this.createTicket(ctx);
+      }
+    } catch (error) {
+      log(`Error in handleQuestionnaireResponse: ${error}`, "error");
+      await ctx.reply("❌ There was an error processing your response. Please try again or use /cancel to start over.");
+    }
   }
 
   private async createTicket(ctx: Context) {
-    // Implementation for creating a new ticket from questionnaire responses
-    // (This would use storage to create a ticket and send confirmation)
+    if (!ctx.from?.id) return;
+    
+    try {
+      const userId = ctx.from.id;
+      const state = this.userStates.get(userId);
+      if (!state) {
+        await ctx.reply("❌ Error: Session expired. Please use /start to begin again.");
+        return;
+      }
+      
+      // Get the user
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("❌ Error: User not found. Please use /start to begin again.");
+        return;
+      }
+      
+      // Get the category
+      const category = await storage.getCategory(state.categoryId);
+      if (!category) {
+        await ctx.reply("❌ Error: Category not found. Please use /start to begin again.");
+        return;
+      }
+      
+      // Check if the service is closed
+      if (category.isClosed) {
+        await ctx.reply("⛔ This service is currently closed. Please try another service or contact an administrator.");
+        return;
+      }
+      
+      // Check for existing active tickets
+      const existingTicket = await storage.getActiveTicketByUserId(user.id);
+      if (existingTicket) {
+        // Update state to reference the existing ticket
+        state.inQuestionnaire = false;
+        state.activeTicketId = existingTicket.id;
+        this.setState(userId, state);
+        
+        await ctx.reply("ℹ️ You already have an active ticket. Your messages will be sent to that ticket.");
+        return;
+      }
+      
+      // Create the ticket
+      const ticket = await storage.createTicket({
+        userId: user.id,
+        categoryId: state.categoryId,
+        status: "pending",
+        answers: state.answers
+      });
+      
+      log(`Created ticket ${ticket.id} for user ${user.id} in category ${state.categoryId}`);
+      
+      // Update user state
+      state.inQuestionnaire = false;
+      state.activeTicketId = ticket.id;
+      this.setState(userId, state);
+      
+      // Try to create Discord channel
+      try {
+        await this.bridge.createTicketChannel(ticket);
+        
+        await ctx.reply("✅ Your ticket has been created! You can now send messages and they will be forwarded to our support team.");
+        
+        // Send summary of the ticket
+        const ticketSummary = [
+          "**Ticket Summary**",
+          `**Category:** ${category.name}`,
+          ...category.questions.map((q, i) => `**${q}**\n${state.answers[i] || 'No answer provided'}`)
+        ].join("\n\n");
+        
+        await ctx.reply(preserveMarkdown(ticketSummary), {
+          parse_mode: "MarkdownV2"
+        });
+      } catch (error) {
+        log(`Error creating Discord channel: ${error}`, "error");
+        
+        // Still mark ticket as created, just without channel
+        await ctx.reply("✅ Your ticket has been created, but there was an issue setting up the support channel. A staff member will assist you shortly.");
+      }
+    } catch (error) {
+      log(`Error in createTicket: ${error}`, "error");
+      await ctx.reply("❌ There was an error creating your ticket. Please try again or contact an administrator.");
+    }
   }
 
   private setupHandlers() {
     if (!this.bot) return;
     
-    // Set up all handlers for commands and messages
-    // Commands: ping, start, cancel, close, info, ban, unban, etc.
-    // Message handlers for tickets and questionnaires
-    
-    this.bot.on('text', async (ctx) => {
-      // Process incoming text messages
-      // This would include ticket messages and questionnaire responses
+    // Set up command handlers
+    this.bot.command('ping', async (ctx) => {
+      if (!ctx.from?.id) return;
+      
+      if (!this.checkRateLimit(ctx.from.id, 'command', 'ping')) {
+        await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
+        return;
+      }
+      
+      try {
+        log(`Received ping command from user ${ctx.from.id}`);
+        await ctx.reply("🏓 Pong! Bot is online and working.");
+      } catch (error) {
+        log(`Error in ping command: ${error}`, "error");
+      }
     });
     
-    // Other handlers for photos, files, etc.
+    this.bot.command('start', async (ctx) => {
+      if (!ctx.from?.id) return;
+      
+      if (!this.checkRateLimit(ctx.from.id, 'command', 'start')) {
+        await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
+        return;
+      }
+      
+      try {
+        const userId = ctx.from.id;
+        
+        // Check if user can be added (under concurrent limit)
+        const canAdd = await this.checkActiveUsers(userId);
+        if (!canAdd) {
+          await ctx.reply("⚠️ Bot is currently at maximum capacity. Please try again in a few minutes.");
+          return;
+        }
+        
+        // Check if user is banned
+        const existingUser = await storage.getUserByTelegramId(userId.toString());
+        if (existingUser && existingUser.isBanned) {
+          await ctx.reply(`⛔ You have been banned from using this bot${existingUser.banReason ? ` for: ${existingUser.banReason}` : ""}.`);
+          return;
+        }
+        
+        // Create user if doesn't exist
+        if (!existingUser) {
+          await storage.createUser({
+            telegramId: userId.toString(),
+            username: ctx.from.username || `user_${userId}`,
+            telegramUsername: ctx.from.username,
+            telegramName: [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ')
+          });
+          log(`Created new user with telegramId ${userId}`);
+        }
+        
+        // Display category menu
+        await this.handleCategoryMenu(ctx);
+      } catch (error) {
+        log(`Error in start command: ${error}`, "error");
+        await ctx.reply("❌ Sorry, there was an error starting the bot. Please try again.");
+      }
+    });
+    
+    this.bot.command('cancel', async (ctx) => {
+      if (!ctx.from?.id) return;
+      
+      if (!this.checkRateLimit(ctx.from.id, 'command', 'cancel')) {
+        await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
+        return;
+      }
+      
+      try {
+        const userId = ctx.from.id;
+        
+        // Clear user state
+        this.userStates.delete(userId);
+        if (this.stateCleanups.has(userId)) {
+          clearTimeout(this.stateCleanups.get(userId)!.timeout);
+          this.stateCleanups.delete(userId);
+        }
+        
+        await ctx.reply("✅ Current action canceled. Use /start to create a new ticket.");
+      } catch (error) {
+        log(`Error in cancel command: ${error}`, "error");
+      }
+    });
+    
+    // Admin commands
+    this.bot.command('ban', async (ctx) => {
+      if (!ctx.from?.id) return;
+      
+      try {
+        // Check if user is admin
+        const isAdmin = await storage.isAdmin(ctx.from.id.toString());
+        if (!isAdmin) {
+          await ctx.reply("⛔ You don't have permission to use this command.");
+          return;
+        }
+        
+        const args = ctx.message.text.split(' ').slice(1);
+        if (args.length === 0) {
+          await ctx.reply("Usage: /ban [user_id] [reason]");
+          return;
+        }
+        
+        const targetId = args[0];
+        const reason = args.slice(1).join(' ') || "No reason provided";
+        
+        const targetUser = await storage.getUserByTelegramId(targetId);
+        if (!targetUser) {
+          await ctx.reply(`❌ User with ID ${targetId} not found.`);
+          return;
+        }
+        
+        await storage.banUser(targetUser.id, reason, ctx.from.id.toString());
+        
+        await ctx.reply(`✅ User ${targetUser.username} (ID: ${targetId}) has been banned for: ${reason}`);
+        
+        // Notify the banned user
+        try {
+          if (targetUser.telegramId) {
+            await this.sendMessage(
+              parseInt(targetUser.telegramId),
+              `⛔ You have been banned from using this bot for: ${reason}.`
+            );
+          }
+        } catch (error) {
+          log(`Error notifying banned user: ${error}`, "error");
+        }
+      } catch (error) {
+        log(`Error in ban command: ${error}`, "error");
+        await ctx.reply("❌ Error processing ban command.");
+      }
+    });
+    
+    this.bot.command('unban', async (ctx) => {
+      if (!ctx.from?.id) return;
+      
+      try {
+        // Check if user is admin
+        const isAdmin = await storage.isAdmin(ctx.from.id.toString());
+        if (!isAdmin) {
+          await ctx.reply("⛔ You don't have permission to use this command.");
+          return;
+        }
+        
+        const args = ctx.message.text.split(' ').slice(1);
+        if (args.length === 0) {
+          await ctx.reply("Usage: /unban [user_id]");
+          return;
+        }
+        
+        const targetId = args[0];
+        
+        const targetUser = await storage.getUserByTelegramId(targetId);
+        if (!targetUser) {
+          await ctx.reply(`❌ User with ID ${targetId} not found.`);
+          return;
+        }
+        
+        if (!targetUser.isBanned) {
+          await ctx.reply(`✅ User ${targetUser.username} is not banned.`);
+          return;
+        }
+        
+        await storage.unbanUser(targetUser.id);
+        
+        await ctx.reply(`✅ User ${targetUser.username} (ID: ${targetId}) has been unbanned.`);
+        
+        // Notify the unbanned user
+        try {
+          if (targetUser.telegramId) {
+            await this.sendMessage(
+              parseInt(targetUser.telegramId),
+              "✅ You have been unbanned and can now use the bot again."
+            );
+          }
+        } catch (error) {
+          log(`Error notifying unbanned user: ${error}`, "error");
+        }
+      } catch (error) {
+        log(`Error in unban command: ${error}`, "error");
+        await ctx.reply("❌ Error processing unban command.");
+      }
+    });
+    
+    // Handle callback queries (button clicks)
+    this.bot.on('callback_query', async (ctx) => {
+      if (!ctx.from?.id || !ctx.callbackQuery) return;
+      
+      // Access data safely through the callbackQuery object
+      const data = 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined;
+      if (!data) return;
+      
+      if (!this.checkRateLimit(ctx.from.id, 'command')) {
+        await ctx.answerCbQuery("You're clicking buttons too quickly. Please wait a moment.");
+        return;
+      }
+      
+      log(`Received callback query: ${data} from user ${ctx.from.id}`);
+      
+      try {
+        if (data === 'back_to_main') {
+          await this.handleCategoryMenu(ctx);
+        } else if (data.startsWith('submenu_')) {
+          const submenuId = parseInt(data.substring(8));
+          await this.handleSubmenuClick(ctx, submenuId);
+        } else if (data.startsWith('category_')) {
+          const categoryId = parseInt(data.substring(9));
+          await this.handleCategorySelection(ctx, categoryId);
+        } else {
+          await ctx.answerCbQuery("Unknown button action");
+        }
+      } catch (error) {
+        log(`Error processing button click: ${error}`, "error");
+        await ctx.answerCbQuery("Error processing your request");
+      }
+    });
+    
+    // Handle text messages
+    this.bot.on('text', async (ctx) => {
+      if (!ctx.from?.id || !ctx.message?.text) return;
+      
+      const userId = ctx.from.id;
+      const userState = this.userStates.get(userId);
+      
+      // If no state, ignore the message
+      if (!userState) return;
+      
+      try {
+        // Get the user from DB
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) return;
+        
+        // Check if banned
+        if (user.isBanned) {
+          await ctx.reply(`⛔ You are banned from using this bot${user.banReason ? ` for: ${user.banReason}` : ""}.`);
+          return;
+        }
+        
+        // If in questionnaire, handle that
+        if (userState.inQuestionnaire) {
+          await this.handleQuestionnaireResponse(ctx, userState);
+          return;
+        }
+        
+        // If active ticket, handle that
+        if (userState.activeTicketId) {
+          const ticket = await storage.getTicket(userState.activeTicketId);
+          if (ticket && ticket.status !== 'closed' && ticket.status !== 'deleted') {
+            await this.handleTicketMessage(ctx, user, ticket);
+            return;
+          }
+        }
+      } catch (error) {
+        log(`Error processing text message: ${error}`, "error");
+      }
+    });
+    
+    // Handle photos
+    this.bot.on('photo', async (ctx) => {
+      if (!ctx.from?.id || !ctx.message?.photo) return;
+      
+      const userId = ctx.from.id;
+      const userState = this.userStates.get(userId);
+      
+      // If no state, ignore the message
+      if (!userState || !userState.activeTicketId) return;
+      
+      try {
+        // Get the user from DB
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) return;
+        
+        // Check if banned
+        if (user.isBanned) {
+          await ctx.reply(`⛔ You are banned from using this bot${user.banReason ? ` for: ${user.banReason}` : ""}.`);
+          return;
+        }
+        
+        // Get active ticket
+        const ticket = await storage.getActiveTicketByUserId(user.id);
+        if (!ticket) {
+          await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
+          return;
+        }
+        
+        // Get largest photo
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        if (!photo) return;
+        
+        // Process caption as a message
+        const caption = ctx.message.caption || "Image sent";
+        await storage.createMessage({
+          ticketId: ticket.id,
+          content: caption,
+          authorId: user.id,
+          platform: "telegram",
+          timestamp: new Date()
+        });
+        
+        // Get photo file
+        const file = await this.getFile(photo.file_id);
+        if (!file?.file_path) {
+          await ctx.reply("❌ Error processing your image. Please try again.");
+          return;
+        }
+        
+        // Get URL for the file
+        const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        
+        // Forward to Discord with image
+        const firstName = ctx.from?.first_name || "";
+        const lastName = ctx.from?.last_name || "";
+        const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
+        
+        // Get avatar URL
+        let avatarUrl: string | undefined;
+        try {
+          const photos = await this.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+          if (photos && photos.total_count > 0) {
+            const fileId = photos.photos[0][0].file_id;
+            const avatarFile = await this.getFile(fileId);
+            if (avatarFile?.file_path) {
+              avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${avatarFile.file_path}`;
+            }
+          }
+        } catch (error) {
+          log(`Error getting avatar: ${error}`, "error");
+        }
+        
+        await this.bridge.forwardToDiscord(
+          caption,
+          ticket.id,
+          displayName,
+          avatarUrl,
+          fileUrl,
+          firstName,
+          lastName
+        );
+        
+        log(`Photo forwarded from Telegram to Discord for ticket ${ticket.id}`);
+      } catch (error) {
+        log(`Error processing photo: ${error}`, "error");
+        await ctx.reply("❌ Error processing your image. Please try again.");
+      }
+    });
   }
 }
