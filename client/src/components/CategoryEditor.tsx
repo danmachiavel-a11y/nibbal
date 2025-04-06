@@ -94,18 +94,21 @@ export function CategoryEditor({ category, categories }: { category: Category; c
         .filter((q: string) => q.trim())
         .map((q: string) => q.trim());
 
+      // Convert displayOrder to number explicitly 
+      const displayOrder = parseInt(data.displayOrder);
+      
       // Prepare data for API
       const submitData = {
         name: data.name,
         isSubmenu: data.isSubmenu,
         parentId: data.parentId,
-        discordRoleId: data.discordRoleId,
-        discordCategoryId: data.discordCategoryId,
-        transcriptCategoryId: data.transcriptCategoryId,
+        discordRoleId: data.discordRoleId || "",
+        discordCategoryId: data.discordCategoryId || "",
+        transcriptCategoryId: data.transcriptCategoryId || "",
         questions,
         serviceSummary: data.serviceSummary,
         serviceImageUrl: data.serviceImageUrl,
-        displayOrder: data.displayOrder,
+        displayOrder: isNaN(displayOrder) ? 0 : displayOrder, // Default to 0 if NaN
         newRow: data.newRow,
         isClosed: data.isClosed
       };

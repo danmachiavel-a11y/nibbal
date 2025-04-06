@@ -30,8 +30,8 @@ export const users = pgTable("users", {
 const categoriesConfig = {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
-  discordRoleId: text("discord_role_id").notNull(),
-  discordCategoryId: text("discord_category_id").notNull(),
+  discordRoleId: text("discord_role_id").default(""),
+  discordCategoryId: text("discord_category_id").default(""),
   transcriptCategoryId: text("transcript_category_id"), // Added transcript category ID
   questions: text("questions").array().notNull(),
   serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
