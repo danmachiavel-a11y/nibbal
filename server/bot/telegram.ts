@@ -687,7 +687,8 @@ export class TelegramBot {
     // Clean up disconnected users first
     for (const activeId of this.activeUsers) {
       try {
-        await this.bot?.telegram.getChat(activeId);
+        // Use telegram getter for null safety
+        await this.telegram.getChat(activeId);
       } catch (error) {
         this.activeUsers.delete(activeId);
         this.userStates.delete(activeId);
@@ -746,10 +747,11 @@ export class TelegramBot {
 
       let avatarUrl: string | undefined;
       try {
-        const photos = await this.bot?.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+        // Use telegram getter for null safety
+        const photos = await this.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
         if (photos && photos.total_count > 0) {
           const fileId = photos.photos[0][0].file_id;
-          const file = await this.bot?.telegram.getFile(fileId);
+          const file = await this.telegram.getFile(fileId);
           if (file?.file_path) {
             avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
           }

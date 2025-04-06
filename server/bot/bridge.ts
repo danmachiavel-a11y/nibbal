@@ -1,24 +1,36 @@
 import { storage } from "../storage";
-import { TelegramBot } from "./telegram";
+// Use the safer implementation with enhanced null-safety
+import { TelegramBot } from "./telegram-safer";
 import { DiscordBot } from "./discord";
 import type { Ticket } from "@shared/schema";
 import { log } from "../vite";
 import fetch from 'node-fetch';
 import { TextChannel } from 'discord.js';
 
-interface BridgeError extends Error {
+class BridgeError extends Error {
   code?: string;
   details?: any;
   context?: string;
+
+  constructor(message: string, details?: { context?: string; code?: string; details?: any }) {
+    super(message);
+    this.name = 'BridgeError';
+    
+    if (details) {
+      this.context = details.context;
+      this.code = details.code;
+      this.details = details.details;
+    }
+  }
 }
 
 // Centralized error handler
-const handleBridgeError = (error: BridgeError, context: string): void => {
+const handleBridgeError = (error: Error, context: string): void => {
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorDetails = {
     context,
-    code: error.code,
-    details: error.details,
+    code: error instanceof BridgeError ? error.code : undefined,
+    details: error instanceof BridgeError ? error.details : undefined,
     timestamp: new Date().toISOString()
   };
   log(`Error in ${context}: ${errorMessage}`, "error");
@@ -158,10 +170,6 @@ export class BridgeManager {
 
   private async processTelegramToDiscord(fileId: string): Promise<Buffer | null> {
     try {
-      if (!this.telegramBot.bot?.telegram) {
-        throw new BridgeError("Telegram bot not initialized", { context: "processTelegramToDiscord" });
-      }
-
       // Try cache first
       const cacheKey = `telegram_${fileId}`;
       const cached = this.getCachedImage(cacheKey);
@@ -172,9 +180,10 @@ export class BridgeManager {
 
       log(`Processing Telegram file ID: ${fileId}`);
 
-      const file = await this.telegramBot.bot.telegram.getFile(fileId);
+      // Use the telegram getter from TelegramBot which has built-in null safety
+      const file = await this.telegramBot.getFile(fileId);
       if (!file?.file_path) {
-        throw new BridgeError(`Could not get file path for ID: ${fileId}`, { context: "processTelegramToDiscord" });
+        throw new Error(`Could not get file path for ID: ${fileId}`);
       }
 
       const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
