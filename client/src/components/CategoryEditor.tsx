@@ -13,6 +13,7 @@ import { z } from "zod";
 import { Check, Info, RefreshCw } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 export async function refreshRoles(form: any, toast: any) {
   try {
@@ -364,71 +365,82 @@ export function CategoryEditor({ category, categories }: { category: Category; c
               </Button>
             </div>
 
-            {/* Content Configuration Section */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-              <div>
-                <h4 className="text-sm font-medium mb-2">Category Content</h4>
+            {/* Content Configuration Section - Collapsible */}
+            <div className="mt-3">
+              <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="service-details">
+                  <AccordionTrigger className="py-2 hover:no-underline text-sm font-medium">
+                    Service Details
+                  </AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="serviceSummary"
+                        render={({ field }) => (
+                          <FormItem className="mb-3">
+                            <FormLabel className="text-xs">Service Summary</FormLabel>
+                            <FormDescription className="text-[10px] mt-0">
+                              Brief description shown to users. Markdown supported.
+                            </FormDescription>
+                            <FormControl>
+                              <Textarea
+                                {...field}
+                                rows={3}
+                                className="text-sm"
+                                value={field.value || ''}
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      
+                      <FormField
+                        control={form.control}
+                        name="serviceImageUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Service Image URL</FormLabel>
+                            <FormDescription className="text-[10px] mt-0">
+                              Optional: Image URL for service description
+                            </FormDescription>
+                            <FormControl>
+                              <Input {...field} value={field.value || ''} className="text-sm" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
                 
-                <FormField
-                  control={form.control}
-                  name="serviceSummary"
-                  render={({ field }) => (
-                    <FormItem className="mb-3">
-                      <FormLabel className="text-xs">Service Summary</FormLabel>
-                      <FormDescription className="text-[10px] mt-0">
-                        Brief description shown to users. Markdown supported.
-                      </FormDescription>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          rows={3}
-                          className="text-sm"
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                
-                <FormField
-                  control={form.control}
-                  name="serviceImageUrl"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs">Service Image URL</FormLabel>
-                      <FormDescription className="text-[10px] mt-0">
-                        Optional: Image URL for service description
-                      </FormDescription>
-                      <FormControl>
-                        <Input {...field} value={field.value || ''} className="text-sm" />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </div>
-              
-              <div>
-                <h4 className="text-sm font-medium mb-2">Questions</h4>
-                <FormField
-                  control={form.control}
-                  name="questions"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormDescription className="text-[10px] mt-0 mb-1">
-                        One question per line. These will be asked when a user selects this category.
-                      </FormDescription>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          rows={6}
-                          className="text-sm h-[calc(100%-1.5rem)]"
-                          placeholder="Enter your questions here, one per line."
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </div>
+                <AccordionItem value="questions">
+                  <AccordionTrigger className="py-2 hover:no-underline text-sm font-medium">
+                    Questions ({ Array.isArray(category.questions) ? category.questions.length : 0 })
+                  </AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <FormField
+                      control={form.control}
+                      name="questions"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormDescription className="text-xs mt-0 mb-1">
+                            One question per line. These will be asked when a user selects this category.
+                          </FormDescription>
+                          <FormControl>
+                            <Textarea
+                              {...field}
+                              rows={5}
+                              className="text-sm"
+                              placeholder="Enter your questions here, one per line."
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
             </div>
           </>
         )}
