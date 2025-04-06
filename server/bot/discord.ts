@@ -334,6 +334,37 @@ export class DiscordBot {
           type: ApplicationCommandType.ChatInput
         },
         {
+          name: 'listservices',
+          description: 'List all service categories with their IDs',
+          type: ApplicationCommandType.ChatInput
+        },
+        {
+          name: 'closeservice',
+          description: 'Close a service category so new tickets cannot be created',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'categoryid',
+              description: 'The ID of the service category to close',
+              type: ApplicationCommandOptionType.Integer,
+              required: true
+            }
+          ]
+        },
+        {
+          name: 'openservice',
+          description: 'Open a service category so new tickets can be created',
+          type: ApplicationCommandType.ChatInput,
+          options: [
+            {
+              name: 'categoryid',
+              description: 'The ID of the service category to open',
+              type: ApplicationCommandOptionType.Integer,
+              required: true
+            }
+          ]
+        },
+        {
           name: 'info',
           description: 'Get Telegram user information (Owner only)',
           type: ApplicationCommandType.ChatInput
@@ -655,6 +686,235 @@ export class DiscordBot {
         }
       }
         
+      if (interaction.commandName === 'listservices') {
+        // This command can be used by anyone to see available categories
+        try {
+          const categories = await storage.getCategories();
+          
+          if (categories.length === 0) {
+            await interaction.reply({
+              content: "No service categories found.",
+              ephemeral: true
+            });
+            return;
+          }
+
+          // Create fields for each category - split into main categories and submenus
+          const mainCategories = categories.filter(cat => !cat.isSubmenu);
+          const subCategories = categories.filter(cat => cat.isSubmenu);
+          
+          // Create fields array for the embed
+          const fields = [];
+          
+          // Add main categories
+          for (const category of mainCategories) {
+            const statusEmoji = category.isClosed ? "🔴" : "🟢";
+            fields.push({
+              name: `${statusEmoji} ${category.name} (ID: ${category.id})`,
+              value: `Status: ${category.isClosed ? "Closed" : "Open"}`,
+              inline: true
+            });
+          }
+          
+          // Add submenu categories if any
+          if (subCategories.length > 0) {
+            // Add separator
+            fields.push({
+              name: "──────── Submenus ────────",
+              value: "\u200B", // Zero-width space
+              inline: false
+            });
+            
+            for (const category of subCategories) {
+              const statusEmoji = category.isClosed ? "🔴" : "🟢";
+              // Try to get parent name
+              let parentName = "Unknown";
+              if (category.parentId) {
+                const parent = mainCategories.find(c => c.id === category.parentId);
+                if (parent) {
+                  parentName = parent.name;
+                }
+              }
+              
+              fields.push({
+                name: `${statusEmoji} ${category.name} (ID: ${category.id})`,
+                value: `Parent: ${parentName}\nStatus: ${category.isClosed ? "Closed" : "Open"}`,
+                inline: true
+              });
+            }
+          }
+          
+          // Create and send the embed
+          const embed = new EmbedBuilder()
+            .setColor(0x5865F2) // Discord Blurple color
+            .setTitle('📋 Service Categories')
+            .setDescription('Use `/closeservice` or `/openservice` with the category ID to change status')
+            .addFields(fields)
+            .setFooter({ text: 'Only staff with Manage Server permissions can change service status' })
+            .setTimestamp();
+          
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+        } catch (error) {
+          log(`Error listing service categories: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to list service categories. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+      
+      if (interaction.commandName === 'closeservice') {
+        const categoryId = interaction.options.getInteger('categoryid', true);
+        
+        // Check if user is an admin or has manage server permissions
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.reply({
+            content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Check user permissions
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        const member = await guild.members.fetch(interaction.user.id);
+        const canManageServer = member.permissions.has(PermissionFlagsBits.ManageGuild);
+        
+        if (!isAdmin && !canManageServer) {
+          await interaction.reply({
+            content: "You don't have permission to use this command. You need to be an admin or have 'Manage Server' permission.",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        try {
+          // Get the category
+          const category = await storage.getCategory(categoryId);
+          if (!category) {
+            await interaction.reply({
+              content: `Category with ID ${categoryId} not found. Use a valid category ID from the dashboard.`,
+              ephemeral: true
+            });
+            return;
+          }
+          
+          // Check if already closed
+          if (category.isClosed) {
+            await interaction.reply({
+              content: `Category '${category.name}' is already closed.`,
+              ephemeral: true
+            });
+            return;
+          }
+          
+          // Update the category
+          const updatedCategory = await storage.updateCategory(categoryId, { isClosed: true });
+          
+          if (!updatedCategory) {
+            throw new Error("Failed to update category state");
+          }
+          
+          // Create confirmation embed
+          const embed = new EmbedBuilder()
+            .setColor(0xFF0000)
+            .setTitle('🔴 Service Category Closed')
+            .setDescription(`Service '${category.name}' has been closed`)
+            .addFields(
+              { name: 'Status', value: 'Closed', inline: true },
+              { name: 'Closed by', value: interaction.user.username, inline: true },
+              { name: 'Category ID', value: categoryId.toString(), inline: true }
+            )
+            .setFooter({ text: 'Users will not be able to create new tickets in this category' })
+            .setTimestamp();
+          
+          await interaction.reply({ embeds: [embed] });
+        } catch (error) {
+          log(`Error closing service category: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to close service category. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+      
+      if (interaction.commandName === 'openservice') {
+        const categoryId = interaction.options.getInteger('categoryid', true);
+        
+        // Check if user is an admin or has manage server permissions
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.reply({
+            content: "This command can only be used in a server!",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Check user permissions
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        const member = await guild.members.fetch(interaction.user.id);
+        const canManageServer = member.permissions.has(PermissionFlagsBits.ManageGuild);
+        
+        if (!isAdmin && !canManageServer) {
+          await interaction.reply({
+            content: "You don't have permission to use this command. You need to be an admin or have 'Manage Server' permission.",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        try {
+          // Get the category
+          const category = await storage.getCategory(categoryId);
+          if (!category) {
+            await interaction.reply({
+              content: `Category with ID ${categoryId} not found. Use a valid category ID from the dashboard.`,
+              ephemeral: true
+            });
+            return;
+          }
+          
+          // Check if already open
+          if (!category.isClosed) {
+            await interaction.reply({
+              content: `Category '${category.name}' is already open.`,
+              ephemeral: true
+            });
+            return;
+          }
+          
+          // Update the category
+          const updatedCategory = await storage.updateCategory(categoryId, { isClosed: false });
+          
+          if (!updatedCategory) {
+            throw new Error("Failed to update category state");
+          }
+          
+          // Create confirmation embed
+          const embed = new EmbedBuilder()
+            .setColor(0x00FF00)
+            .setTitle('🟢 Service Category Opened')
+            .setDescription(`Service '${category.name}' has been opened`)
+            .addFields(
+              { name: 'Status', value: 'Open', inline: true },
+              { name: 'Opened by', value: interaction.user.username, inline: true },
+              { name: 'Category ID', value: categoryId.toString(), inline: true }
+            )
+            .setFooter({ text: 'Users can now create new tickets in this category' })
+            .setTimestamp();
+          
+          await interaction.reply({ embeds: [embed] });
+        } catch (error) {
+          log(`Error opening service category: ${error}`, "error");
+          await interaction.reply({
+            content: "Failed to open service category. Please try again.",
+            ephemeral: true
+          });
+        }
+      }
+      
       if (interaction.commandName === 'close') {
         const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
 
