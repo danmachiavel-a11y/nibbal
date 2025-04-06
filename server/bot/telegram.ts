@@ -789,8 +789,8 @@ export class TelegramBot {
         keyboard.push(currentRow);
       }
 
-      // Use simple simpleEscape to avoid Markdown parsing errors
-      const welcomeMessage = simpleEscape(botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:", ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']);
+      // Get welcome message but don't escape markdown formatting
+      const welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
 
       try {
         // Try to edit existing message if this was triggered by a callback
@@ -859,7 +859,7 @@ export class TelegramBot {
           await ctx.replyWithPhoto(
             category.serviceImageUrl,
             {
-              caption: category.serviceSummary ? simpleEscape(category.serviceSummary) : undefined,
+              caption: category.serviceSummary || undefined,
               parse_mode: "MarkdownV2"
             }
           );
@@ -867,14 +867,14 @@ export class TelegramBot {
           log(`Error sending service image: ${error}`, "error");
           // If image fails, still show the summary as text
           if (category.serviceSummary) {
-            await ctx.reply(simpleEscape(category.serviceSummary), {
+            await ctx.reply(category.serviceSummary, {
               parse_mode: "MarkdownV2"
             });
           }
         }
       } else if (category.serviceSummary) {
         // If no image but has summary, show summary as text
-        await ctx.reply(simpleEscape(category.serviceSummary), {
+        await ctx.reply(category.serviceSummary, {
           parse_mode: "MarkdownV2"
         });
       }
