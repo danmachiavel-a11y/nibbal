@@ -708,9 +708,10 @@ export class DiscordBot {
           
           // Add main categories
           for (const category of mainCategories) {
-            const statusEmoji = category.isClosed ? "🔴" : "🟢";
+            // Only show red dot for closed services
+            const prefix = category.isClosed ? "🔴 " : "";
             fields.push({
-              name: `${statusEmoji} ${category.name} (ID: ${category.id})`,
+              name: `${prefix}${category.name} (ID: ${category.id})`,
               value: `Status: ${category.isClosed ? "Closed" : "Open"}`,
               inline: true
             });
@@ -726,7 +727,8 @@ export class DiscordBot {
             });
             
             for (const category of subCategories) {
-              const statusEmoji = category.isClosed ? "🔴" : "🟢";
+              // Only show red dot for closed services
+              const prefix = category.isClosed ? "🔴 " : "";
               // Try to get parent name
               let parentName = "Unknown";
               if (category.parentId) {
@@ -737,7 +739,7 @@ export class DiscordBot {
               }
               
               fields.push({
-                name: `${statusEmoji} ${category.name} (ID: ${category.id})`,
+                name: `${prefix}${category.name} (ID: ${category.id})`,
                 value: `Parent: ${parentName}\nStatus: ${category.isClosed ? "Closed" : "Open"}`,
                 inline: true
               });
@@ -895,7 +897,7 @@ export class DiscordBot {
           // Create confirmation embed
           const embed = new EmbedBuilder()
             .setColor(0x00FF00)
-            .setTitle('🟢 Service Category Opened')
+            .setTitle('✅ Service Category Opened')
             .setDescription(`Service '${category.name}' has been opened`)
             .addFields(
               { name: 'Status', value: 'Open', inline: true },
