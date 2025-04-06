@@ -534,11 +534,31 @@ export class TelegramBot {
       // Add delay before launching
       await new Promise(resolve => setTimeout(resolve, 5000));
 
-      // Launch with conservative options
-      await this.bot.launch({
-        dropPendingUpdates: true,
-        allowedUpdates: ["message", "callback_query"]
-      });
+      // Launch with conservative options to handle conflicts better
+      try {
+        // Launch the bot with default options
+        await this.bot.launch();
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        // If there's a conflict error, try to delete webhook and retry
+        if (errorMessage.includes('409') && errorMessage.includes('Conflict')) {
+          log("Detected 409 Conflict error, trying to reset webhooks", "warn");
+          try {
+            // Try to delete any webhook
+            await this.bot.telegram.deleteWebhook();
+            // Wait a moment before retry
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            // Try launching again
+            await this.bot.launch();
+          } catch (retryError) {
+            throw new Error(`Failed to start after resolving conflict: ${retryError}`);
+          }
+        } else {
+          // Rethrow other errors
+          throw error;
+        }
+      }
 
       const botInfo = await this.bot.telegram.getMe();
       log(`Connected as @${botInfo.username}`);
@@ -748,6 +768,7 @@ export class TelegramBot {
       let avatarUrl: string | undefined;
       try {
         // Use telegram getter for null safety
+        if (!ctx.from?.id) return;
         const photos = await this.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
         if (photos && photos.total_count > 0) {
           const fileId = photos.photos[0][0].file_id;
@@ -1047,6 +1068,7 @@ export class TelegramBot {
         }
 
         // Get user's display name
+        if (!ctx.from) return;
         const displayName = [ctx.from.first_name, ctx.from.last_name]
           .filter(Boolean)
           .join(' ') || ctx.from.username || "Telegram User";
@@ -1349,6 +1371,7 @@ ID: ${activeTicket.id}`;
       
       const target = args[0];
       const reason = args.slice(1).join(" ") || "No reason provided";
+      if (!ctx.from) return;
       const adminName = ctx.from.username || 
         [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ") || 
         "Admin";
@@ -1399,9 +1422,10 @@ ID: ${activeTicket.id}`;
           
           // Send direct message to user if possible
           try {
-            if (targetUser.telegramId) {
+            const telegramId = targetUser.telegramId;
+            if (telegramId && typeof telegramId === 'string') {
               await this.bot.telegram.sendMessage(
-                targetUser.telegramId,
+                telegramId,
                 `⛔ You have been banned from using this bot for: ${reason}.`
               );
             }
@@ -1456,9 +1480,10 @@ ID: ${activeTicket.id}`;
           
           // Send direct message to user if possible
           try {
-            if (targetUser.telegramId) {
+            const telegramId = targetUser.telegramId;
+            if (telegramId && typeof telegramId === 'string') {
               await this.bot.telegram.sendMessage(
-                targetUser.telegramId,
+                telegramId,
                 `⛔ You have been banned from using this bot for: ${reason}.`
               );
             }
@@ -1524,6 +1549,7 @@ ID: ${activeTicket.id}`;
       }
       
       const target = args[0];
+      if (!ctx.from) return;
       const adminName = ctx.from.username || 
         [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(" ") || 
         "Admin";
@@ -1551,9 +1577,10 @@ ID: ${activeTicket.id}`;
           
           // Send direct message to user if possible
           try {
-            if (targetUser.telegramId) {
+            const telegramId = targetUser.telegramId;
+            if (telegramId && typeof telegramId === 'string') {
               await this.bot.telegram.sendMessage(
-                targetUser.telegramId,
+                telegramId,
                 `✅ You have been unbanned and can now use this bot again.`
               );
             }
@@ -1587,9 +1614,10 @@ ID: ${activeTicket.id}`;
           
           // Send direct message to user if possible
           try {
-            if (targetUser.telegramId) {
+            const telegramId = targetUser.telegramId;
+            if (telegramId && typeof telegramId === 'string') {
               await this.bot.telegram.sendMessage(
-                targetUser.telegramId,
+                telegramId,
                 `✅ You have been unbanned and can now use this bot again.`
               );
             }
@@ -1607,26 +1635,38 @@ ID: ${activeTicket.id}`;
     });
     
     this.bot.command("close", async (ctx) => {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-      if (!this.checkRateLimit(userId, 'command', 'close')) {
-        await ctx.reply("⚠️ Please wait before using this command again.");
-        return;
-      }
-
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (!user) {
-        await ctx.reply("You haven't created any tickets yet.");
-        return;
-      }
-
-      const activeTicket = await storage.getActiveTicketByUserId(user.id);
-      if (!activeTicket) {
-        await ctx.reply("You don't have any active tickets to close.");
-        return;
-      }
-
       try {
+        log(`/close command received from user: ${ctx.from?.id}`, "info");
+        
+        const userId = ctx.from?.id;
+        if (!userId) {
+          log("No user ID in close command", "error");
+          return;
+        }
+        
+        if (!this.checkRateLimit(userId, 'command', 'close')) {
+          await ctx.reply("⚠️ Please wait before using this command again.");
+          return;
+        }
+
+        log(`Looking up user with Telegram ID: ${userId.toString()}`, "info");
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          log(`User not found for telegram ID: ${userId}`, "warn");
+          await ctx.reply("You haven't created any tickets yet.");
+          return;
+        }
+        
+        log(`Looking up active tickets for user ID: ${user.id}`, "info");
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (!activeTicket) {
+          log(`No active tickets found for user ID: ${user.id}`, "warn");
+          await ctx.reply("You don't have any active tickets to close.");
+          return;
+        }
+        
+        log(`Found active ticket: ${activeTicket.id}`, "info");
+
         // Close the ticket even if there's no transcript category
         const categoryId = activeTicket.categoryId ?? 0;
         const category = await storage.getCategory(categoryId);
@@ -1721,6 +1761,7 @@ ID: ${activeTicket.id}`;
         // Get avatar URL if possible
         let avatarUrl: string | undefined;
         try {
+          if (!ctx.from?.id) return;
           const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
           if (photos && photos.total_count > 0) {
             const fileId = photos.photos[0][0].file_id;
@@ -1832,6 +1873,7 @@ ID: ${activeTicket.id}`;
       // Create or get user
       let user = await storage.getUserByTelegramId(userId.toString());
       if (!user) {
+        if (!ctx.from) return;
         user = await storage.createUser({
           username: ctx.from.username || "Unknown",
           telegramId: userId.toString(),
