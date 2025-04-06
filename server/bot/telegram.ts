@@ -170,56 +170,48 @@ function escapeWithoutCache(text: string, specialChars: string[]): string {
   return result;
 }
 
-// Directly convert standard markdown to Telegram MarkdownV2 format
+// Simple and reliable function to convert standard markdown to Telegram MarkdownV2 format
 function preserveMarkdown(text: string): string {
   if (!text) return '';
 
-  // First escape all special characters except those used in markdown
-  let escaped = '';
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    if (TELEGRAM_SPECIAL_CHARS.includes(char) && 
-        // Don't escape if it's part of markdown syntax
-        !(
-          (char === '*' && (i > 0 && text[i-1] === '*' || i < text.length - 1 && text[i+1] === '*')) || 
-          (char === '_' && (i > 0 && text[i-1] === '_' || i < text.length - 1 && text[i+1] === '_')) ||
-          (char === '`' && (i > 0 && text[i-1] === '`' || i < text.length - 1 && text[i+1] === '`')) ||
-          (char === '[' || char === ']' || char === '(' || char === ')' && isPartOfMarkdownLink(text, i))
-        )
-       ) {
-      escaped += '\\' + char;
-    } else {
-      escaped += char;
-    }
+  // First, replace all standard markdown patterns with placeholders to protect them during escaping
+  let processedText = text
+    // Bold text
+    .replace(/\*\*([^*]+)\*\*/g, '§BOLD_START§$1§BOLD_END§')
+    // Italic text (with single asterisk)
+    .replace(/(?<!\*)\*(?!\*)([^*]+)(?<!\*)\*(?!\*)/g, '§ITALIC_START§$1§ITALIC_END§')
+    // Italic text (with underscore)
+    .replace(/_([^_]+)_/g, '§ITALIC_UNDER_START§$1§ITALIC_UNDER_END§')
+    // Code blocks
+    .replace(/`([^`]+)`/g, '§CODE_START§$1§CODE_END§')
+    // Links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '§LINK_TEXT_START§$1§LINK_TEXT_END§§LINK_URL_START§$2§LINK_URL_END§');
+
+  // Escape all special characters
+  for (const char of TELEGRAM_SPECIAL_CHARS) {
+    const regex = new RegExp('\\' + char, 'g');
+    processedText = processedText.replace(regex, '\\' + char);
   }
 
-  // Now, handle standard markdown patterns and convert them to Telegram format
-  // Standard bold (** **) to Telegram bold (* *)
-  let processed = escaped.replace(/\*\*(.+?)\*\*/g, '*$1*');
-  
-  // Standard italics (* *) to Telegram italics (_ _)
-  // Skip this conversion as it's already in a compatible format
-  
-  // Return the processed text
-  return processed;
+  // Now restore markdown elements with proper Telegram MarkdownV2 syntax
+  return processedText
+    // Bold: ** -> *
+    .replace(/§BOLD_START§/g, '*')
+    .replace(/§BOLD_END§/g, '*')
+    // Single asterisk italic: * -> _
+    .replace(/§ITALIC_START§/g, '_')
+    .replace(/§ITALIC_END§/g, '_')
+    // Underscore italic: _ -> _
+    .replace(/§ITALIC_UNDER_START§/g, '_')
+    .replace(/§ITALIC_UNDER_END§/g, '_')
+    // Code blocks
+    .replace(/§CODE_START§/g, '`')
+    .replace(/§CODE_END§/g, '`')
+    // Links
+    .replace(/§LINK_TEXT_START§([^§]+)§LINK_TEXT_END§§LINK_URL_START§([^§]+)§LINK_URL_END§/g, '[$1]($2)');
 }
 
-// Helper function to determine if a character is part of a markdown link
-function isPartOfMarkdownLink(text: string, position: number): boolean {
-  // Very basic check - can be improved for more robust link detection
-  const linkPattern = /\[.*?\]\(.*?\)/;
-  const beforeText = text.substring(0, position);
-  const afterText = text.substring(position);
-  
-  // Check if we can form a markdown link using the character at this position
-  for (let i = 0; i < beforeText.length; i++) {
-    const potentialLink = beforeText.substring(beforeText.length - i) + afterText;
-    if (linkPattern.test(potentialLink.substring(0, 100))) { // Check first 100 chars for efficiency
-      return true;
-    }
-  }
-  return false;
-}
+// Empty placeholder to avoid unused function
 
 // Remove markdown to create plain text as a fallback
 function removeMarkdown(text: string): string {
