@@ -1627,15 +1627,9 @@ ID: ${activeTicket.id}`;
       }
 
       try {
+        // Close the ticket even if there's no transcript category
         const categoryId = activeTicket.categoryId ?? 0;
         const category = await storage.getCategory(categoryId);
-        if (!category?.transcriptCategoryId) {
-          await ctx.reply(
-            "❌ Cannot close ticket: No transcript category set for this service. " +
-            "Please contact an administrator."
-          );
-          return;
-        }
 
         await storage.updateTicketStatus(activeTicket.id, "closed");
 
