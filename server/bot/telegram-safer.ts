@@ -166,24 +166,49 @@ function escapeWithoutCache(text: string, specialChars: string[]): string {
 
 /**
  * Preserve intentional Markdown formatting while escaping other special characters
- * This is a more sophisticated handling of markdown to allow specific formatting
- * 
- * For Telegram MarkdownV2, we use a simpler approach that works more reliably
+ * Modified for better compatibility with Telegram's MarkdownV2 format
  */
 function preserveMarkdown(text: string): string {
   if (!text) return '';
   
-  // Escape all special characters first
-  const escaped = escapeWithoutCache(text, DEFAULT_SPECIAL_CHARS);
+  // Define the special characters that need to be escaped in MarkdownV2
+  const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
   
-  // For now, just return escaped text without trying to preserve formatting
-  // This is more reliable for Telegram API which has strict formatting rules
-  return escaped;
+  // Replace all markdown formatting patterns with placeholders
+  // This is done to protect the formatting from being escaped
+  let processedText = text;
   
-  /* TODO: Implement a more robust markdown preserving algorithm
-  // The character-by-character approach was causing issues with Telegram's MarkdownV2
-  // We'll implement a more reliable approach in the future if needed
-  */
+  // Replace bold with placeholder
+  processedText = processedText.replace(/\*\*(.*?)\*\*/g, '§BOLD§$1§BOLD§');
+  
+  // Replace italic with placeholder
+  processedText = processedText.replace(/\*(.*?)\*/g, '§ITALIC§$1§ITALIC§');
+  processedText = processedText.replace(/_(.*?)_/g, '§ITALIC§$1§ITALIC§');
+  
+  // Replace code with placeholder
+  processedText = processedText.replace(/`(.*?)`/g, '§CODE§$1§CODE§');
+  
+  // Replace links with placeholder
+  processedText = processedText.replace(/\[(.*?)\]\((.*?)\)/g, '§LINK_TEXT§$1§LINK_TEXT§§LINK_URL§$2§LINK_URL§');
+  
+  // Escape all special characters
+  for (const char of specialChars) {
+    processedText = processedText.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+  }
+  
+  // Restore bold formatting
+  processedText = processedText.replace(/§BOLD§(.*?)§BOLD§/g, '*$1*');
+  
+  // Restore italic formatting
+  processedText = processedText.replace(/§ITALIC§(.*?)§ITALIC§/g, '_$1_');
+  
+  // Restore code formatting
+  processedText = processedText.replace(/§CODE§(.*?)§CODE§/g, '`$1`');
+  
+  // Restore link formatting
+  processedText = processedText.replace(/§LINK_TEXT§(.*?)§LINK_TEXT§§LINK_URL§(.*?)§LINK_URL§/g, '[$1]($2)');
+  
+  return processedText;
 }
 
 /**
