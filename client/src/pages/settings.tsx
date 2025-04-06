@@ -68,14 +68,14 @@ function CategoryList({ categories }: { categories: Category[] }) {
 
   const DeleteButton = ({ category, message }: { category: Category, message: string }) => (
     <AlertDialog>
-      <AlertDialogTrigger>
-        <div 
+      <AlertDialogTrigger asChild>
+        <span 
           onClick={(e) => e.stopPropagation()} 
-          className="px-3 py-1.5 rounded-md bg-red-50 border border-red-200 text-red-600 font-medium text-sm flex items-center gap-1.5 hover:bg-red-100 hover:border-red-300 transition-colors ml-4"
+          className="px-3 py-1.5 rounded-md bg-red-50 border border-red-200 text-red-600 font-medium text-sm flex items-center gap-1.5 hover:bg-red-100 hover:border-red-300 transition-colors ml-4 cursor-pointer"
         >
           <Trash2 className="h-3.5 w-3.5" />
           <span>Delete</span>
-        </div>
+        </span>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
