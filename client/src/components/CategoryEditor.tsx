@@ -135,26 +135,29 @@ export function CategoryEditor({ category, categories }: { category: Category; c
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 my-2">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField
-            control={form.control}
-            name="name"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Name</FormLabel>
-                <FormControl>
-                  <Input {...field} />
-                </FormControl>
-              </FormItem>
-            )}
-          />
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3 my-2">
+        {/* Basic Details - First Row */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="md:col-span-2">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem className="mb-0">
+                  <FormLabel>Name</FormLabel>
+                  <FormControl>
+                    <Input {...field} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+          </div>
 
           <FormField
             control={form.control}
             name="displayOrder"
             render={({ field }) => (
-              <FormItem>
+              <FormItem className="mb-0">
                 <FormLabel>Display Order</FormLabel>
                 <FormControl>
                   <Input
@@ -166,38 +169,37 @@ export function CategoryEditor({ category, categories }: { category: Category; c
               </FormItem>
             )}
           />
+          {!category.isSubmenu && (
+            <div className="md:col-span-1">
+              <FormField
+                control={form.control}
+                name="parentId"
+                render={({ field }) => (
+                  <FormItem className="mb-0">
+                    <FormLabel>Parent Menu</FormLabel>
+                    <FormControl>
+                      <select
+                        className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        value={field.value || ""}
+                        onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                      >
+                        <option value="">Root (No Parent)</option>
+                        {categories
+                          ?.filter(cat => cat.isSubmenu && cat.id !== category.id)
+                          .map(submenu => (
+                            <option key={submenu.id} value={submenu.id}>{submenu.name}</option>
+                          ))}
+                      </select>
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            </div>
+          )}
         </div>
 
-        {!category.isSubmenu && (
-          <FormField
-            control={form.control}
-            name="parentId"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Parent Menu</FormLabel>
-                <FormDescription>
-                  Choose which submenu this category belongs to
-                </FormDescription>
-                <FormControl>
-                  <select
-                    className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    value={field.value || ""}
-                    onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
-                  >
-                    <option value="">Root (No Parent)</option>
-                    {categories
-                      ?.filter(cat => cat.isSubmenu && cat.id !== category.id)
-                      .map(submenu => (
-                        <option key={submenu.id} value={submenu.id}>{submenu.name}</option>
-                      ))}
-                  </select>
-                </FormControl>
-              </FormItem>
-            )}
-          />
-        )}
-
-        <div className="flex space-x-4">
+        {/* Options Row */}
+        <div className="flex flex-wrap md:flex-nowrap items-center gap-5">
           <FormField
             control={form.control}
             name="newRow"
@@ -268,22 +270,23 @@ export function CategoryEditor({ category, categories }: { category: Category; c
           />
         </div>
 
+        {/* Discord settings */}
         {!category.isSubmenu && (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-              <FormField
-                control={form.control}
-                name="discordRoleId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Discord Role</FormLabel>
-                    <FormDescription>
-                      Role that will be pinged for new tickets
-                    </FormDescription>
-                    <div className="flex gap-2 items-center">
-                      <FormControl className="flex-1">
+            {/* Discord Section - Grid */}
+            <div className="bg-muted/30 p-3 rounded-md border border-border/50">
+              <h4 className="text-sm font-medium mb-2">Discord Configuration</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* Discord Role */}
+                <FormField
+                  control={form.control}
+                  name="discordRoleId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Discord Role</FormLabel>
+                      <FormControl>
                         <select
-                          className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                           value={field.value || ""}
                           onChange={(e) => field.onChange(e.target.value)}
                         >
@@ -293,135 +296,145 @@ export function CategoryEditor({ category, categories }: { category: Category; c
                           ))}
                         </select>
                       </FormControl>
-                    </div>
-                  </FormItem>
-                )}
-              />
+                      <p className="text-[10px] text-muted-foreground mt-1">Role pinged for new tickets</p>
+                    </FormItem>
+                  )}
+                />
 
-              <FormField
-                control={form.control}
-                name="discordCategoryId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Discord Active Tickets Category</FormLabel>
-                    <FormDescription>
-                      Where new ticket channels are created
-                    </FormDescription>
-                    <FormControl>
-                      <select
-                        className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                        value={field.value || ""}
-                        onChange={(e) => field.onChange(e.target.value)}
-                      >
-                        <option value="">Select a category</option>
-                        {form.getValues("discordCategories")?.map((category: any) => (
-                          <option key={category.id} value={category.id}>{category.name}</option>
-                        ))}
-                      </select>
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
+                {/* Active Tickets Category */}
+                <FormField
+                  control={form.control}
+                  name="discordCategoryId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Active Tickets Category</FormLabel>
+                      <FormControl>
+                        <select
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          value={field.value || ""}
+                          onChange={(e) => field.onChange(e.target.value)}
+                        >
+                          <option value="">Select a category</option>
+                          {form.getValues("discordCategories")?.map((category: any) => (
+                            <option key={category.id} value={category.id}>{category.name}</option>
+                          ))}
+                        </select>
+                      </FormControl>
+                      <p className="text-[10px] text-muted-foreground mt-1">Where new ticket channels are created</p>
+                    </FormItem>
+                  )}
+                />
+
+                {/* Transcripts Category */}
+                <FormField
+                  control={form.control}
+                  name="transcriptCategoryId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Transcripts Category</FormLabel>
+                      <FormControl>
+                        <select
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          value={field.value || ""}
+                          onChange={(e) => field.onChange(e.target.value)}
+                        >
+                          <option value="">Select a category</option>
+                          {form.getValues("discordCategories")?.map((category: any) => (
+                            <option key={category.id} value={category.id}>{category.name}</option>
+                          ))}
+                        </select>
+                      </FormControl>
+                      <p className="text-[10px] text-muted-foreground mt-1">Where closed tickets are moved</p>
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <Button 
+                type="button" 
+                variant="ghost" 
+                size="sm"
+                onClick={() => Promise.all([
+                  refreshRoles(form, toast),
+                  refreshCategories(form, toast)
+                ])}
+                className="mt-2 text-xs h-7 px-2 flex items-center gap-1"
+              >
+                <RefreshCw className="h-3 w-3" />
+                <span>Refresh Discord Data</span>
+              </Button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="transcriptCategoryId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Discord Transcripts Category</FormLabel>
-                    <FormDescription>
-                      Where closed tickets are moved
-                    </FormDescription>
-                    <FormControl>
-                      <select
-                        className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                        value={field.value || ""}
-                        onChange={(e) => field.onChange(e.target.value)}
-                      >
-                        <option value="">Select a category</option>
-                        {form.getValues("discordCategories")?.map((category: any) => (
-                          <option key={category.id} value={category.id}>{category.name}</option>
-                        ))}
-                      </select>
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
+            {/* Content Configuration Section */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+              <div>
+                <h4 className="text-sm font-medium mb-2">Category Content</h4>
+                
+                <FormField
+                  control={form.control}
+                  name="serviceSummary"
+                  render={({ field }) => (
+                    <FormItem className="mb-3">
+                      <FormLabel className="text-xs">Service Summary</FormLabel>
+                      <FormDescription className="text-[10px] mt-0">
+                        Brief description shown to users. Markdown supported.
+                      </FormDescription>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          rows={3}
+                          className="text-sm"
+                          value={field.value || ''}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                
+                <FormField
+                  control={form.control}
+                  name="serviceImageUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Service Image URL</FormLabel>
+                      <FormDescription className="text-[10px] mt-0">
+                        Optional: Image URL for service description
+                      </FormDescription>
+                      <FormControl>
+                        <Input {...field} value={field.value || ''} className="text-sm" />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
+              
+              <div>
+                <h4 className="text-sm font-medium mb-2">Questions</h4>
+                <FormField
+                  control={form.control}
+                  name="questions"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormDescription className="text-[10px] mt-0 mb-1">
+                        One question per line. These will be asked when a user selects this category.
+                      </FormDescription>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          rows={6}
+                          className="text-sm h-[calc(100%-1.5rem)]"
+                          placeholder="Enter your questions here, one per line."
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
             </div>
-
-            <FormField
-              control={form.control}
-              name="serviceSummary"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Service Summary</FormLabel>
-                  <FormDescription>
-                    A brief description that will be shown to users. Markdown is supported.
-                  </FormDescription>
-                  <FormControl>
-                    <Textarea
-                      {...field}
-                      rows={3}
-                      value={field.value || ''}
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="serviceImageUrl"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Service Image URL</FormLabel>
-                  <FormDescription>
-                    Optional: URL of an image to show with the service description
-                  </FormDescription>
-                  <FormControl>
-                    <Input {...field} value={field.value || ''} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="questions"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Questions</FormLabel>
-                  <FormDescription>
-                    One question per line. These questions will be asked when a user selects this category.
-                  </FormDescription>
-                  <FormControl>
-                    <Textarea
-                      {...field}
-                      rows={4}
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
           </>
         )}
 
-        <div className="flex justify-end space-x-2 mt-6">
-          <Button 
-            type="button" 
-            variant="outline" 
-            onClick={() => Promise.all([
-              refreshRoles(form, toast),
-              refreshCategories(form, toast)
-            ])}
-            className="flex items-center gap-1.5"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            <span>Refresh Discord Data</span>
-          </Button>
-          <Button type="submit">Save Changes</Button>
+        <div className="flex justify-end mt-6">
+          <Button type="submit" className="min-w-24">Save Changes</Button>
         </div>
       </form>
     </Form>
