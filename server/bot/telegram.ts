@@ -170,38 +170,55 @@ function escapeWithoutCache(text: string, specialChars: string[]): string {
   return result;
 }
 
-// Preserve markdown formatting while escaping other special characters
+// Directly convert standard markdown to Telegram MarkdownV2 format
 function preserveMarkdown(text: string): string {
   if (!text) return '';
-  
-  // Create regex patterns for common markdown elements
-  const boldPattern = /\*\*([^*]+)\*\*/g;
-  const italicPattern = /\*([^*]+)\*/g;
-  const codePattern = /`([^`]+)`/g;
-  const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
-  
-  // Replace markdown patterns with placeholders
-  let processedText = text
-    .replace(boldPattern, '§§BOLD_START§§$1§§BOLD_END§§')
-    .replace(italicPattern, '§§ITALIC_START§§$1§§ITALIC_END§§')
-    .replace(codePattern, '§§CODE_START§§$1§§CODE_END§§')
-    .replace(linkPattern, '§§LINK_TEXT_START§§$1§§LINK_TEXT_END§§§§LINK_URL_START§§$2§§LINK_URL_END§§');
-  
-  // Escape all remaining special characters
-  for (const char of TELEGRAM_SPECIAL_CHARS) {
-    const regex = new RegExp('\\' + char, 'g');
-    processedText = processedText.replace(regex, '\\' + char);
+
+  // First escape all special characters except those used in markdown
+  let escaped = '';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (TELEGRAM_SPECIAL_CHARS.includes(char) && 
+        // Don't escape if it's part of markdown syntax
+        !(
+          (char === '*' && (i > 0 && text[i-1] === '*' || i < text.length - 1 && text[i+1] === '*')) || 
+          (char === '_' && (i > 0 && text[i-1] === '_' || i < text.length - 1 && text[i+1] === '_')) ||
+          (char === '`' && (i > 0 && text[i-1] === '`' || i < text.length - 1 && text[i+1] === '`')) ||
+          (char === '[' || char === ']' || char === '(' || char === ')' && isPartOfMarkdownLink(text, i))
+        )
+       ) {
+      escaped += '\\' + char;
+    } else {
+      escaped += char;
+    }
   }
+
+  // Now, handle standard markdown patterns and convert them to Telegram format
+  // Standard bold (** **) to Telegram bold (* *)
+  let processed = escaped.replace(/\*\*(.+?)\*\*/g, '*$1*');
   
-  // Restore markdown elements
-  return processedText
-    .replace(/§§BOLD_START§§/g, '**')
-    .replace(/§§BOLD_END§§/g, '**')
-    .replace(/§§ITALIC_START§§/g, '*')
-    .replace(/§§ITALIC_END§§/g, '*')
-    .replace(/§§CODE_START§§/g, '`')
-    .replace(/§§CODE_END§§/g, '`')
-    .replace(/§§LINK_TEXT_START§§([^§]+)§§LINK_TEXT_END§§§§LINK_URL_START§§([^§]+)§§LINK_URL_END§§/g, '[$1]($2)');
+  // Standard italics (* *) to Telegram italics (_ _)
+  // Skip this conversion as it's already in a compatible format
+  
+  // Return the processed text
+  return processed;
+}
+
+// Helper function to determine if a character is part of a markdown link
+function isPartOfMarkdownLink(text: string, position: number): boolean {
+  // Very basic check - can be improved for more robust link detection
+  const linkPattern = /\[.*?\]\(.*?\)/;
+  const beforeText = text.substring(0, position);
+  const afterText = text.substring(position);
+  
+  // Check if we can form a markdown link using the character at this position
+  for (let i = 0; i < beforeText.length; i++) {
+    const potentialLink = beforeText.substring(beforeText.length - i) + afterText;
+    if (linkPattern.test(potentialLink.substring(0, 100))) { // Check first 100 chars for efficiency
+      return true;
+    }
+  }
+  return false;
 }
 
 // Remove markdown to create plain text as a fallback
