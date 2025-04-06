@@ -1718,7 +1718,7 @@ ID: ${activeTicket.id}`;
 
         await storage.createMessage({
           ticketId: activeTicket.id,
-          content: ctx.message.caption || "Image sent",
+          content: ctx.message.caption || "[Image]", // This is just for database storage, not what's displayed on Discord
           authorId: user.id,
           platform: "telegram",
           timestamp: new Date()
