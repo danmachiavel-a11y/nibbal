@@ -142,15 +142,23 @@ function simpleEscape(text: string, specialChars: string[] = DEFAULT_SPECIAL_CHA
 }
 
 function escapeWithoutCache(text: string, specialChars: string[]): string {
-  let result = '';
+  if (!text) return '';
   
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    if (specialChars.includes(char)) {
-      result += '\\' + char;
-    } else {
-      result += char;
-    }
+  // This is the correct way to escape characters for Telegram MarkdownV2
+  // Replace each special character with its escaped version
+  let result = text;
+  
+  // These characters must be escaped in MarkdownV2
+  const telegramSpecialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+  
+  // Use the intersection of provided specialChars and telegramSpecialChars
+  const charsToEscape = specialChars.filter(char => telegramSpecialChars.includes(char));
+  
+  // Escape each character one by one
+  for (const char of charsToEscape) {
+    // Use a regex with global flag to replace all occurrences
+    const regex = new RegExp('\\' + char, 'g');
+    result = result.replace(regex, '\\' + char);
   }
   
   return result;
@@ -159,79 +167,23 @@ function escapeWithoutCache(text: string, specialChars: string[]): string {
 /**
  * Preserve intentional Markdown formatting while escaping other special characters
  * This is a more sophisticated handling of markdown to allow specific formatting
+ * 
+ * For Telegram MarkdownV2, we use a simpler approach that works more reliably
  */
 function preserveMarkdown(text: string): string {
   if (!text) return '';
   
-  // Process text character by character to handle nested formatting
-  let result = '';
-  let inBold = false;
-  let inItalic = false;
-  let inCode = false;
-  let linkText = '';
-  let collectingLinkText = false;
-  let linkUrl = '';
-  let collectingLinkUrl = false;
+  // Escape all special characters first
+  const escaped = escapeWithoutCache(text, DEFAULT_SPECIAL_CHARS);
   
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    const nextChar = i < text.length - 1 ? text[i + 1] : '';
-    const prevChar = i > 0 ? text[i - 1] : '';
-    
-    // Handle markdown special sequences
-    if (char === '*' && nextChar === '*' && !inCode) {
-      // Bold marker
-      inBold = !inBold;
-      result += '**';
-      i++; // Skip next asterisk
-    } else if ((char === '*' || char === '_') && !inCode && !collectingLinkText && !collectingLinkUrl) {
-      // Italic marker
-      inItalic = !inItalic;
-      result += char;
-    } else if (char === '`' && !inBold && !inItalic && !collectingLinkText && !collectingLinkUrl) {
-      // Code marker
-      inCode = !inCode;
-      result += '`';
-    } else if (char === '[' && !inBold && !inItalic && !inCode && !collectingLinkText && !collectingLinkUrl) {
-      // Start link text
-      collectingLinkText = true;
-      linkText = '';
-      result += '[';
-    } else if (char === ']' && collectingLinkText && !collectingLinkUrl) {
-      // End link text, start link URL
-      collectingLinkText = false;
-      if (nextChar === '(') {
-        collectingLinkUrl = true;
-        linkUrl = '';
-        result += ']';
-      } else {
-        // Not followed by (, not a proper link
-        result += simpleEscape(linkText) + '\\]';
-      }
-    } else if (char === '(' && prevChar === ']' && collectingLinkUrl) {
-      // Already handled with the ']' case
-      result += '(';
-    } else if (char === ')' && collectingLinkUrl) {
-      // End link URL
-      collectingLinkUrl = false;
-      result += ')';
-    } else if (collectingLinkText) {
-      // Collecting link text
-      linkText += char;
-    } else if (collectingLinkUrl) {
-      // Collecting link URL
-      linkUrl += char;
-      result += char;
-    } else if (DEFAULT_SPECIAL_CHARS.includes(char) && !inBold && !inItalic && !inCode) {
-      // Escape special characters outside of formatting
-      result += '\\' + char;
-    } else {
-      // Regular character
-      result += char;
-    }
-  }
+  // For now, just return escaped text without trying to preserve formatting
+  // This is more reliable for Telegram API which has strict formatting rules
+  return escaped;
   
-  return result;
+  /* TODO: Implement a more robust markdown preserving algorithm
+  // The character-by-character approach was causing issues with Telegram's MarkdownV2
+  // We'll implement a more reliable approach in the future if needed
+  */
 }
 
 /**
