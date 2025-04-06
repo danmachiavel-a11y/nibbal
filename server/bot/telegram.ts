@@ -109,6 +109,9 @@ const markdownCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 1000; // Maximum number of cached entries
 const DEFAULT_SPECIAL_CHARS = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
 
+// Characters that must be escaped in Telegram MarkdownV2 format
+const TELEGRAM_SPECIAL_CHARS = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+
 // Simpler and more robust function to escape markdown
 function simpleEscape(text: string, specialChars: string[] = DEFAULT_SPECIAL_CHARS): string {
   if (!text) return '';
@@ -165,6 +168,40 @@ function escapeWithoutCache(text: string, specialChars: string[]): string {
   }
   
   return result;
+}
+
+// Preserve markdown formatting while escaping other special characters
+function preserveMarkdown(text: string): string {
+  if (!text) return '';
+  
+  // Create regex patterns for common markdown elements
+  const boldPattern = /\*\*([^*]+)\*\*/g;
+  const italicPattern = /\*([^*]+)\*/g;
+  const codePattern = /`([^`]+)`/g;
+  const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+  
+  // Replace markdown patterns with placeholders
+  let processedText = text
+    .replace(boldPattern, '§§BOLD_START§§$1§§BOLD_END§§')
+    .replace(italicPattern, '§§ITALIC_START§§$1§§ITALIC_END§§')
+    .replace(codePattern, '§§CODE_START§§$1§§CODE_END§§')
+    .replace(linkPattern, '§§LINK_TEXT_START§§$1§§LINK_TEXT_END§§§§LINK_URL_START§§$2§§LINK_URL_END§§');
+  
+  // Escape all remaining special characters
+  for (const char of TELEGRAM_SPECIAL_CHARS) {
+    const regex = new RegExp('\\' + char, 'g');
+    processedText = processedText.replace(regex, '\\' + char);
+  }
+  
+  // Restore markdown elements
+  return processedText
+    .replace(/§§BOLD_START§§/g, '**')
+    .replace(/§§BOLD_END§§/g, '**')
+    .replace(/§§ITALIC_START§§/g, '*')
+    .replace(/§§ITALIC_END§§/g, '*')
+    .replace(/§§CODE_START§§/g, '`')
+    .replace(/§§CODE_END§§/g, '`')
+    .replace(/§§LINK_TEXT_START§§([^§]+)§§LINK_TEXT_END§§§§LINK_URL_START§§([^§]+)§§LINK_URL_END§§/g, '[$1]($2)');
 }
 
 // Remove markdown to create plain text as a fallback
@@ -789,8 +826,8 @@ export class TelegramBot {
         keyboard.push(currentRow);
       }
 
-      // Get welcome message but don't escape markdown formatting
-      const welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
+      // Use our new preserveMarkdown function to keep markdown formatting while escaping special chars
+      const welcomeMessage = preserveMarkdown(botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:");
 
       try {
         // Try to edit existing message if this was triggered by a callback
@@ -859,7 +896,7 @@ export class TelegramBot {
           await ctx.replyWithPhoto(
             category.serviceImageUrl,
             {
-              caption: category.serviceSummary || undefined,
+              caption: category.serviceSummary ? preserveMarkdown(category.serviceSummary) : undefined,
               parse_mode: "MarkdownV2"
             }
           );
@@ -867,14 +904,14 @@ export class TelegramBot {
           log(`Error sending service image: ${error}`, "error");
           // If image fails, still show the summary as text
           if (category.serviceSummary) {
-            await ctx.reply(category.serviceSummary, {
+            await ctx.reply(preserveMarkdown(category.serviceSummary), {
               parse_mode: "MarkdownV2"
             });
           }
         }
       } else if (category.serviceSummary) {
         // If no image but has summary, show summary as text
-        await ctx.reply(category.serviceSummary, {
+        await ctx.reply(preserveMarkdown(category.serviceSummary), {
           parse_mode: "MarkdownV2"
         });
       }
