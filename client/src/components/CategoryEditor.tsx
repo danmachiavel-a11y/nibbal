@@ -201,77 +201,82 @@ export function CategoryEditor({ category, categories }: { category: Category; c
             </div>
           )}
         </div>
+        
+        {/* Display Options - Always Visible */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 mt-2 bg-muted/20 border border-border/30 rounded-md">
+          <div>
+            <h4 className="text-sm font-medium mb-2">Display Options</h4>
+            <div className="flex flex-wrap md:flex-nowrap items-center gap-5">
+              <FormField
+                control={form.control}
+                name="newRow"
+                render={({ field }) => (
+                  <FormItem className="flex items-center gap-2.5">
+                    <FormControl>
+                      <div className="relative flex items-center">
+                        <div className="relative">
+                          <input
+                            type="checkbox"
+                            checked={field.value}
+                            onChange={field.onChange}
+                            id={`newRowCheckbox-${category.id}`}
+                            className="peer sr-only"
+                          />
+                          <div className="h-5 w-5 rounded border border-gray-300 bg-white peer-checked:bg-primary peer-checked:border-primary transition-colors"></div>
+                          {field.value && (
+                            <Check className="h-3.5 w-3.5 text-white absolute top-[3px] left-[3px]" />
+                          )}
+                        </div>
+                      </div>
+                    </FormControl>
+                    <FormLabel htmlFor={`newRowCheckbox-${category.id}`} className="m-0 font-medium cursor-pointer select-none">
+                      Start New Row
+                    </FormLabel>
+                  </FormItem>
+                )}
+              />
 
-        {/* Options Row */}
-        <div className="flex flex-wrap md:flex-nowrap items-center gap-5">
-          <FormField
-            control={form.control}
-            name="newRow"
-            render={({ field }) => (
-              <FormItem className="flex items-center gap-2.5">
-                <FormControl>
-                  <div className="relative flex items-center">
-                    <div className="relative">
-                      <input
-                        type="checkbox"
-                        checked={field.value}
-                        onChange={field.onChange}
-                        id={`newRowCheckbox-${category.id}`}
-                        className="peer sr-only"
-                      />
-                      <div className="h-5 w-5 rounded border border-gray-300 bg-white peer-checked:bg-primary peer-checked:border-primary transition-colors"></div>
-                      {field.value && (
-                        <Check className="h-3.5 w-3.5 text-white absolute top-[3px] left-[3px]" />
-                      )}
-                    </div>
-                  </div>
-                </FormControl>
-                <FormLabel htmlFor={`newRowCheckbox-${category.id}`} className="m-0 font-medium cursor-pointer select-none">
-                  Start New Row
-                </FormLabel>
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name="isClosed"
-            render={({ field }) => (
-              <FormItem className="flex items-center gap-2.5">
-                <FormControl>
-                  <div className="relative flex items-center">
-                    <div className="relative">
-                      <input
-                        type="checkbox"
-                        checked={field.value}
-                        onChange={field.onChange}
-                        id={`isClosedCheckbox-${category.id}`}
-                        className="peer sr-only"
-                      />
-                      <div className="h-5 w-5 rounded border border-gray-300 bg-white peer-checked:bg-primary peer-checked:border-primary transition-colors"></div>
-                      {field.value && (
-                        <Check className="h-3.5 w-3.5 text-white absolute top-[3px] left-[3px]" />
-                      )}
-                    </div>
-                  </div>
-                </FormControl>
-                <FormLabel htmlFor={`isClosedCheckbox-${category.id}`} className="m-0 font-medium cursor-pointer select-none">
-                  Service Closed
-                </FormLabel>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger className="ml-0.5">
-                      <Info className="h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>When closed, users will see a message saying</p>
-                      <p>"This service is currently closed. Try again later."</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </FormItem>
-            )}
-          />
+              <FormField
+                control={form.control}
+                name="isClosed"
+                render={({ field }) => (
+                  <FormItem className="flex items-center gap-2.5">
+                    <FormControl>
+                      <div className="relative flex items-center">
+                        <div className="relative">
+                          <input
+                            type="checkbox"
+                            checked={field.value}
+                            onChange={field.onChange}
+                            id={`isClosedCheckbox-${category.id}`}
+                            className="peer sr-only"
+                          />
+                          <div className="h-5 w-5 rounded border border-gray-300 bg-white peer-checked:bg-primary peer-checked:border-primary transition-colors"></div>
+                          {field.value && (
+                            <Check className="h-3.5 w-3.5 text-white absolute top-[3px] left-[3px]" />
+                          )}
+                        </div>
+                      </div>
+                    </FormControl>
+                    <FormLabel htmlFor={`isClosedCheckbox-${category.id}`} className="m-0 font-medium cursor-pointer select-none">
+                      Service Closed
+                    </FormLabel>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger className="ml-0.5">
+                          <Info className="h-4 w-4 text-muted-foreground" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>When closed, users will see a message saying</p>
+                          <p>"This service is currently closed. Try again later."</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Discord settings */}
