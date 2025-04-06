@@ -240,6 +240,14 @@ export class TelegramBot {
   private _isConnected: boolean = false;
   private isStarting: boolean = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  
+  // Helper method for safe telegram access
+  private get telegram() {
+    if (!this.bot?.telegram) {
+      throw new Error("Bot or telegram not initialized");
+    }
+    return this.bot.telegram;
+  }
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly CLEANUP_DELAY = 10000; // 10 seconds
@@ -609,11 +617,8 @@ export class TelegramBot {
 
   async sendMessage(chatId: number, text: string) {
     try {
-      if (!this.bot) {
-        throw new Error("Bot not initialized");
-      }
-
-      await this.bot.telegram.sendMessage(chatId, preserveMarkdown(text), {
+      // Use the telegram getter for null safety
+      await this.telegram.sendMessage(chatId, preserveMarkdown(text), {
         parse_mode: "MarkdownV2"
       });
     } catch (error) {
@@ -624,10 +629,6 @@ export class TelegramBot {
 
   async sendPhoto(chatId: number, photo: Buffer | string, caption?: string): Promise<string | undefined> {
     try {
-      if (!this.bot) {
-        throw new Error("Bot not initialized");
-      }
-
       log(`Sending photo to chat ${chatId}`);
       let sentMessage;
 
@@ -635,19 +636,19 @@ export class TelegramBot {
       if (typeof photo === 'string' && photo.startsWith('http')) {
         const response = await fetch(photo);
         const buffer = await response.buffer();
-        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: buffer }, {
+        sentMessage = await this.telegram.sendPhoto(chatId, { source: buffer }, {
           caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       } else if (photo instanceof Buffer) {
         // Handle buffer by using InputFile format
-        sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: photo }, {
+        sentMessage = await this.telegram.sendPhoto(chatId, { source: photo }, {
           caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       } else {
         // Handle file_id string
-        sentMessage = await this.bot.telegram.sendPhoto(chatId, photo, {
+        sentMessage = await this.telegram.sendPhoto(chatId, photo, {
           caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
@@ -670,11 +671,7 @@ export class TelegramBot {
 
   async sendCachedPhoto(chatId: number, fileId: string, caption?: string): Promise<void> {
     try {
-      if (!this.bot) {
-        throw new Error("Bot not initialized");
-      }
-
-      await this.bot.telegram.sendPhoto(chatId, fileId, {
+      await this.telegram.sendPhoto(chatId, fileId, {
         caption: caption ? preserveMarkdown(caption) : undefined,
         parse_mode: "MarkdownV2"
       });
@@ -860,9 +857,9 @@ export class TelegramBot {
             reply_markup: { inline_keyboard: keyboard }
           });
         }
-      } catch (error) {
+      } catch (error: any) {
         // If editing fails, send a new message
-        if (error.message?.includes("message can't be edited")) {
+        if (error?.message?.includes("message can't be edited")) {
           await ctx.reply(welcomeMessage, {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
@@ -1022,6 +1019,8 @@ export class TelegramBot {
   }
 
   private setupHandlers() {
+    if (!this.bot) return;
+    
     this.bot.command("ping", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -1199,7 +1198,8 @@ Please use /close to close your current ticket first, or continue chatting here 
             return;
           }
           
-          const category = await storage.getCategory(ticket.categoryId);
+          const categoryId = ticket.categoryId ?? 0;
+          const category = await storage.getCategory(categoryId);
           const categoryName = category ? category.name : "Unknown category";
           
           // Hide the inline keyboard

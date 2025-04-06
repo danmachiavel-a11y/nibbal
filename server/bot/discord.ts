@@ -48,7 +48,10 @@ import {
   ApplicationCommandOptionType,
   WebhookClient,
   PermissionFlagsBits,
-  Guild
+  Guild,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  ActionRowBuilder
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -344,10 +347,11 @@ export class DiscordBot {
           type: ApplicationCommandType.ChatInput,
           options: [
             {
-              name: 'categoryid',
-              description: 'The ID of the service category to close',
-              type: ApplicationCommandOptionType.Integer,
-              required: true
+              name: 'category',
+              description: 'Select the service category to close',
+              type: ApplicationCommandOptionType.String,
+              required: true,
+              autocomplete: true
             }
           ]
         },
@@ -357,10 +361,11 @@ export class DiscordBot {
           type: ApplicationCommandType.ChatInput,
           options: [
             {
-              name: 'categoryid',
-              description: 'The ID of the service category to open',
-              type: ApplicationCommandOptionType.Integer,
-              required: true
+              name: 'category',
+              description: 'Select the service category to open',
+              type: ApplicationCommandOptionType.String,
+              required: true,
+              autocomplete: true
             }
           ]
         },
@@ -454,12 +459,60 @@ export class DiscordBot {
       await this.registerSlashCommands();
     });
 
-    // Handle slash commands
+    // Handle autocomplete interactions
     this.client.on('interactionCreate', async (interaction) => {
-      if (!interaction.isChatInputCommand()) return;
+      if (interaction.isAutocomplete()) {
+        const { commandName, options } = interaction;
 
-      // Add info command handler
-      if (interaction.commandName === 'info') {
+        if (commandName === 'closeservice' || commandName === 'openservice') {
+          try {
+            // Get all categories
+            const categories = await storage.getCategories();
+            const focusedOption = options.getFocused(true);
+            const focusedValue = focusedOption.value.toString().toLowerCase();
+            
+            // Filter categories based on command
+            let filteredCategories;
+            if (commandName === 'closeservice') {
+              // For closeservice, only show open categories
+              filteredCategories = categories.filter(c => !c.isClosed);
+            } else {
+              // For openservice, only show closed categories
+              filteredCategories = categories.filter(c => c.isClosed);
+            }
+            
+            // Further filter by search term if provided
+            if (focusedValue) {
+              filteredCategories = filteredCategories.filter(c => 
+                c.name.toLowerCase().includes(focusedValue) || 
+                c.id.toString().includes(focusedValue)
+              );
+            }
+            
+            // Format results
+            const choices = filteredCategories.map(c => {
+              const prefix = c.isClosed ? "🔴 " : "";
+              return {
+                name: `${prefix}${c.name} (ID: ${c.id})`,
+                value: c.id.toString()
+              };
+            });
+            
+            // Return at most 25 choices (Discord's limit)
+            await interaction.respond(choices.slice(0, 25));
+          } catch (error) {
+            log(`Error handling autocomplete for ${commandName}: ${error}`, "error");
+            // Return empty array on error
+            await interaction.respond([]);
+          }
+        }
+        return;
+      }
+
+      // Handle slash commands
+      if (interaction.isChatInputCommand()) {
+        // Add info command handler
+        if (interaction.commandName === 'info') {
         const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
 
         if (!ticket) {
@@ -750,7 +803,7 @@ export class DiscordBot {
           const embed = new EmbedBuilder()
             .setColor(0x5865F2) // Discord Blurple color
             .setTitle('📋 Service Categories')
-            .setDescription('Use `/closeservice` or `/openservice` with the category ID to change status')
+            .setDescription('Use `/closeservice` or `/openservice` to change service status')
             .addFields(fields)
             .setFooter({ text: 'Only staff with Manage Server permissions can change service status' })
             .setTimestamp();
@@ -766,7 +819,8 @@ export class DiscordBot {
       }
       
       if (interaction.commandName === 'closeservice') {
-        const categoryId = interaction.options.getInteger('categoryid', true);
+        const categoryIdString = interaction.options.getString('category', true);
+        const categoryId = parseInt(categoryIdString, 10);
         
         // Check if user is an admin or has manage server permissions
         const guild = interaction.guild;
@@ -842,7 +896,8 @@ export class DiscordBot {
       }
       
       if (interaction.commandName === 'openservice') {
-        const categoryId = interaction.options.getInteger('categoryid', true);
+        const categoryIdString = interaction.options.getString('category', true);
+        const categoryId = parseInt(categoryIdString, 10);
         
         // Check if user is an admin or has manage server permissions
         const guild = interaction.guild;
@@ -1536,6 +1591,7 @@ export class DiscordBot {
           });
         }
       }
+      } // Close the if (interaction.isChatInputCommand())
     });
 
     // Handle all text messages
