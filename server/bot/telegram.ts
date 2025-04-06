@@ -170,45 +170,44 @@ function escapeWithoutCache(text: string, specialChars: string[]): string {
   return result;
 }
 
-// Simple and reliable function to convert standard markdown to Telegram MarkdownV2 format
+// Direct approach to convert standard markdown to Telegram MarkdownV2 format
 function preserveMarkdown(text: string): string {
   if (!text) return '';
 
-  // First, replace all standard markdown patterns with placeholders to protect them during escaping
-  let processedText = text
-    // Bold text
-    .replace(/\*\*([^*]+)\*\*/g, '§BOLD_START§$1§BOLD_END§')
-    // Italic text (with single asterisk)
-    .replace(/(?<!\*)\*(?!\*)([^*]+)(?<!\*)\*(?!\*)/g, '§ITALIC_START§$1§ITALIC_END§')
-    // Italic text (with underscore)
-    .replace(/_([^_]+)_/g, '§ITALIC_UNDER_START§$1§ITALIC_UNDER_END§')
-    // Code blocks
-    .replace(/`([^`]+)`/g, '§CODE_START§$1§CODE_END§')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '§LINK_TEXT_START§$1§LINK_TEXT_END§§LINK_URL_START§$2§LINK_URL_END§');
-
-  // Escape all special characters
-  for (const char of TELEGRAM_SPECIAL_CHARS) {
-    const regex = new RegExp('\\' + char, 'g');
-    processedText = processedText.replace(regex, '\\' + char);
+  // Step 1: Escape all special characters EXCEPT those used in markdown syntax
+  let processed = '';
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charAt(i);
+    
+    // If it's a special character that needs escaping in Telegram MarkdownV2
+    if (TELEGRAM_SPECIAL_CHARS.includes(char)) {
+      // Add a backslash before the character
+      processed += '\\' + char;
+    } else {
+      // Keep the character as is
+      processed += char;
+    }
   }
-
-  // Now restore markdown elements with proper Telegram MarkdownV2 syntax
-  return processedText
-    // Bold: ** -> *
-    .replace(/§BOLD_START§/g, '*')
-    .replace(/§BOLD_END§/g, '*')
-    // Single asterisk italic: * -> _
-    .replace(/§ITALIC_START§/g, '_')
-    .replace(/§ITALIC_END§/g, '_')
-    // Underscore italic: _ -> _
-    .replace(/§ITALIC_UNDER_START§/g, '_')
-    .replace(/§ITALIC_UNDER_END§/g, '_')
-    // Code blocks
-    .replace(/§CODE_START§/g, '`')
-    .replace(/§CODE_END§/g, '`')
-    // Links
-    .replace(/§LINK_TEXT_START§([^§]+)§LINK_TEXT_END§§LINK_URL_START§([^§]+)§LINK_URL_END§/g, '[$1]($2)');
+  
+  // Step 2: Remove escape chars for markdown symbols and fix markdown syntax
+  // This undoes escaping for markdown-related characters
+  
+  // Handle bold (** becomes *)
+  processed = processed.replace(/\\\*\\\*([^*]+)\\\*\\\*/g, '*$1*');
+  
+  // Handle italic (* becomes _)
+  processed = processed.replace(/(?<!\\\*)\\\*(?!\\\*)([^*]+)(?<!\\\*)\\\*(?!\\\*)/g, '_$1_');
+  
+  // Handle underscore italic
+  processed = processed.replace(/\\_([^_]+)\\_/g, '_$1_');
+  
+  // Handle code blocks
+  processed = processed.replace(/\\`([^`]+)\\`/g, '`$1`');
+  
+  // Handle links
+  processed = processed.replace(/\\\[([^\]\\]+)\\\]\\\(([^)\\]+)\\\)/g, '[$1]($2)');
+  
+  return processed;
 }
 
 // Empty placeholder to avoid unused function
@@ -614,7 +613,7 @@ export class TelegramBot {
         throw new Error("Bot not initialized");
       }
 
-      await this.bot.telegram.sendMessage(chatId, simpleEscape(text), {
+      await this.bot.telegram.sendMessage(chatId, preserveMarkdown(text), {
         parse_mode: "MarkdownV2"
       });
     } catch (error) {
@@ -637,19 +636,19 @@ export class TelegramBot {
         const response = await fetch(photo);
         const buffer = await response.buffer();
         sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: buffer }, {
-          caption: caption ? simpleEscape(caption) : undefined,
+          caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       } else if (photo instanceof Buffer) {
         // Handle buffer by using InputFile format
         sentMessage = await this.bot.telegram.sendPhoto(chatId, { source: photo }, {
-          caption: caption ? simpleEscape(caption) : undefined,
+          caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       } else {
         // Handle file_id string
         sentMessage = await this.bot.telegram.sendPhoto(chatId, photo, {
-          caption: caption ? simpleEscape(caption) : undefined,
+          caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       }
@@ -676,7 +675,7 @@ export class TelegramBot {
       }
 
       await this.bot.telegram.sendPhoto(chatId, fileId, {
-        caption: caption ? simpleEscape(caption) : undefined,
+        caption: caption ? preserveMarkdown(caption) : undefined,
         parse_mode: "MarkdownV2"
       });
 
@@ -943,7 +942,7 @@ export class TelegramBot {
       this.setState(userId, state);
 
       // Ask first question
-      await ctx.reply(simpleEscape(questions[0]), {
+      await ctx.reply(preserveMarkdown(questions[0]), {
         parse_mode: "MarkdownV2"
       });
 
@@ -998,14 +997,14 @@ export class TelegramBot {
       const message = `Please select a service from ${submenu.name}:`;
 
       try {
-        await ctx.editMessageText(simpleEscape(message), {
+        await ctx.editMessageText(preserveMarkdown(message), {
           parse_mode: "MarkdownV2",
           reply_markup: { inline_keyboard: keyboard }
         });
       } catch (error) {
         // If editing fails, send a new message
         if (error instanceof Error && error.message?.includes("message can't be edited")) {
-          await ctx.reply(simpleEscape(message), {
+          await ctx.reply(preserveMarkdown(message), {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
@@ -1091,15 +1090,13 @@ export class TelegramBot {
             const category = await storage.getCategory(categoryId);
             const categoryName = category?.name || "Unknown";
             // Create a completely escaped message
-            const escapedMessage = simpleEscape(
-              `You already have an active ticket in the "${categoryName}" category.
+            const message = `You already have an active ticket in the "${categoryName}" category.
 
 You cannot create a new ticket while you have an active one.
-Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.`
-            );
+Please use /close to close your current ticket first, or continue chatting here to update your existing ticket.`;
             
             await ctx.reply(
-              `❌ ${escapedMessage}`,
+              `❌ ${preserveMarkdown(message)}`,
               { parse_mode: "MarkdownV2" }
             );
             return;
@@ -1245,23 +1242,17 @@ Please use /close to close your current ticket first, or continue chatting here 
       const categoryId = activeTicket.categoryId ?? 0;
       const category = await storage.getCategory(categoryId);
       
-      // Using simpleEscape for Markdown formatting
+      // Using preserveMarkdown for proper Markdown formatting
       const categoryName = category?.name || "Unknown";
       const statusText = activeTicket.status;
       
-      // Since we don't have a createdAt field, format date based on ID
-      // (Ticket IDs are sequential so higher IDs are newer tickets)
-      const createdDate = new Date().toLocaleString();
-      
-      const escapedMessage = simpleEscape(
-        `Your active ticket #${activeTicket.id}:
+      const message = `Your active ticket #${activeTicket.id}:
 
 Category: ${categoryName}
 Status: ${statusText}
-ID: ${activeTicket.id}`
-      );
+ID: ${activeTicket.id}`;
       
-      await ctx.reply(escapedMessage, { parse_mode: "MarkdownV2" });
+      await ctx.reply(preserveMarkdown(message), { parse_mode: "MarkdownV2" });
     });
 
     this.bot.command("switch", async (ctx) => {
