@@ -45,6 +45,8 @@ export interface IStorage {
   updateTicketAmount(id: number, amount: number): Promise<void>;
   updateTicketDiscordChannel(id: number, channelId: string): Promise<void>;
   getTicketsByCategory(categoryId: number): Promise<Ticket[]>;
+  getTranscriptTickets(): Promise<Ticket[]>; // Added: Get all tickets in transcript status
+  deleteTicket(id: number): Promise<void>; // Added: Delete a ticket and its messages
 
   // Message operations
   createMessage(message: InsertMessage): Promise<Message>;
@@ -289,6 +291,40 @@ export class DatabaseStorage implements IStorage {
   async getTicketsByCategory(categoryId: number): Promise<Ticket[]> {
     return db.select().from(tickets).where(eq(tickets.categoryId, categoryId));
   }
+  
+  // Get all tickets in "closed" status (transcripts)
+  async getTranscriptTickets(): Promise<Ticket[]> {
+    // Cast the result to the Ticket type
+    const result = await db.select()
+      .from(tickets)
+      .where(eq(tickets.status, 'closed'))
+      .orderBy(desc(tickets.completedAt))
+      .limit(100);
+    
+    // Return the result - TypeScript will treat this as a Ticket[]
+    return result;
+  }
+  
+  // Delete a ticket and its messages
+  async deleteTicket(id: number): Promise<void> {
+    try {
+      // Start a transaction to ensure both operations succeed or fail together
+      await db.transaction(async (tx) => {
+        // First delete associated messages
+        await tx.delete(messages)
+          .where(eq(messages.ticketId, id));
+        
+        // Then delete the ticket
+        await tx.delete(tickets)
+          .where(eq(tickets.id, id));
+      });
+      
+      console.log(`Successfully deleted ticket ${id} and its messages`);
+    } catch (error) {
+      console.error(`Error deleting ticket ${id}:`, error);
+      throw error;
+    }
+  }
 
   // Message operations
   async createMessage(insertMessage: InsertMessage): Promise<Message> {
@@ -525,6 +561,14 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }> {
+    // Adjust the endDate to include all tickets from the specified end date
+    // By setting it to the end of the day (23:59:59.999)
+    const adjustedEndDate = new Date(endDate);
+    adjustedEndDate.setHours(23, 59, 59, 999);
+    
+    // Log for debugging purposes
+    console.log(`Querying stats with range: ${startDate.toISOString()} to ${adjustedEndDate.toISOString()}`);
+    
     const result = await db.select({
       earnings: sql<number>`sum(${tickets.amount})::int`,
       count: sql<number>`count(*)::int`
@@ -535,7 +579,7 @@ export class DatabaseStorage implements IStorage {
         eq(tickets.claimedBy, discordId),
         eq(tickets.status, 'paid'),
         sql`${tickets.completedAt} >= ${startDate}`,
-        sql`${tickets.completedAt} <= ${endDate}`
+        sql`${tickets.completedAt} <= ${adjustedEndDate}`
       )
     );
 
@@ -552,7 +596,7 @@ export class DatabaseStorage implements IStorage {
         eq(tickets.claimedBy, discordId),
         eq(tickets.status, 'paid'),
         sql`${tickets.completedAt} >= ${startDate}`,
-        sql`${tickets.completedAt} <= ${endDate}`
+        sql`${tickets.completedAt} <= ${adjustedEndDate}`
       )
     )
     .groupBy(categories.id, categories.name);
@@ -567,7 +611,7 @@ export class DatabaseStorage implements IStorage {
         ticketCount: stat.ticketCount
       })),
       periodStart: startDate,
-      periodEnd: endDate
+      periodEnd: adjustedEndDate
     };
   }
 
@@ -579,6 +623,14 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }>> {
+    // Adjust the endDate to include all tickets from the specified end date
+    // By setting it to the end of the day (23:59:59.999)
+    const adjustedEndDate = new Date(endDate);
+    adjustedEndDate.setHours(23, 59, 59, 999);
+    
+    // Log for debugging purposes
+    console.log(`Querying all worker stats with range: ${startDate.toISOString()} to ${adjustedEndDate.toISOString()}`);
+    
     const stats = await db.select({
       discordId: tickets.claimedBy,
       earnings: sql<number>`sum(${tickets.amount})::int`,
@@ -590,7 +642,7 @@ export class DatabaseStorage implements IStorage {
         sql`${tickets.claimedBy} is not null`,
         eq(tickets.status, 'paid'),
         sql`${tickets.completedAt} >= ${startDate}`,
-        sql`${tickets.completedAt} <= ${endDate}`
+        sql`${tickets.completedAt} <= ${adjustedEndDate}`
       )
     )
     .groupBy(tickets.claimedBy)
@@ -602,7 +654,7 @@ export class DatabaseStorage implements IStorage {
       totalEarnings: stat.earnings || 0,
       ticketCount: stat.count,
       periodStart: startDate,
-      periodEnd: endDate
+      periodEnd: adjustedEndDate
     }));
   }
 

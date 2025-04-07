@@ -703,5 +703,72 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  // Transcript Management Routes
+  app.get("/api/transcripts", async (req, res) => {
+    try {
+      // Get all transcript tickets (status = closed)
+      const transcripts = await storage.getTranscriptTickets();
+      
+      // Get messages for each transcript and build response
+      const transcriptsWithMessages = await Promise.all(
+        transcripts.map(async (transcript) => {
+          const messages = await storage.getTicketMessages(transcript.id);
+          return {
+            ...transcript,
+            messageCount: messages.length,
+            lastMessage: messages.length > 0 ? messages[messages.length - 1] : null
+          };
+        })
+      );
+      
+      res.json(transcriptsWithMessages);
+    } catch (error: any) {
+      log(`Error fetching transcripts: ${error}`, "error");
+      res.status(500).json({ 
+        message: "Failed to fetch transcripts", 
+        error: error.message 
+      });
+    }
+  });
+
+  app.delete("/api/transcripts/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid transcript ID" });
+      }
+
+      // First verify that this is indeed a transcript (closed ticket)
+      const ticket = await storage.getTicket(id);
+      if (!ticket) {
+        return res.status(404).json({ message: "Transcript not found" });
+      }
+
+      if (ticket.status !== "closed") {
+        return res.status(400).json({ 
+          message: "Cannot delete an active ticket. Only transcripts (closed tickets) can be deleted." 
+        });
+      }
+
+      // Delete the transcript and its messages
+      await storage.deleteTicket(id);
+      
+      // We don't delete the Discord channel from here - it's managed by the bridge
+      // Just log that the transcript was deleted
+      log(`Transcript ${id} deleted from database`, "info");
+      
+      res.json({ 
+        message: "Transcript deleted successfully", 
+        ticketId: id 
+      });
+    } catch (error: any) {
+      log(`Error deleting transcript: ${error}`, "error");
+      res.status(500).json({ 
+        message: "Failed to delete transcript", 
+        error: error.message 
+      });
+    }
+  });
+
   return httpServer;
 }
