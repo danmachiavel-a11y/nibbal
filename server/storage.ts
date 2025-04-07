@@ -665,9 +665,9 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(tickets.userId, userId),
-          // Only consider open or in-progress tickets as "active"
+          // Consider open, in-progress, and pending tickets as "active"
           // Using SQL directly because the import is causing issues
-          sql`(${tickets.status} = 'open' OR ${tickets.status} = 'in-progress')`
+          sql`(${tickets.status} = 'open' OR ${tickets.status} = 'in-progress' OR ${tickets.status} = 'pending')`
         )
       );
     
@@ -678,7 +678,7 @@ export class DatabaseStorage implements IStorage {
     return ticket;
   }
 
-  // Special method for photo handler that also considers pending tickets
+  // Alternative method for photo handling, functionally equivalent to getActiveTicketByUserId
   async getNonClosedTicketByUserId(userId: number): Promise<Ticket | undefined> {
     const [ticket] = await db
       .select()

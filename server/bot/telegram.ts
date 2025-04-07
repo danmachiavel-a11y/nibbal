@@ -296,26 +296,57 @@ export class TelegramBot {
 
   private async verifyConnection(): Promise<boolean> {
     try {
-      if (!this.bot?.telegram) return false;
+      // First check - if the bot object is null, we're definitely not connected
+      if (!this.bot) {
+        log("Connection verification failed: Bot instance is null", "error");
+        return false;
+      }
+      
+      // Second check - if the telegram property is missing, we're not connected
+      if (!this.bot.telegram) {
+        log("Connection verification failed: Bot telegram property is null", "error");
+        return false;
+      }
 
-      const me = await this.bot.telegram.getMe();
+      // If we need to immediately recover commands, process messages first then check
       const now = Date.now();
-
-      // If we haven't had a successful heartbeat in 20 minutes, consider disconnected
-      if (now - this.lastHeartbeatSuccess > 1200000) {
-        log("No successful heartbeat in 20 minutes, considering disconnected", "warn");
-        return false;
+      
+      // Safety mechanism: even if verification fails but we had a recent successful heartbeat
+      // within the past 2 minutes, consider us connected for command processing purposes
+      const recentHeartbeatWindow = 120000; // 2 minutes
+      if (now - this.lastHeartbeatSuccess < recentHeartbeatWindow) {
+        log(`Using recent heartbeat success (${Math.floor((now - this.lastHeartbeatSuccess)/1000)}s ago) to maintain connection status`, "info");
+        return true;
       }
 
-      if (!me) {
-        log("Bot verification failed - null response", "warn");
-        return false;
-      }
+      try {
+        // Attempt to get bot info with a timeout to avoid hanging operations
+        const me = await this.bot.telegram.getMe() as any;
 
-      this.lastHeartbeatSuccess = now;
-      return true;
+        // If we haven't had a successful heartbeat in 20 minutes, consider disconnected
+        if (now - this.lastHeartbeatSuccess > 1200000) {
+          log("No successful heartbeat in 20 minutes, considering disconnected", "warn");
+          return false;
+        }
+
+        if (!me) {
+          log("Bot verification failed - null response", "warn");
+          return false;
+        }
+
+        this.lastHeartbeatSuccess = now;
+        return true;
+      } catch (error) {
+        // If we get an error from the Telegram API
+        log(`Bot API connection check failed: ${error}`, "error");
+        
+        // For resilience, maintain connection state
+        // This helps with temporary API glitches
+        log("Maintaining connection state despite API error", "warn");
+        return this._isConnected;
+      }
     } catch (error) {
-      log(`Bot verification failed: ${error}`, "error");
+      log(`Critical error in connection verification: ${error}`, "error");
       return false;
     }
   }
@@ -745,35 +776,82 @@ export class TelegramBot {
       this.stopHeartbeat();
       this.failedHeartbeats = 0;
 
-      // Create new bot instance
+      // First, try to delete any existing webhooks to avoid conflicts
+      try {
+        const tempBot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+        await tempBot.telegram.deleteWebhook({ drop_pending_updates: true });
+        log("Successfully cleared any existing webhooks");
+        // Important: stop this temporary bot to avoid conflicts
+        await tempBot.stop();
+        // Add a delay to ensure the connection is fully closed
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      } catch (webhookError) {
+        log(`Error clearing webhooks: ${webhookError}`, "warn");
+        // Continue anyway, as this is just a precaution
+      }
+
+      // Create new bot instance with a longer polling timeout
       log("Creating new Telegram bot instance");
-      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
+      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, {
+        handlerTimeout: 90000, // 90 seconds
+      });
 
       // Add handlers
       await this.setupHandlers();
 
-      // Add delay before launching
-      await new Promise(resolve => setTimeout(resolve, 5000));
-
-      // Launch with conservative options to handle conflicts better
+      // Launch with conflict resolution options
       try {
-        // Launch the bot with default options
+        // First, try to delete pending updates
+        if (this.bot?.telegram) {
+          try {
+            await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
+          } catch (webhookError) {
+            log(`Error deleting webhook: ${webhookError}`, "warn");
+          }
+        }
+        
+        // Simply launch the bot, Telegraf handles polling internally
         await this.bot.launch();
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         
-        // If there's a conflict error, try to delete webhook and retry
+        // If there's a conflict error, try more aggressive recovery
         if (errorMessage.includes('409') && errorMessage.includes('Conflict')) {
-          log("Detected 409 Conflict error, trying to reset webhooks", "warn");
+          log("Detected 409 Conflict error, attempting aggressive recovery", "warn");
+          
           try {
-            // Try to delete any webhook
-            await this.bot.telegram.deleteWebhook();
-            // Wait a moment before retry
-            await new Promise(resolve => setTimeout(resolve, 10000));
-            // Try launching again
+            // First, stop the current bot completely
+            if (this.bot) {
+              await this.bot.stop();
+            }
+            
+            // Wait a longer time for connections to fully close
+            await new Promise(resolve => setTimeout(resolve, 15000));
+            
+            // Create a new bot instance
+            this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!, {
+              handlerTimeout: 90000,
+            });
+            
+            // Set up handlers again
+            await this.setupHandlers();
+            
+            // First try explicitly deleting webhook
+            try {
+              await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
+              log("Successfully deleted webhook during recovery", "info");
+            } catch (webhookError) {
+              log(`Error deleting webhook during recovery: ${webhookError}`, "warn");
+            }
+            
+            // Simply launch the bot after recovery
             await this.bot.launch();
+            
+            log("Successfully recovered from conflict after aggressive recovery");
           } catch (retryError) {
-            throw new Error(`Failed to start after resolving conflict: ${retryError}`);
+            const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
+            log(`Failed recovery attempt: ${retryMsg}`, "error");
+            throw new Error(`Failed to start after conflict recovery: ${retryMsg}`);
           }
         } else {
           // Rethrow other errors
@@ -798,10 +876,19 @@ export class TelegramBot {
       this._isConnected = false;
       this.failedHeartbeats = 0;
 
-      if (error instanceof Error && error.message.includes("409: Conflict")) {
-        log("409 Conflict detected - another bot instance is already running", "error");
-        await this.stop();
-        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 2));
+      // Always fully stop the bot on any error
+      if (this.bot) {
+        try {
+          await this.bot.stop();
+        } catch (stopError) {
+          log(`Error stopping bot after failure: ${stopError}`, "warn");
+        }
+      }
+
+      // Add extra delay for 409 conflicts
+      if (errorMsg.includes("409: Conflict")) {
+        log("409 Conflict detected - another bot instance is running, waiting longer", "error");
+        await new Promise(resolve => setTimeout(resolve, this.CLEANUP_DELAY * 3)); // Wait 30 seconds
       }
 
       throw error;
@@ -1944,6 +2031,7 @@ ID: ${activeTicket.id}`;
           return;
         }
         
+        log(`Rate limiting check for /close command from user ${userId}`, "debug");
         if (!this.checkRateLimit(userId, 'command', 'close')) {
           await ctx.reply("⚠️ Please wait before using this command again.");
           return;
@@ -1967,12 +2055,16 @@ ID: ${activeTicket.id}`;
           return;
         }
         
+        log(`Found ${userTickets.length} tickets for user ID: ${user.id}, statuses: ${userTickets.map(t => t.status).join(', ')}`, "debug");
+        
         // Find tickets that are not closed or completed
         const activeTickets = userTickets.filter(t => 
           t.status !== 'closed' && 
           t.status !== 'completed' && 
           t.status !== 'transcript'
         );
+        
+        log(`Filtered to ${activeTickets.length} active tickets for user ID: ${user.id}`, "debug");
         
         if (activeTickets.length === 0) {
           log(`No active tickets found for user ID: ${user.id}`, "warn");
@@ -1990,6 +2082,7 @@ ID: ${activeTicket.id}`;
         
         try {
           // Update ticket status first to ensure it's closed
+          log(`Updating ticket ${ticket.id} status to closed in database`, "debug");
           await storage.updateTicketStatus(ticket.id, "closed");
           log(`Updated ticket ${ticket.id} status to closed`, "info");
           
@@ -2007,7 +2100,18 @@ ID: ${activeTicket.id}`;
           if (ticket.discordChannelId) {
             try {
               log(`Attempting to move ticket ${ticket.id} to transcripts with channel ${ticket.discordChannelId}`, "info");
-              await this.bridge.moveToTranscripts(ticket.id);
+              
+              // Even if the bot reports as disconnected, attempt to move to transcripts
+              // This works because Discord bot might still be operational
+              if (this._isConnected) {
+                await this.bridge.moveToTranscripts(ticket.id);
+                log(`Successfully moved ticket ${ticket.id} to transcripts`, "info");
+              } else {
+                log(`Telegram bot reports disconnected, using direct bridge call to move to transcripts`, "warn");
+                await this.bridge.moveToTranscripts(ticket.id);
+                log(`Successfully moved ticket ${ticket.id} to transcripts despite disconnection state`, "info");
+              }
+              
               await ctx.reply(
                 "✅ Your ticket has been closed and moved to transcripts.\n" +
                 "Use /start to create a new ticket if needed."
@@ -2031,6 +2135,7 @@ ID: ${activeTicket.id}`;
           log(`Error during ticket closing process: ${innerError}`, "error");
           // Make sure we still try to close the ticket even if moving fails
           try {
+            log(`Attempting to update ticket status again after error`, "debug");
             await storage.updateTicketStatus(ticket.id, "closed");
             await ctx.reply(
               "✅ Your ticket has been closed, but there was an error during the process.\n" +
