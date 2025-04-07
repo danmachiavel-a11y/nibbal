@@ -248,6 +248,19 @@ export class TelegramBot {
     }
     return this.bot.telegram;
   }
+  
+  // Safe helper method for sending messages
+  private async sendSafeMessage(chatId: number | string, text: string): Promise<void> {
+    if (!this.bot) {
+      console.error("Cannot send message: Bot is not initialized");
+      return;
+    }
+    try {
+      await this.bot.telegram.sendMessage(chatId, text);
+    } catch (error) {
+      console.error(`Error sending message to ${chatId}:`, error);
+    }
+  }
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly CLEANUP_DELAY = 10000; // 10 seconds
@@ -1667,36 +1680,59 @@ ID: ${activeTicket.id}`;
         
         log(`Found active ticket: ${activeTicket.id}`, "info");
 
-        // Close the ticket even if there's no transcript category
+        // Get category info and protect against null/undefined
         const categoryId = activeTicket.categoryId ?? 0;
-        const category = await storage.getCategory(categoryId);
-
-        await storage.updateTicketStatus(activeTicket.id, "closed");
-
-        if (activeTicket.discordChannelId) {
-          try {
-            await this.bridge.moveToTranscripts(activeTicket.id);
+        log(`Processing ticket in category: ${categoryId}`, "info");
+        
+        try {
+          // Update ticket status first to ensure it's closed
+          await storage.updateTicketStatus(activeTicket.id, "closed");
+          log(`Updated ticket ${activeTicket.id} status to closed`, "info");
+          
+          // Then try to move to transcripts if there's a Discord channel
+          if (activeTicket.discordChannelId) {
+            try {
+              log(`Attempting to move ticket ${activeTicket.id} to transcripts with channel ${activeTicket.discordChannelId}`, "info");
+              await this.bridge.moveToTranscripts(activeTicket.id);
+              await ctx.reply(
+                "✅ Your ticket has been closed and moved to transcripts.\n" +
+                "Use /start to create a new ticket if needed."
+              );
+              log(`Successfully closed and moved ticket ${activeTicket.id}`, "info");
+            } catch (error) {
+              log(`Error moving ticket ${activeTicket.id} to transcripts: ${error}`, "error");
+              await ctx.reply(
+                "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
+                "An administrator will handle this. You can use /start to create a new ticket if needed."
+              );
+            }
+          } else {
+            log(`Ticket ${activeTicket.id} has no Discord channel, just closing`, "info");
             await ctx.reply(
-              "✅ Your ticket has been closed and moved to transcripts.\n" +
+              "✅ Your ticket has been closed.\n" +
               "Use /start to create a new ticket if needed."
             );
-          } catch (error) {
-            console.error("Error moving to transcripts:", error);
+          }
+        } catch (innerError) {
+          log(`Error during ticket closing process: ${innerError}`, "error");
+          // Make sure we still try to close the ticket even if moving fails
+          try {
+            await storage.updateTicketStatus(activeTicket.id, "closed");
             await ctx.reply(
-              "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
-              "An administrator will handle this. You can use /start to create a new ticket if needed."
+              "✅ Your ticket has been closed, but there was an error during the process.\n" +
+              "Use /start to create a new ticket if needed."
+            );
+          } catch (finalError) {
+            log(`Failed final attempt to close ticket: ${finalError}`, "error");
+            await ctx.reply(
+              "❌ There was an error closing your ticket. Please try again or contact an administrator."
             );
           }
-        } else {
-          await ctx.reply(
-            "✅ Your ticket has been closed.\n" +
-            "Use /start to create a new ticket if needed."
-          );
         }
       } catch (error) {
-        console.error("Error closing ticket:", error);
+        log(`Critical error in close command: ${error}`, "error");
         await ctx.reply(
-          "❌ There was an error closing your ticket. Please try again or contact an administrator."
+          "❌ There was an error processing your request. Please try again or contact an administrator."
         );
       }
     });

@@ -1,10 +1,11 @@
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, or } from 'drizzle-orm';
 import { db } from './db';
 import {
   users, categories, tickets, messages, botConfig,
   type User, type Category, type Ticket, type Message, type BotConfig,
   type InsertUser, type InsertCategory, type InsertTicket, type InsertMessage, type InsertBotConfig
 } from '@shared/schema';
+import { log } from './vite';
 
 export interface IStorage {
   // Bot config operations
@@ -604,10 +605,16 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(tickets.userId, userId),
-          sql`${tickets.status} != 'closed'`,
-          sql`${tickets.status} != 'deleted'`
+          // Only consider open or in-progress tickets as "active"
+          // Using SQL directly because the import is causing issues
+          sql`(${tickets.status} = 'open' OR ${tickets.status} = 'in-progress')`
         )
       );
+    
+    if (ticket) {
+      console.log(`Found active ticket ${ticket.id} with status ${ticket.status} for user ${userId}`);
+    }
+    
     return ticket;
   }
   async getTicketsByUserId(userId: number): Promise<Ticket[]> {
