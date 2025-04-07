@@ -762,14 +762,14 @@ export class TelegramBot {
         return;
       }
 
-      // Check if user still has an active ticket
-      const activeTicket = await storage.getActiveTicketByUserId(user.id);
-      if (!activeTicket || activeTicket.id !== ticket.id) {
-        await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
+      // Check if user still has a valid ticket (pending, open, or in-progress)
+      const currentTicket = await storage.getNonClosedTicketByUserId(user.id);
+      if (!currentTicket || currentTicket.id !== ticket.id) {
+        await ctx.reply("❌ This ticket is no longer valid. Use /start to create a new ticket.");
         return;
       }
-
-      // Process message
+      
+      // Store the message in the database first for all ticket states
       await storage.createMessage({
         ticketId: ticket.id,
         content: ctx.message.text,
@@ -777,6 +777,13 @@ export class TelegramBot {
         platform: "telegram",
         timestamp: new Date()
       });
+      
+      // If it's a pending ticket, don't forward to Discord yet
+      if (currentTicket.status === 'pending') {
+        // We've already stored the message in the database, so just acknowledge receipt
+        await ctx.reply("✓ Message received. It will be forwarded when your ticket is processed.");
+        return;
+      }
 
       let avatarUrl: string | undefined;
       try {
