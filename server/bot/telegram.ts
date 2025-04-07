@@ -957,15 +957,26 @@ export class TelegramBot {
     if (!userId) return;
 
     // Rate limit is already checked in the caller (text handler), we don't need to check again
-    log(`Processing ticket message from user ${userId} for ticket ${ticket.id}`);
+    log(`Processing ticket message from user ${userId} for ticket ${ticket.id} with status ${ticket.status}`);
 
     try {
-      // Check if user still has a valid ticket (pending, open, or in-progress)
-      const currentTicket = await storage.getNonClosedTicketByUserId(user.id);
-      if (!currentTicket || currentTicket.id !== ticket.id) {
-        await ctx.reply("❌ This ticket is no longer valid. Use /start to create a new ticket.");
+      // Get the ticket directly by ID instead of getting the most recent one
+      const currentTicket = await storage.getTicket(ticket.id);
+      
+      // Check if this specific ticket exists and is not closed or completed
+      if (!currentTicket) {
+        log(`Ticket ${ticket.id} not found in database`, "error");
+        await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
         return;
       }
+      
+      if (currentTicket.status === 'closed' || currentTicket.status === 'completed' || currentTicket.status === 'transcript') {
+        log(`Ticket ${ticket.id} is in ${currentTicket.status} status, cannot accept new messages`, "warn");
+        await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
+        return;
+      }
+      
+      log(`Verified ticket ${ticket.id} is active with status: ${currentTicket.status}`);
       
       // Store the message in the database first for all ticket states
       await storage.createMessage({
@@ -1934,13 +1945,30 @@ ID: ${activeTicket.id}`;
         }
         
         log(`Looking up tickets for user ID: ${user.id}`, "info");
-        const ticket = await storage.getNonClosedTicketByUserId(user.id);
-        if (!ticket) {
-          log(`No non-closed tickets found for user ID: ${user.id}`, "warn");
+        // First get all tickets for the user
+        const userTickets = await storage.getTicketsByUserId(user.id);
+        
+        if (!userTickets || userTickets.length === 0) {
+          log(`No tickets found for user ID: ${user.id}`, "warn");
+          await ctx.reply("You don't have any tickets to close.");
+          return;
+        }
+        
+        // Find tickets that are not closed or completed
+        const activeTickets = userTickets.filter(t => 
+          t.status !== 'closed' && 
+          t.status !== 'completed' && 
+          t.status !== 'transcript'
+        );
+        
+        if (activeTickets.length === 0) {
+          log(`No active tickets found for user ID: ${user.id}`, "warn");
           await ctx.reply("You don't have any active tickets to close.");
           return;
         }
         
+        // Use the most recent active ticket
+        const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
         log(`Found ticket: ${ticket.id} with status: ${ticket.status}`, "info");
 
         // Get category info and protect against null/undefined
@@ -2032,11 +2060,29 @@ ID: ${activeTicket.id}`;
           const user = await storage.getUserByTelegramId(userId.toString());
           if (!user) return;
           
-          const ticket = await storage.getNonClosedTicketByUserId(user.id);
-          if (!ticket) {
+          // Get all user tickets and filter active ones
+          const userTickets = await storage.getTicketsByUserId(user.id);
+          
+          if (!userTickets || userTickets.length === 0) {
+            await ctx.reply("❌ You don't have any tickets. Use /start to create one.");
+            return;
+          }
+          
+          // Find active tickets
+          const activeTickets = userTickets.filter(t => 
+            t.status !== 'closed' && 
+            t.status !== 'completed' && 
+            t.status !== 'transcript'
+          );
+          
+          if (activeTickets.length === 0) {
             await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
             return;
           }
+          
+          // Use the most recent active ticket
+          const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
+          log(`Queueing message for offline processing for ticket ${ticket.id}`);
           
           // Queue the text message
           await storage.queueMessage({
@@ -2060,15 +2106,28 @@ ID: ${activeTicket.id}`;
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
         // For text messages, check for active tickets
-        const ticket = await storage.getNonClosedTicketByUserId(user.id);
-        if (ticket) {
-          log(`Handling ticket message from user ${userId} for ticket ${ticket.id}`, "info");
-          // Now we delegate to handleTicketMessage which has its own check for pending tickets
-          await this.handleTicketMessage(ctx, user, ticket);
-          return;
-        } else {
-          log(`No active ticket found for user ${userId}`, "info");
+        // Get all user tickets and filter the active ones
+        const userTickets = await storage.getTicketsByUserId(user.id);
+        
+        if (userTickets && userTickets.length > 0) {
+          // Find tickets that are not closed or completed
+          const activeTickets = userTickets.filter(t => 
+            t.status !== 'closed' && 
+            t.status !== 'completed' && 
+            t.status !== 'transcript'
+          );
+          
+          if (activeTickets.length > 0) {
+            // Use the most recent active ticket
+            const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
+            log(`Handling ticket message from user ${userId} for ticket ${ticket.id} with status ${ticket.status}`, "info");
+            // Now we delegate to handleTicketMessage which has its own check for ticket status
+            await this.handleTicketMessage(ctx, user, ticket);
+            return;
+          }
         }
+        
+        log(`No active ticket found for user ${userId}`, "info");
       }
 
       // If we reached here without finding an active ticket but have a state, handle questionnaire
@@ -2095,11 +2154,29 @@ ID: ${activeTicket.id}`;
           const user = await storage.getUserByTelegramId(userId.toString());
           if (!user) return;
           
-          const ticket = await storage.getNonClosedTicketByUserId(user.id);
-          if (!ticket) {
+          // Get all user tickets and filter active ones
+          const userTickets = await storage.getTicketsByUserId(user.id);
+          
+          if (!userTickets || userTickets.length === 0) {
+            await ctx.reply("❌ You don't have any tickets. Use /start to create one.");
+            return;
+          }
+          
+          // Find active tickets
+          const activeTickets = userTickets.filter(t => 
+            t.status !== 'closed' && 
+            t.status !== 'completed' && 
+            t.status !== 'transcript'
+          );
+          
+          if (activeTickets.length === 0) {
             await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
             return;
           }
+          
+          // Use the most recent active ticket
+          const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
+          log(`Queueing photo for offline processing for ticket ${ticket.id}`);
           
           // Get the best photo
           const photos = ctx.message.photo;
@@ -2129,13 +2206,31 @@ ID: ${activeTicket.id}`;
       if (!user) return;
 
       // For photos, we want to be more lenient - allow any non-closed tickets (including pending ones)
-      const ticket = await storage.getNonClosedTicketByUserId(user.id);
-      if (!ticket) {
+      // Get all user tickets and filter the active ones
+      const userTickets = await storage.getTicketsByUserId(user.id);
+      
+      if (!userTickets || userTickets.length === 0) {
         // Provide more helpful message and log the issue
-        log(`No active or pending ticket found for user ${user.id} (${user.telegramId}) when trying to send a photo`, "warn");
+        log(`No tickets found for user ${user.id} (${user.telegramId}) when trying to send a photo`, "warn");
         await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
         return;
       }
+      
+      // Find tickets that are not closed or completed
+      const activeTickets = userTickets.filter(t => 
+        t.status !== 'closed' && 
+        t.status !== 'completed' && 
+        t.status !== 'transcript'
+      );
+      
+      if (activeTickets.length === 0) {
+        log(`No active tickets found for user ${user.id} (${user.telegramId}) when trying to send a photo`, "warn");
+        await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
+        return;
+      }
+      
+      // Use the most recent active ticket
+      const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
       
       // Log found ticket for debugging
       log(`Found ${ticket.status} ticket ${ticket.id} for photo upload`, "info");
