@@ -93,9 +93,11 @@ interface ConnectionState {
 }
 
 
-// Simple rate limiting configuration
-const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW || "60000", 10); // 60 seconds default (was 30)
-const RATE_LIMIT_MAX_COUNT = parseInt(process.env.RATE_LIMIT_MAX_COUNT || "50", 10); // 50 requests default (was 20)
+// Rate limiting configuration
+// Telegram limits at roughly 30 messages per second, but allow for a good margin of safety
+// Telegram recommends 1 message per second (3600/hr) for private chats
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW || "60000", 10); // 60 seconds window
+const RATE_LIMIT_MAX_COUNT = parseInt(process.env.RATE_LIMIT_MAX_COUNT || "20", 10); // 20 requests per minute (1/3 per second)
 
 // User state cleanup configuration 
 const USER_STATE_CLEANUP_INTERVAL = 300000; // 5 minutes
