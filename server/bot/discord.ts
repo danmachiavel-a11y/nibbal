@@ -1222,9 +1222,12 @@ export class DiscordBot {
       }
 
       if (interaction.commandName === 'closeall') {
+        log(`Handling /closeall command from user ${interaction.user.id}`, "info");
         const categoryChannel = interaction.options.getChannel('category', true);
+        log(`Selected category: ${categoryChannel.id}`, "debug");
 
         if (!(categoryChannel instanceof CategoryChannel)) {
+          log(`Invalid category type: ${categoryChannel.type}`, "warn");
           await interaction.reply({
             content: "Please select a valid category!",
             ephemeral: true
@@ -1256,6 +1259,7 @@ export class DiscordBot {
           const channels = categoryChannel.children.cache.filter(
             channel => channel.type === ChannelType.GuildText
           );
+          log(`Found ${channels.size} text channels in category ${categoryChannel.name}`, "info");
 
           if (channels.size === 0) {
             await interaction.reply({
@@ -1268,7 +1272,7 @@ export class DiscordBot {
           // First, reply to let the user know we're processing
           await interaction.reply({
             content: `Moving ${channels.size} tickets to their respective transcript categories...`,
-            ephemeral: true
+            ephemeral: false  // Make this visible to everyone
           });
 
           let moveCount = 0;
@@ -1284,81 +1288,126 @@ export class DiscordBot {
           }
 
           // Process all channels
-          for (const [_, channel] of channels) {
+          let errorMessages = [];
+          
+          for (const [channelId, channel] of channels) {
             if (channel instanceof TextChannel) {
+              log(`Processing channel: ${channel.name} (${channelId})`, "debug");
               try {
-                const ticket = await storage.getTicketByDiscordChannel(channel.id);
-                if (ticket && ticket.categoryId) {
-                  const category = await storage.getCategory(ticket.categoryId);
-                  if (category?.transcriptCategoryId) {
-                    // Update progress every 5 channels
-                    processedCount++;
-                    if (processedCount % 5 === 0) {
-                      await interaction.editReply({
-                        content: `Progress: ${processedCount}/${channels.size} channels processed...`
-                      });
-                    }
-                    
-                    const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
-                    if (transcriptCategory instanceof CategoryChannel) {
-                      // Notify Telegram user before moving the channel
-                      const user = await storage.getUser(ticket.userId!);
-                      if (user?.telegramId) {
-                        try {
-                          await this.bridge.getTelegramBot().sendMessage(
-                            parseInt(user.telegramId),
-                            `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-                          );
-                        } catch (notifyError) {
-                          log(`Error notifying Telegram user for ticket ${ticket.id}: ${notifyError}`, "warn");
-                        }
-                      }
-
-                      // Use the bridge.moveToTranscripts method to ensure consistent permission handling
-                      await this.bridge.moveToTranscripts(ticket.id);
-                      moveCount++;
+                // Get ticket associated with this channel
+                const ticket = await storage.getTicketByDiscordChannel(channelId);
+                log(`Found ticket for channel: ${JSON.stringify(ticket)}`, "debug");
+                
+                if (!ticket) {
+                  log(`No ticket found for channel ${channelId}`, "warn");
+                  errorCount++;
+                  errorMessages.push(`No ticket found for channel ${channel.name}`);
+                  continue;
+                }
+                
+                if (!ticket.categoryId) {
+                  log(`Ticket ${ticket.id} has no category ID`, "warn");
+                  errorCount++;
+                  errorMessages.push(`Ticket #${ticket.id} (${channel.name}) has no category ID`);
+                  continue;
+                }
+                
+                // Get category information
+                const category = await storage.getCategory(ticket.categoryId);
+                log(`Category for ticket: ${JSON.stringify(category)}`, "debug");
+                
+                if (!category) {
+                  log(`No category found for ticket ${ticket.id}`, "warn");
+                  errorCount++;
+                  errorMessages.push(`No category found for ticket #${ticket.id} (${channel.name})`);
+                  continue;
+                }
+                
+                if (!category.transcriptCategoryId) {
+                  log(`No transcript category ID for category ${category.id}`, "warn");
+                  errorCount++;
+                  errorMessages.push(`No transcript category set for ${category.name}`);
+                  continue;
+                }
+                
+                // Update progress every channel
+                processedCount++;
+                if (processedCount % 3 === 0) {
+                  await interaction.editReply({
+                    content: `Progress: ${processedCount}/${channels.size} channels processed...`
+                  });
+                }
+                
+                try {
+                  const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
+                  log(`Transcript category: ${transcriptCategory?.id || 'Not found'}`, "debug");
+                  
+                  if (!(transcriptCategory instanceof CategoryChannel)) {
+                    log(`Invalid transcript category type for ${category.transcriptCategoryId}`, "warn");
+                    errorCount++;
+                    errorMessages.push(`Invalid transcript category for ${category.name}`);
+                    continue;
+                  }
+                  
+                  // Notify Telegram user before moving the channel
+                  const user = await storage.getUser(ticket.userId!);
+                  if (user?.telegramId) {
+                    try {
+                      await this.bridge.getTelegramBot().sendMessage(
+                        parseInt(user.telegramId),
+                        `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
+                      );
+                    } catch (notifyError) {
+                      log(`Error notifying Telegram user for ticket ${ticket.id}: ${notifyError}`, "warn");
                     }
                   }
+
+                  // Use the bridge.moveToTranscripts method to ensure consistent permission handling
+                  log(`Moving ticket ${ticket.id} to transcripts`, "info");
+                  await this.bridge.moveToTranscripts(ticket.id);
+                  moveCount++;
+                  log(`Successfully moved ticket ${ticket.id} to transcripts`, "info");
+                } catch (moveError) {
+                  log(`Error in transcript processing: ${moveError}`, "error");
+                  errorCount++;
+                  errorMessages.push(`Error moving ${channel.name}: ${moveError instanceof Error ? moveError.message : 'Unknown error'}`);
                 }
               } catch (error) {
-                log(`Error moving channel ${channel.name}: ${error}`, "error");
+                log(`Error processing channel ${channel.name}: ${error}`, "error");
                 errorCount++;
+                errorMessages.push(`Error with channel ${channel.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
               }
             }
           }
 
           // Send final status
+          const errorDetails = errorMessages.length > 0 
+            ? `\n\nErrors encountered:\n${errorMessages.slice(0, 5).map(msg => `• ${msg}`).join('\n')}${errorMessages.length > 5 ? `\n... and ${errorMessages.length - 5} more errors` : ''}`
+            : '';
+            
           await interaction.editReply({
             content: `✅ Processed ${channels.size} tickets:\n` +
               `• ${moveCount} tickets moved to transcripts\n` +
-              `• ${errorCount} errors encountered`
+              `• ${errorCount} errors encountered${errorDetails}`
           });
         } catch (error) {
-          log(`Error in closeall command: ${error}`, "error");
+          log(`Major error in closeall command: ${error}`, "error");
           
           // Make sure we have a reply
           try {
-            await interaction.followUp({
-              content: "An error occurred while closing tickets. Some tickets may not have been processed.",
-              ephemeral: true
-            });
-          } catch (replyError) {
-            // If followUp fails (e.g., if the original reply wasn't sent), try editReply
-            try {
-              await interaction.editReply({
-                content: "An error occurred while closing tickets. Some tickets may not have been processed."
+            if (interaction.replied) {
+              await interaction.followUp({
+                content: `An error occurred while closing tickets: ${error instanceof Error ? error.message : 'Unknown error'}. Some tickets may not have been processed.`,
+                ephemeral: false
               });
-            } catch (editError) {
-              // If both fail, last resort is to try a new reply
-              try {
-                await interaction.reply({
-                  content: "An error occurred while closing tickets. Some tickets may not have been processed.",
-                  ephemeral: true
-                });
-              } catch (finalError) {
-                log(`Failed to send error message to user: ${finalError}`, "error");
-              }
+            } else {
+              await interaction.reply({
+                content: `An error occurred while closing tickets: ${error instanceof Error ? error.message : 'Unknown error'}. Some tickets may not have been processed.`,
+                ephemeral: false
+              });
             }
+          } catch (replyError) {
+            log(`Failed to send error message to user: ${replyError}`, "error");
           }
         }
       }
