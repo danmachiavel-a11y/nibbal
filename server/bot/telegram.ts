@@ -1535,6 +1535,53 @@ ID: ${activeTicket.id}`;
       }
     });
     
+    // Register status command to check ticket status
+    this.bot.command("status", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      
+      if (!this.checkRateLimit(userId, 'command', 'status')) {
+        await ctx.reply("⚠️ Please wait before using this command again.");
+        return;
+      }
+      
+      try {
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          await ctx.reply("❌ You don't have any tickets. Use /start to create one.");
+          return;
+        }
+
+        // Get all non-closed tickets
+        const ticket = await storage.getNonClosedTicketByUserId(user.id);
+        if (!ticket) {
+          await ctx.reply("❌ You don't have any active tickets. Use /start to create one.");
+          return;
+        }
+
+        // Show appropriate message based on ticket status
+        let statusMessage = "";
+        switch (ticket.status) {
+          case "pending":
+            statusMessage = "⏳ Your ticket is in pending state. We'll process it as soon as a channel becomes available.";
+            break;
+          case "open":
+            statusMessage = "✅ Your ticket is open. A staff member will assist you soon.";
+            break;
+          case "in-progress":
+            statusMessage = "👨‍💻 Your ticket is being worked on by a staff member.";
+            break;
+          default:
+            statusMessage = `Your ticket status is: ${ticket.status}`;
+        }
+
+        await ctx.reply(`Ticket #${ticket.id} Status:\n${statusMessage}`);
+      } catch (error) {
+        log(`Error in status command: ${error}`, "error");
+        await ctx.reply("❌ There was an error checking your ticket status.");
+      }
+    });
+    
     this.bot.command("unban", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -1670,44 +1717,54 @@ ID: ${activeTicket.id}`;
           return;
         }
         
-        log(`Looking up active tickets for user ID: ${user.id}`, "info");
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (!activeTicket) {
-          log(`No active tickets found for user ID: ${user.id}`, "warn");
+        log(`Looking up tickets for user ID: ${user.id}`, "info");
+        const ticket = await storage.getNonClosedTicketByUserId(user.id);
+        if (!ticket) {
+          log(`No non-closed tickets found for user ID: ${user.id}`, "warn");
           await ctx.reply("You don't have any active tickets to close.");
           return;
         }
         
-        log(`Found active ticket: ${activeTicket.id}`, "info");
+        log(`Found ticket: ${ticket.id} with status: ${ticket.status}`, "info");
 
         // Get category info and protect against null/undefined
-        const categoryId = activeTicket.categoryId ?? 0;
+        const categoryId = ticket.categoryId ?? 0;
         log(`Processing ticket in category: ${categoryId}`, "info");
         
         try {
           // Update ticket status first to ensure it's closed
-          await storage.updateTicketStatus(activeTicket.id, "closed");
-          log(`Updated ticket ${activeTicket.id} status to closed`, "info");
+          await storage.updateTicketStatus(ticket.id, "closed");
+          log(`Updated ticket ${ticket.id} status to closed`, "info");
+          
+          // For pending tickets, just close them since they don't have Discord channels
+          if (ticket.status === 'pending') {
+            log(`Ticket ${ticket.id} was in pending state, simply marking as closed`, "info");
+            await ctx.reply(
+              "✅ Your ticket has been closed.\n" +
+              "Use /start to create a new ticket if needed."
+            );
+            return;
+          }
           
           // Then try to move to transcripts if there's a Discord channel
-          if (activeTicket.discordChannelId) {
+          if (ticket.discordChannelId) {
             try {
-              log(`Attempting to move ticket ${activeTicket.id} to transcripts with channel ${activeTicket.discordChannelId}`, "info");
-              await this.bridge.moveToTranscripts(activeTicket.id);
+              log(`Attempting to move ticket ${ticket.id} to transcripts with channel ${ticket.discordChannelId}`, "info");
+              await this.bridge.moveToTranscripts(ticket.id);
               await ctx.reply(
                 "✅ Your ticket has been closed and moved to transcripts.\n" +
                 "Use /start to create a new ticket if needed."
               );
-              log(`Successfully closed and moved ticket ${activeTicket.id}`, "info");
+              log(`Successfully closed and moved ticket ${ticket.id}`, "info");
             } catch (error) {
-              log(`Error moving ticket ${activeTicket.id} to transcripts: ${error}`, "error");
+              log(`Error moving ticket ${ticket.id} to transcripts: ${error}`, "error");
               await ctx.reply(
                 "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
                 "An administrator will handle this. You can use /start to create a new ticket if needed."
               );
             }
           } else {
-            log(`Ticket ${activeTicket.id} has no Discord channel, just closing`, "info");
+            log(`Ticket ${ticket.id} has no Discord channel, just closing`, "info");
             await ctx.reply(
               "✅ Your ticket has been closed.\n" +
               "Use /start to create a new ticket if needed."
@@ -1717,7 +1774,7 @@ ID: ${activeTicket.id}`;
           log(`Error during ticket closing process: ${innerError}`, "error");
           // Make sure we still try to close the ticket even if moving fails
           try {
-            await storage.updateTicketStatus(activeTicket.id, "closed");
+            await storage.updateTicketStatus(ticket.id, "closed");
             await ctx.reply(
               "✅ Your ticket has been closed, but there was an error during the process.\n" +
               "Use /start to create a new ticket if needed."
@@ -1751,9 +1808,14 @@ ID: ${activeTicket.id}`;
 
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (activeTicket) {
-          await this.handleTicketMessage(ctx, user, activeTicket);
+        // For text messages, use the same logic as photos
+        const ticket = await storage.getNonClosedTicketByUserId(user.id);
+        if (ticket) {
+          // If it's a pending ticket, inform the user but still accept the message
+          if (ticket.status === 'pending') {
+            await ctx.reply("⚠️ Your ticket is in pending state due to high volume. Staff will see your message when a channel becomes available.");
+          }
+          await this.handleTicketMessage(ctx, user, ticket);
           return;
         }
       }
@@ -1775,10 +1837,21 @@ ID: ${activeTicket.id}`;
       const user = await storage.getUserByTelegramId(userId.toString());
       if (!user) return;
 
-      const activeTicket = await storage.getActiveTicketByUserId(user.id);
-      if (!activeTicket) {
-        await ctx.reply("Please start a ticket first before sending photos.");
+      // For photos, we want to be more lenient - allow any non-closed tickets (including pending ones)
+      const ticket = await storage.getNonClosedTicketByUserId(user.id);
+      if (!ticket) {
+        // Provide more helpful message and log the issue
+        log(`No active or pending ticket found for user ${user.id} (${user.telegramId}) when trying to send a photo`, "warn");
+        await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
         return;
+      }
+      
+      // Log found ticket for debugging
+      log(`Found ${ticket.status} ticket ${ticket.id} for photo upload`, "info");
+      
+      // If it's a pending ticket, inform the user but still accept the photo
+      if (ticket.status === 'pending') {
+        await ctx.reply("⚠️ Your ticket is in pending state due to high volume. Staff will see your photo when a channel becomes available.");
       }
 
       try {
@@ -1787,7 +1860,7 @@ ID: ${activeTicket.id}`;
         const file = await ctx.telegram.getFile(bestPhoto.file_id);
 
         await storage.createMessage({
-          ticketId: activeTicket.id,
+          ticketId: ticket.id,
           content: ctx.message.caption || "[Image]", // This is just for database storage, not what's displayed on Discord
           authorId: user.id,
           platform: "telegram",
@@ -1819,7 +1892,7 @@ ID: ${activeTicket.id}`;
         if (ctx.message.caption) {
           await this.bridge.forwardToDiscord(
             ctx.message.caption,
-            activeTicket.id,
+            ticket.id,
             displayName,
             avatarUrl,
             undefined,
@@ -1831,7 +1904,7 @@ ID: ${activeTicket.id}`;
         // Forward the photo using the file_id
         await this.bridge.forwardToDiscord(
           "",
-          activeTicket.id,
+          ticket.id,
           displayName,
           avatarUrl,
           bestPhoto.file_id, // Pass the file_id directly
@@ -1839,7 +1912,7 @@ ID: ${activeTicket.id}`;
           lastName
         );
 
-        log(`Successfully forwarded photo from Telegram to Discord for ticket ${activeTicket.id}`);
+        log(`Successfully forwarded photo from Telegram to Discord for ticket ${ticket.id}`);
       } catch (error) {
         log(`Error handling photo message: ${error}`, "error");
         await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
@@ -1940,6 +2013,14 @@ ID: ${activeTicket.id}`;
         const errorMessage = error instanceof Error ? error.message : String(error);
 
         if (errorMessage.includes('maximum channel limit')) {
+          // Update status to pending in database
+          try {
+            await storage.updateTicketStatus(ticket.id, "pending");
+            log(`Updated ticket ${ticket.id} status to pending due to channel limit`, "info");
+          } catch (statusError) {
+            log(`Failed to update ticket status: ${statusError}`, "error");
+          }
+          
           await ctx.reply(
             "❌ Sorry, our support channels are currently at maximum capacity.\n" +
             "Your ticket has been created but is in a pending state."

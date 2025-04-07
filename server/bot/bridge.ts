@@ -722,8 +722,19 @@ export class BridgeManager {
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
 
-      if (!ticket || !ticket.discordChannelId) {
-        throw new BridgeError(`Invalid ticket or missing Discord channel: ${ticketId}`, { context: "forwardToDiscord" });
+      if (!ticket) {
+        throw new BridgeError(`Invalid ticket: ${ticketId}`, { context: "forwardToDiscord" });
+      }
+      
+      if (!ticket.discordChannelId) {
+        // Handle pending tickets that don't have channels yet
+        if (ticket.status === 'pending') {
+          log(`Ticket ${ticketId} is in pending state, storing message but not forwarding to Discord`, "warn");
+          // We've already stored the message in the database in the handler
+          return;
+        } else {
+          throw new BridgeError(`Missing Discord channel for ticket: ${ticketId} with status: ${ticket.status}`, { context: "forwardToDiscord" });
+        }
       }
 
       const displayName = [firstName, lastName]

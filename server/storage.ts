@@ -103,9 +103,11 @@ export interface IStorage {
     periodStart: Date;
     periodEnd: Date;
   }>>;
-  // Add new method for getting active tickets
+  // Method for getting active tickets (open or in-progress)
   getActiveTicketByUserId(userId: number): Promise<Ticket | undefined>;
-  // Add new method for getting tickets by user ID
+  // Method for getting any non-closed ticket (including pending) - used for photo handling
+  getNonClosedTicketByUserId(userId: number): Promise<Ticket | undefined>;
+  // Method for getting tickets by user ID
   getTicketsByUserId(userId: number): Promise<Ticket[]>;
 }
 
@@ -613,6 +615,26 @@ export class DatabaseStorage implements IStorage {
     
     if (ticket) {
       console.log(`Found active ticket ${ticket.id} with status ${ticket.status} for user ${userId}`);
+    }
+    
+    return ticket;
+  }
+
+  // Special method for photo handler that also considers pending tickets
+  async getNonClosedTicketByUserId(userId: number): Promise<Ticket | undefined> {
+    const [ticket] = await db
+      .select()
+      .from(tickets)
+      .where(
+        and(
+          eq(tickets.userId, userId),
+          // Include all non-closed statuses for photo handling
+          sql`(${tickets.status} = 'open' OR ${tickets.status} = 'in-progress' OR ${tickets.status} = 'pending')`
+        )
+      );
+    
+    if (ticket) {
+      console.log(`Found non-closed ticket ${ticket.id} with status ${ticket.status} for photo upload from user ${userId}`);
     }
     
     return ticket;
