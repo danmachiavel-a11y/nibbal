@@ -973,35 +973,50 @@ export class DiscordBot {
       }
       
       if (interaction.commandName === 'close') {
-        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
-
-        if (!ticket) {
-          await interaction.reply({
-            content: "This command can only be used in ticket channels!",
-            ephemeral: true
-          });
-          return;
-        }
-
+        // First, immediately defer the reply to prevent "Unknown Interaction" errors
+        // This gives us 15 minutes to complete the operation instead of just 3 seconds
+        await interaction.deferReply({ ephemeral: false });
+        
         try {
+          // Validate channel has a ticket
+          const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+          if (!ticket) {
+            await interaction.editReply({
+              content: "This command can only be used in ticket channels!"
+            });
+            return;
+          }
+
           // Get category for transcript category ID with null safety
           if (!ticket.categoryId) {
-            await interaction.reply({
-              content: "This ticket doesn't have a valid category. Please contact an administrator.",
-              ephemeral: true
+            await interaction.editReply({
+              content: "This ticket doesn't have a valid category. Please contact an administrator."
             });
             return;
           }
           
           const category = await storage.getCategory(ticket.categoryId);
           if (!category?.transcriptCategoryId) {
-            await interaction.reply({
-              content: "No transcript category set for this service. Please set it in the dashboard.",
-              ephemeral: true
+            await interaction.editReply({
+              content: "No transcript category set for this service. Please set it in the dashboard."
             });
             return;
           }
 
+          // Create and send the confirmation embed first so user sees response quickly
+          const processingEmbed = new EmbedBuilder()
+            .setColor(0xFFAA00) // Amber color for processing
+            .setTitle('🔄 Processing Ticket Close')
+            .setDescription(`Ticket close requested by ${interaction.user.username}`)
+            .addFields(
+              { name: 'Status', value: 'Processing', inline: true }
+            )
+            .setTimestamp();
+
+          await interaction.editReply({ embeds: [processingEmbed] });
+
+          // Now perform the slower operations
+          
           // Get ticket creator's info for notification
           const user = await storage.getUser(ticket.userId!);
           if (user?.telegramId) {
@@ -1026,12 +1041,24 @@ export class DiscordBot {
             await this.bridge.moveToTranscripts(ticket.id);
           } catch (error) {
             log(`Error in bridge.moveToTranscripts: ${error}`, "error");
-            throw error;
+            // Continue and show error in embed rather than throwing
+            const errorEmbed = new EmbedBuilder()
+              .setColor(0xFF0000) // Red for error
+              .setTitle('⚠️ Ticket Close Warning')
+              .setDescription(`Ticket marked as closed but couldn't move channel to transcripts`)
+              .addFields(
+                { name: 'Status', value: 'Closed (Database)', inline: true },
+                { name: 'Error', value: String(error).substring(0, 100), inline: true }
+              )
+              .setTimestamp();
+
+            await interaction.editReply({ embeds: [errorEmbed] });
+            return;
           }
 
-          // Send confirmation embed
-          const embed = new EmbedBuilder()
-            .setColor(0x00FF00)
+          // Update confirmation embed to show success
+          const successEmbed = new EmbedBuilder()
+            .setColor(0x00FF00) // Green for success
             .setTitle('✅ Ticket Closed')
             .setDescription(`Ticket closed by ${interaction.user.username}`)
             .addFields(
@@ -1040,12 +1067,12 @@ export class DiscordBot {
             )
             .setTimestamp();
 
-          await interaction.reply({ embeds: [embed] });
+          await interaction.editReply({ embeds: [successEmbed] });
         } catch (error) {
           log(`Error closing ticket: ${error}`, "error");
-          await interaction.reply({
-            content: "Failed to close ticket. Please try again.",
-            ephemeral: true
+          // Use editReply instead of reply since we already deferred
+          await interaction.editReply({
+            content: `Failed to close ticket: ${String(error).substring(0, 100)}. Please try again.`
           });
         }
       }
@@ -1223,14 +1250,18 @@ export class DiscordBot {
 
       if (interaction.commandName === 'closeall') {
         log(`Handling /closeall command from user ${interaction.user.id}`, "info");
+        
+        // First, immediately defer the reply to prevent "Unknown Interaction" errors
+        // This gives us 15 minutes to complete the operation instead of just 3 seconds
+        await interaction.deferReply({ ephemeral: false });
+        
         const categoryChannel = interaction.options.getChannel('category', true);
         log(`Selected category: ${categoryChannel.id}`, "debug");
 
         if (!(categoryChannel instanceof CategoryChannel)) {
           log(`Invalid category type: ${categoryChannel.type}`, "warn");
-          await interaction.reply({
-            content: "Please select a valid category!",
-            ephemeral: true
+          await interaction.editReply({
+            content: "Please select a valid category!"
           });
           return;
         }
@@ -1238,18 +1269,16 @@ export class DiscordBot {
         // Check if user is an admin
         const guild = interaction.guild;
         if (!guild) {
-          await interaction.reply({
-            content: "This command can only be used in a server!",
-            ephemeral: true
+          await interaction.editReply({
+            content: "This command can only be used in a server!"
           });
           return;
         }
         
         const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
         if (!isAdmin) {
-          await interaction.reply({
-            content: "⛔ This command can only be used by administrators!",
-            ephemeral: true
+          await interaction.editReply({
+            content: "⛔ This command can only be used by administrators!"
           });
           return;
         }
@@ -1262,17 +1291,15 @@ export class DiscordBot {
           log(`Found ${channels.size} text channels in category ${categoryChannel.name}`, "info");
 
           if (channels.size === 0) {
-            await interaction.reply({
-              content: "No ticket channels found in this category.",
-              ephemeral: true
+            await interaction.editReply({
+              content: "No ticket channels found in this category."
             });
             return;
           }
 
-          // First, reply to let the user know we're processing
-          await interaction.reply({
-            content: `Moving ${channels.size} tickets to their respective transcript categories...`,
-            ephemeral: false  // Make this visible to everyone
+          // First message after defer to let the user know we're processing
+          await interaction.editReply({
+            content: `Moving ${channels.size} tickets to their respective transcript categories...`
           });
 
           let moveCount = 0;

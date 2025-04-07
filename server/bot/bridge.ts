@@ -58,6 +58,10 @@ export class BridgeManager {
   private imageCache: Map<string, ImageCacheEntry> = new Map();
   private roleCache: Map<number, string> = new Map();
   private readonly imageCacheCleanupInterval = 3600000; // 1 hour
+  
+  // Message deduplication cache
+  private readonly messageDedupCache: Map<string, number> = new Map();
+  private readonly messageDedupWindow: number = 60000; // 60 seconds (increased from 30s)
   // Add at the top with other constants
   private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB per image
   private readonly MIN_IMAGE_SIZE = 32; // 32 bytes minimum
@@ -582,6 +586,32 @@ export class BridgeManager {
 
   async forwardToTelegram(content: string, ticketId: number, username: string, attachments?: any[]) {
     try {
+      // Create a deduplication key based on content and timestamp
+      const dedupKey = `tg:${ticketId}:${content}:${attachments?.length || 0}`;
+      const now = Date.now();
+      
+      // Check if this message was recently sent
+      if (this.messageDedupCache.has(dedupKey)) {
+        const lastSent = this.messageDedupCache.get(dedupKey);
+        if (now - lastSent! < this.messageDedupWindow) {
+          log(`Skipping duplicate message to Telegram within ${this.messageDedupWindow}ms window`, "warn");
+          return;
+        }
+      }
+      
+      // Update deduplication cache
+      this.messageDedupCache.set(dedupKey, now);
+      
+      // Clean old entries from dedup cache (every 100 entries)
+      if (this.messageDedupCache.size > 100) {
+        const expireTime = now - this.messageDedupWindow;
+        for (const [key, timestamp] of this.messageDedupCache.entries()) {
+          if (timestamp < expireTime) {
+            this.messageDedupCache.delete(key);
+          }
+        }
+      }
+      
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Telegram - Ticket: ${JSON.stringify(ticket)}`);
 
@@ -723,6 +753,32 @@ export class BridgeManager {
 
   async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string, firstName?: string, lastName?: string) {
     try {
+      // Create a deduplication key based on content and photo
+      const dedupKey = `dc:${ticketId}:${content}:${photo ? 'photo' : 'text'}`;
+      const now = Date.now();
+      
+      // Check if this message was recently sent
+      if (this.messageDedupCache.has(dedupKey)) {
+        const lastSent = this.messageDedupCache.get(dedupKey);
+        if (now - lastSent! < this.messageDedupWindow) {
+          log(`Skipping duplicate message to Discord within ${this.messageDedupWindow}ms window`, "warn");
+          return;
+        }
+      }
+      
+      // Update deduplication cache
+      this.messageDedupCache.set(dedupKey, now);
+      
+      // Clean old entries from dedup cache (every 100 entries)
+      if (this.messageDedupCache.size > 100) {
+        const expireTime = now - this.messageDedupWindow;
+        for (const [key, timestamp] of this.messageDedupCache.entries()) {
+          if (timestamp < expireTime) {
+            this.messageDedupCache.delete(key);
+          }
+        }
+      }
+      
       const ticket = await storage.getTicket(ticketId);
       log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
 
