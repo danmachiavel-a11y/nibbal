@@ -15,41 +15,56 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
-export async function refreshRoles(form: any, toast: any) {
+// Define helper functions separately to avoid Fast Refresh issues with exports
+const refreshRolesHelper = async (form: any, toast: any) => {
   try {
+    console.log("Fetching Discord roles...");
     const res = await apiRequest("GET", "/api/discord/roles");
     if (!res.ok) {
       const errorData = await res.json();
       throw new Error(`Failed to fetch Discord roles: ${errorData.message || res.statusText}`);
     }
     const roles = await res.json();
+    console.log("Successfully fetched Discord roles:", roles);
     form.setValue("discordRoles", roles);
+    toast({
+      title: "Success",
+      description: `Refreshed ${roles.length} Discord roles`
+    });
   } catch (error: any) {
+    console.error("Error fetching Discord roles:", error);
     toast({
       title: "Error",
       description: `Failed to load Discord roles: ${error.message}`,
       variant: "destructive"
     });
   }
-}
+};
 
-export async function refreshCategories(form: any, toast: any) {
+const refreshCategoriesHelper = async (form: any, toast: any) => {
   try {
+    console.log("Fetching Discord categories...");
     const res = await apiRequest("GET", "/api/discord/categories");
     if (!res.ok) {
       const errorData = await res.json();
       throw new Error(`Failed to fetch Discord categories: ${errorData.message || res.statusText}`);
     }
     const categories = await res.json();
+    console.log("Successfully fetched Discord categories:", categories);
     form.setValue("discordCategories", categories);
+    toast({
+      title: "Success",
+      description: `Refreshed ${categories.length} Discord categories`
+    });
   } catch (error: any) {
+    console.error("Error fetching Discord categories:", error);
     toast({
       title: "Error",
       description: `Failed to load Discord categories: ${error.message}`,
       variant: "destructive"
     });
   }
-}
+};
 
 export function CategoryEditor({ category, categories }: { category: Category; categories: Category[] }) {
   const { toast } = useToast();
@@ -78,8 +93,8 @@ export function CategoryEditor({ category, categories }: { category: Category; c
   useEffect(() => {
     const loadDiscordData = async () => {
       await Promise.all([
-        refreshRoles(form, toast),
-        refreshCategories(form, toast)
+        refreshRolesHelper(form, toast),
+        refreshCategoriesHelper(form, toast)
       ]);
     };
     
@@ -363,8 +378,8 @@ export function CategoryEditor({ category, categories }: { category: Category; c
                 variant="ghost" 
                 size="sm"
                 onClick={() => Promise.all([
-                  refreshRoles(form, toast),
-                  refreshCategories(form, toast)
+                  refreshRolesHelper(form, toast),
+                  refreshCategoriesHelper(form, toast)
                 ])}
                 className="mt-2 text-xs h-7 px-2 flex items-center gap-1"
               >

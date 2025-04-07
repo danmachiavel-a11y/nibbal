@@ -417,15 +417,19 @@ export class BridgeManager {
         throw new BridgeError("Category not found", { context: "moveToTranscripts" });
       }
 
+      // Get all available Discord categories for debugging
+      const availableCategories = await this.discordBot.getCategories();
+      log(`Available Discord categories:`, JSON.stringify(availableCategories, null, 2));
+
       // More strict checking for transcriptCategoryId
       if (!category.transcriptCategoryId) {
         log(`No transcript category ID found for category ${category.id}`);
-        throw new BridgeError("No transcript category set for this service", { context: "moveToTranscripts" });
+        throw new BridgeError(`No transcript category set for service: ${category.name}. Please set it in the dashboard.`, { context: "moveToTranscripts" });
       }
 
       if (category.transcriptCategoryId.trim() === '') {
         log(`Empty transcript category ID for category ${category.id}`);
-        throw new BridgeError("No transcript category set for this service", { context: "moveToTranscripts" });
+        throw new BridgeError(`No transcript category set for service: ${category.name}. Please set it in the dashboard.`, { context: "moveToTranscripts" });
       }
 
       log(`Moving channel ${ticket.discordChannelId} to transcript category ${category.transcriptCategoryId}`);
