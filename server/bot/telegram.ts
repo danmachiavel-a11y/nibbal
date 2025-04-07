@@ -960,16 +960,26 @@ export class TelegramBot {
     log(`Processing ticket message from user ${userId} for ticket ${ticket.id} with status ${ticket.status}`);
 
     try {
-      // Since we now pass a validated ticket from the caller, we can trust it's active
-      // But we'll do a lightweight verification to be sure
-      // Double-check the ticket status from the parameter we received
-      if (ticket.status === 'closed' || ticket.status === 'completed' || ticket.status === 'transcript') {
-        log(`Ticket ${ticket.id} is in ${ticket.status} status, cannot accept new messages`, "warn");
+      // Get an updated version of the ticket directly from the database
+      const currentTicket = await storage.getTicket(ticket.id);
+      
+      // Log the current state of the ticket
+      log(`Retrieved ticket from database: ${JSON.stringify(currentTicket)}`, "debug");
+      
+      // Double check that ticket exists and is active
+      if (!currentTicket) {
+        log(`Ticket ${ticket.id} not found in database`, "error");
+        await ctx.reply("❌ This ticket is no longer available. Use /start to create a new ticket.");
+        return;
+      }
+      
+      if (currentTicket.status === 'closed' || currentTicket.status === 'completed' || currentTicket.status === 'transcript') {
+        log(`Ticket ${ticket.id} is in ${currentTicket.status} status, cannot accept new messages`, "warn");
         await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
         return;
       }
       
-      log(`Verified ticket ${ticket.id} is active with status: ${ticket.status}`);
+      log(`Verified ticket ${ticket.id} is active with status: ${currentTicket.status}`);
       
       // Store the message in the database first for all ticket states
       await storage.createMessage({
@@ -981,14 +991,14 @@ export class TelegramBot {
       });
       
       // If it's a pending ticket, don't forward to Discord yet
-      if (ticket.status === 'pending') {
+      if (currentTicket.status === 'pending') {
         // We've already stored the message in the database, so just acknowledge receipt
         await ctx.reply("✓ Message received. It will be forwarded when your ticket is processed.");
         return;
       }
       
       // Check if the ticket has a Discord channel
-      if (!ticket.discordChannelId) {
+      if (!currentTicket.discordChannelId) {
         await ctx.reply("⚠️ Your ticket is active but not yet connected to Discord. The staff will see your message when they create a channel.");
         return;
       }
