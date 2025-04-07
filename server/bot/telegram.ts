@@ -2063,6 +2063,7 @@ ID: ${activeTicket.id}`;
       // Check if we're in questionnaire mode first to avoid ticket checks when unnecessary
       const state = this.userStates.get(userId);
       if (state?.inQuestionnaire) {
+        log(`User ${userId} is in questionnaire mode, handling response`, "info");
         await this.handleQuestionnaireResponse(ctx, state);
         return;
       }
@@ -2071,22 +2072,28 @@ ID: ${activeTicket.id}`;
       if (!this._isConnected) {
         try {
           const user = await storage.getUserByTelegramId(userId.toString());
-          if (!user) return;
+          if (!user) {
+            log(`User ${userId} not found in database, cannot queue message`, "warn");
+            await ctx.reply("❌ You need to start a conversation with /start first.");
+            return;
+          }
           
-          // Get all user tickets and filter active ones
+          // Query all tickets from this user directly from the database
+          log(`Getting tickets for user ${user.id} for offline queue processing`, "debug");
           const userTickets = await storage.getTicketsByUserId(user.id);
           
           if (!userTickets || userTickets.length === 0) {
+            log(`No tickets found for user ${user.id}`, "info");
             await ctx.reply("❌ You don't have any tickets. Use /start to create one.");
             return;
           }
           
-          // Find active tickets
-          const activeTickets = userTickets.filter(t => 
-            t.status !== 'closed' && 
-            t.status !== 'completed' && 
-            t.status !== 'transcript'
-          );
+          // Find and sort active tickets by ID in descending order (newest first)
+          const activeTickets = userTickets
+            .filter(t => !['closed', 'completed', 'transcript'].includes(t.status))
+            .sort((a, b) => b.id - a.id);
+          
+          log(`Found ${activeTickets.length} active tickets for user ${user.id}`, "debug");
           
           if (activeTickets.length === 0) {
             await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
@@ -2094,8 +2101,8 @@ ID: ${activeTicket.id}`;
           }
           
           // Use the most recent active ticket
-          const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
-          log(`Queueing message for offline processing for ticket ${ticket.id}`);
+          const ticket = activeTickets[0];
+          log(`Selected ticket ${ticket.id} with status ${ticket.status} for offline processing`, "info");
           
           // Queue the text message
           await storage.queueMessage({
@@ -2116,39 +2123,64 @@ ID: ${activeTicket.id}`;
         }
       }
 
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        // For text messages, check for active tickets
-        // Get all user tickets and filter the active ones
-        const userTickets = await storage.getTicketsByUserId(user.id);
-        
-        if (userTickets && userTickets.length > 0) {
-          // Find tickets that are not closed or completed
-          const activeTickets = userTickets.filter(t => 
-            t.status !== 'closed' && 
-            t.status !== 'completed' && 
-            t.status !== 'transcript'
-          );
-          
-          if (activeTickets.length > 0) {
-            // Use the most recent active ticket
-            const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
-            log(`Handling ticket message from user ${userId} for ticket ${ticket.id} with status ${ticket.status}`, "info");
-            // Now we delegate to handleTicketMessage which has its own check for ticket status
-            await this.handleTicketMessage(ctx, user, ticket);
-            return;
-          }
+      try {
+        // Get user record
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          log(`User ${userId} not found in database for text message handling`, "warn");
+          await ctx.reply("❌ You need to start a conversation with /start first.");
+          return;
         }
         
-        log(`No active ticket found for user ${userId}`, "info");
-      }
-
-      // If we reached here without finding an active ticket but have a state, handle questionnaire
-      if (state) {
-        await this.handleQuestionnaireResponse(ctx, state);
-      } else {
-        // No active ticket and no state, inform the user
-        await ctx.reply("❌ You don't have an active ticket or ongoing conversation. Use /start to create one.");
+        // Query all tickets from this user directly from the database
+        log(`Getting tickets for user ${user.id} for text message handling`, "debug");
+        const userTickets = await storage.getTicketsByUserId(user.id);
+        
+        if (!userTickets || userTickets.length === 0) {
+          log(`No tickets found for user ${user.id}`, "info");
+          
+          // If we have a questionnaire state, handle that instead
+          if (state) {
+            log(`No tickets but user has state, handling questionnaire response`, "info");
+            await this.handleQuestionnaireResponse(ctx, state);
+            return;
+          }
+          
+          await ctx.reply("❌ You don't have any tickets. Use /start to create one.");
+          return;
+        }
+        
+        // Find and sort active tickets by ID in descending order (newest first)
+        const activeTickets = userTickets
+          .filter(t => !['closed', 'completed', 'transcript'].includes(t.status))
+          .sort((a, b) => b.id - a.id);
+        
+        log(`Found ${activeTickets.length} active tickets for user ${user.id}, ticket statuses: ${activeTickets.map(t => t.status).join(', ')}`, "debug");
+        
+        if (activeTickets.length > 0) {
+          // Use the most recent active ticket
+          const ticket = activeTickets[0];
+          log(`Selected ticket ${ticket.id} with status ${ticket.status} for message handling`, "info");
+          
+          // Now delegate to handleTicketMessage which will re-verify the ticket
+          await this.handleTicketMessage(ctx, user, ticket);
+          return;
+        } else {
+          log(`No active tickets found for user ${user.id}, all tickets are closed/completed/transcript`, "info");
+          
+          // If we're in a questionnaire, handle that instead of showing an error
+          if (state) {
+            log(`No active tickets but user has state, handling questionnaire response`, "info");
+            await this.handleQuestionnaireResponse(ctx, state);
+            return;
+          }
+          
+          await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
+          return;
+        }
+      } catch (error) {
+        log(`Error processing text message: ${error}`, "error");
+        await ctx.reply("❌ There was an error processing your message. Please try again.");
       }
     });
 
@@ -2165,22 +2197,28 @@ ID: ${activeTicket.id}`;
       if (!this._isConnected) {
         try {
           const user = await storage.getUserByTelegramId(userId.toString());
-          if (!user) return;
+          if (!user) {
+            log(`User ${userId} not found in database, cannot queue photo`, "warn");
+            await ctx.reply("❌ You need to start a conversation with /start first.");
+            return;
+          }
           
-          // Get all user tickets and filter active ones
+          // Query all tickets from this user directly from the database
+          log(`Getting tickets for user ${user.id} for offline photo queue processing`, "debug");
           const userTickets = await storage.getTicketsByUserId(user.id);
           
           if (!userTickets || userTickets.length === 0) {
+            log(`No tickets found for user ${user.id} for photo`, "info");
             await ctx.reply("❌ You don't have any tickets. Use /start to create one.");
             return;
           }
           
-          // Find active tickets
-          const activeTickets = userTickets.filter(t => 
-            t.status !== 'closed' && 
-            t.status !== 'completed' && 
-            t.status !== 'transcript'
-          );
+          // Find and sort active tickets by ID in descending order (newest first)
+          const activeTickets = userTickets
+            .filter(t => !['closed', 'completed', 'transcript'].includes(t.status))
+            .sort((a, b) => b.id - a.id);
+          
+          log(`Found ${activeTickets.length} active tickets for user ${user.id} for photo queue`, "debug");
           
           if (activeTickets.length === 0) {
             await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
@@ -2188,8 +2226,8 @@ ID: ${activeTicket.id}`;
           }
           
           // Use the most recent active ticket
-          const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
-          log(`Queueing photo for offline processing for ticket ${ticket.id}`);
+          const ticket = activeTickets[0];
+          log(`Selected ticket ${ticket.id} with status ${ticket.status} for offline photo processing`, "info");
           
           // Get the best photo
           const photos = ctx.message.photo;
@@ -2215,123 +2253,136 @@ ID: ${activeTicket.id}`;
         }
       }
 
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (!user) return;
-
-      // For photos, we want to be more lenient - allow any non-closed tickets (including pending ones)
-      // Get all user tickets and filter the active ones
-      const userTickets = await storage.getTicketsByUserId(user.id);
+      let user;
+      let ticket;
       
-      if (!userTickets || userTickets.length === 0) {
-        // Provide more helpful message and log the issue
-        log(`No tickets found for user ${user.id} (${user.telegramId}) when trying to send a photo`, "warn");
-        await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
-        return;
-      }
-      
-      // Find tickets that are not closed or completed
-      const activeTickets = userTickets.filter(t => 
-        t.status !== 'closed' && 
-        t.status !== 'completed' && 
-        t.status !== 'transcript'
-      );
-      
-      if (activeTickets.length === 0) {
-        log(`No active tickets found for user ${user.id} (${user.telegramId}) when trying to send a photo`, "warn");
-        await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
-        return;
-      }
-      
-      // Use the most recent active ticket
-      const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
-      
-      // Log found ticket for debugging
-      log(`Found ${ticket.status} ticket ${ticket.id} for photo upload`, "info");
-      
-      // If it's a pending ticket, inform the user but still accept the photo
-      if (ticket.status === 'pending') {
-        await ctx.reply("⚠️ Your ticket is in pending state due to high volume. Staff will see your photo when a channel becomes available.");
-      }
-      
-      // Check if the ticket has a Discord channel if it's not pending
-      if (ticket.status !== 'pending' && !ticket.discordChannelId) {
-        await ctx.reply("⚠️ Your ticket is active but not yet connected to Discord. The staff will see your photo when they create a channel.");
-      }
-
       try {
-        const photos = ctx.message.photo;
-        const bestPhoto = photos[photos.length - 1]; // Get highest quality photo
-        const file = await ctx.telegram.getFile(bestPhoto.file_id);
-
-        // Store message in database for all ticket states
-        await storage.createMessage({
-          ticketId: ticket.id,
-          content: ctx.message.caption || "[Image]", // This is just for database storage, not what's displayed on Discord
-          authorId: user.id,
-          platform: "telegram",
-          timestamp: new Date()
-        });
-        
-        // If ticket is pending or has no Discord channel, just acknowledge receipt
-        if (ticket.status === 'pending' || !ticket.discordChannelId) {
-          await ctx.reply("✓ Your photo has been received and will be forwarded when your ticket is processed.");
+        // Get user record
+        user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          log(`User ${userId} not found in database for photo handling`, "warn");
+          await ctx.reply("❌ You need to start a conversation with /start first.");
           return;
         }
-
-        // Get avatar URL if possible
-        let avatarUrl: string | undefined;
-        try {
-          if (!ctx.from?.id) return;
-          const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
-          if (photos && photos.total_count > 0) {
-            const fileId = photos.photos[0][0].file_id;
-            const file = await ctx.telegram.getFile(fileId);
-            if (file?.file_path) {
-              avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-            }
-          }
-        } catch (error) {
-          log(`Error getting Telegram user avatar: ${error}`, "error");
+        
+        // Query all tickets from this user directly from the database
+        log(`Getting tickets for user ${user.id} for photo handling`, "debug");
+        const userTickets = await storage.getTicketsByUserId(user.id);
+        
+        if (!userTickets || userTickets.length === 0) {
+          // Provide more helpful message and log the issue
+          log(`No tickets found for user ${user.id} (${user.telegramId}) when trying to send a photo`, "warn");
+          await ctx.reply("❌ You don't have any tickets. Use /start to create one.");
+          return;
+        }
+        
+        // Find and sort active tickets by ID in descending order (newest first)
+        const activeTickets = userTickets
+          .filter(t => !['closed', 'completed', 'transcript'].includes(t.status))
+          .sort((a, b) => b.id - a.id);
+        
+        log(`Found ${activeTickets.length} active tickets for user ${user.id}, ticket statuses: ${activeTickets.map(t => t.status).join(', ')}`, "debug");
+        
+        if (activeTickets.length === 0) {
+          log(`No active tickets found for user ${user.id} (${user.telegramId}) when trying to send a photo`, "warn");
+          await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
+          return;
+        }
+        
+        // Use the most recent active ticket
+        ticket = activeTickets[0];
+        
+        // Log found ticket for debugging
+        log(`Found ${ticket.status} ticket ${ticket.id} for photo upload`, "info");
+        
+        // If it's a pending ticket, inform the user but still accept the photo
+        if (ticket.status === 'pending') {
+          await ctx.reply("⚠️ Your ticket is in pending state due to high volume. Staff will see your photo when a channel becomes available.");
+        }
+        
+        // Check if the ticket has a Discord channel if it's not pending
+        if (ticket.status !== 'pending' && !ticket.discordChannelId) {
+          await ctx.reply("⚠️ Your ticket is active but not yet connected to Discord. The staff will see your photo when they create a channel.");
         }
 
-        // Get user's first and last name
-        const firstName = ctx.from?.first_name || "";
-        const lastName = ctx.from?.last_name || "";
-        const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
-
         try {
-          // Send caption if exists
-          if (ctx.message.caption) {
+          const photos = ctx.message.photo;
+          const bestPhoto = photos[photos.length - 1]; // Get highest quality photo
+          const file = await ctx.telegram.getFile(bestPhoto.file_id);
+
+          // Store message in database for all ticket states
+          await storage.createMessage({
+            ticketId: ticket.id,
+            content: ctx.message.caption || "[Image]", // This is just for database storage, not what's displayed on Discord
+            authorId: user.id,
+            platform: "telegram",
+            timestamp: new Date()
+          });
+          
+          // If ticket is pending or has no Discord channel, just acknowledge receipt
+          if (ticket.status === 'pending' || !ticket.discordChannelId) {
+            await ctx.reply("✓ Your photo has been received and will be forwarded when your ticket is processed.");
+            return;
+          }
+
+          // Get avatar URL if possible
+          let avatarUrl: string | undefined;
+          try {
+            if (!ctx.from?.id) return;
+            const photos = await ctx.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+            if (photos && photos.total_count > 0) {
+              const fileId = photos.photos[0][0].file_id;
+              const file = await ctx.telegram.getFile(fileId);
+              if (file?.file_path) {
+                avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+              }
+            }
+          } catch (error) {
+            log(`Error getting Telegram user avatar: ${error}`, "error");
+          }
+
+          // Get user's first and last name
+          const firstName = ctx.from?.first_name || "";
+          const lastName = ctx.from?.last_name || "";
+          const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
+
+          try {
+            // Send caption if exists
+            if (ctx.message.caption) {
+              await this.bridge.forwardToDiscord(
+                ctx.message.caption,
+                ticket.id,
+                displayName,
+                avatarUrl,
+                undefined,
+                firstName,
+                lastName
+              );
+            }
+
+            // Forward the photo using the file_id
             await this.bridge.forwardToDiscord(
-              ctx.message.caption,
+              "",
               ticket.id,
               displayName,
               avatarUrl,
-              undefined,
+              bestPhoto.file_id, // Pass the file_id directly
               firstName,
               lastName
             );
+
+            log(`Successfully forwarded photo from Telegram to Discord for ticket ${ticket.id}`);
+          } catch (error) {
+            log(`Error forwarding photo to Discord: ${error}`, "error");
+            await ctx.reply("⚠️ Your photo was saved but could not be forwarded to Discord staff. They will still see it in the chat history.");
+            return;
           }
-
-          // Forward the photo using the file_id
-          await this.bridge.forwardToDiscord(
-            "",
-            ticket.id,
-            displayName,
-            avatarUrl,
-            bestPhoto.file_id, // Pass the file_id directly
-            firstName,
-            lastName
-          );
-
-          log(`Successfully forwarded photo from Telegram to Discord for ticket ${ticket.id}`);
         } catch (error) {
-          log(`Error forwarding photo to Discord: ${error}`, "error");
-          await ctx.reply("⚠️ Your photo was saved but could not be forwarded to Discord staff. They will still see it in the chat history.");
-          return;
+          log(`Error handling photo message: ${error}`, "error");
+          await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
         }
       } catch (error) {
-        log(`Error handling photo message: ${error}`, "error");
+        log(`Error in photo handler: ${error}`, "error");
         await ctx.reply("Sorry, there was an error processing your photo. Please try again.");
       }
     });
