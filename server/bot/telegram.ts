@@ -240,6 +240,8 @@ export class TelegramBot {
   private _isConnected: boolean = false;
   private isStarting: boolean = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private messageQueueInterval: NodeJS.Timeout | null = null;
+  private processingQueue: boolean = false;
   
   // Helper method for safe telegram access
   private get telegram() {
@@ -515,6 +517,199 @@ export class TelegramBot {
     }
   }
 
+  private startMessageQueueProcessor = (): void => {
+    if (this.messageQueueInterval) {
+      clearInterval(this.messageQueueInterval);
+    }
+
+    // Process message queue every 10 seconds
+    this.messageQueueInterval = setInterval(
+      () => this.processMessageQueue(),
+      10000
+    );
+
+    log("Started message queue processor");
+  };
+
+  private stopMessageQueueProcessor = (): void => {
+    if (this.messageQueueInterval) {
+      clearInterval(this.messageQueueInterval);
+      this.messageQueueInterval = null;
+    }
+    log("Stopped message queue processor");
+  };
+
+  private async processMessageQueue(): Promise<void> {
+    // Only process if bot is connected and not already processing
+    if (!this._isConnected || this.processingQueue || !this.bot) {
+      return;
+    }
+
+    try {
+      this.processingQueue = true;
+      
+      // Get unprocessed messages
+      const messages = await storage.getUnprocessedMessages(10);
+      
+      if (messages.length === 0) {
+        return;
+      }
+      
+      log(`Processing ${messages.length} queued messages`);
+      
+      for (const message of messages) {
+        try {
+          // Increment the attempt counter
+          await storage.incrementMessageAttempt(message.id);
+          
+          // Process based on message type
+          switch (message.messageType) {
+            case 'text':
+              if (message.content) {
+                const chatId = parseInt(message.telegramUserId);
+                
+                // Get user by telegramId
+                const user = await storage.getUserByTelegramId(message.telegramUserId);
+                if (!user) {
+                  log(`User not found for telegram ID: ${message.telegramUserId}`, "warn");
+                  // Mark as processed since we can't handle it
+                  await storage.markMessageProcessed(message.id);
+                  continue;
+                }
+
+                // Get ticket from user for forwarding
+                const ticket = await storage.getNonClosedTicketByUserId(user.id);
+                if (ticket) {
+                  // Store message in database
+                  await storage.createMessage({
+                    ticketId: ticket.id,
+                    content: message.content,
+                    authorId: user.id,
+                    platform: "telegram",
+                    timestamp: new Date()
+                  });
+                  
+                  // If ticket is active (not just pending), forward to Discord
+                  if (ticket.status !== 'pending') {
+                    try {
+                      await this.bridge.forwardToDiscord(
+                        message.content,
+                        ticket.id,
+                        user.username || "Telegram User",
+                        undefined // We don't have the avatar URL in the queue
+                      );
+                    } catch (error) {
+                      log(`Error forwarding queued message to Discord: ${error}`, "error");
+                    }
+                  }
+                  
+                  // Send confirmation to the user
+                  await this.sendSafeMessage(chatId, "Your message has been processed from the queue.");
+                } else {
+                  await this.sendSafeMessage(chatId, "You don't have an active ticket. Use /start to create one.");
+                }
+              }
+              break;
+              
+            case 'photo':
+              if (message.photoId) {
+                const chatId = parseInt(message.telegramUserId);
+                
+                // Get user by telegramId
+                const user = await storage.getUserByTelegramId(message.telegramUserId);
+                if (!user) {
+                  log(`User not found for telegram ID: ${message.telegramUserId}`, "warn");
+                  // Mark as processed since we can't handle it
+                  await storage.markMessageProcessed(message.id);
+                  continue;
+                }
+
+                // Get ticket from user for forwarding
+                const ticket = await storage.getNonClosedTicketByUserId(user.id);
+                if (ticket) {
+                  // Store message in database
+                  await storage.createMessage({
+                    ticketId: ticket.id,
+                    content: message.content || "[Image]",
+                    authorId: user.id,
+                    platform: "telegram",
+                    timestamp: new Date()
+                  });
+                  
+                  // If ticket is active (not just pending), forward to Discord
+                  if (ticket.status !== 'pending') {
+                    try {
+                      const displayName = user.telegramName || "Telegram User";
+                      
+                      // Send caption if it exists
+                      if (message.content) {
+                        await this.bridge.forwardToDiscord(
+                          message.content,
+                          ticket.id,
+                          displayName,
+                          undefined // No avatar URL from queue
+                        );
+                      }
+                      
+                      // Pass the photo file_id directly to the bridge
+                      await this.bridge.forwardToDiscord(
+                        "",
+                        ticket.id,
+                        displayName,
+                        undefined,
+                        message.photoId
+                      );
+                      
+                      await this.sendSafeMessage(chatId, "✓ Your queued photo has been forwarded to the support team.");
+                    } catch (error) {
+                      log(`Error forwarding queued photo to Discord: ${error}`, "error");
+                      await this.sendSafeMessage(chatId, "❌ There was an error processing your queued photo. Please try sending it again.");
+                    }
+                  } else {
+                    await this.sendSafeMessage(chatId, "✓ Your photo has been received, but your ticket is still pending.");
+                  }
+                } else {
+                  await this.sendSafeMessage(chatId, "You don't have an active ticket. Use /start to create one.");
+                }
+              }
+              break;
+              
+            case 'command':
+              if (message.commandName) {
+                const chatId = parseInt(message.telegramUserId);
+                
+                // Get user by telegramId
+                const user = await storage.getUserByTelegramId(message.telegramUserId);
+                if (!user) {
+                  log(`User not found for telegram ID: ${message.telegramUserId}`, "warn");
+                  // Mark as processed since we can't handle it
+                  await storage.markMessageProcessed(message.id);
+                  continue;
+                }
+
+                // For commands, just notify the user to try again
+                await this.sendSafeMessage(chatId, 
+                  `Your /${message.commandName} command was queued but couldn't be fully processed. Please try the command again now that the bot is online.`);
+              }
+              break;
+          }
+          
+          // Mark message as processed
+          await storage.markMessageProcessed(message.id);
+          
+        } catch (error) {
+          log(`Error processing queued message ${message.id}: ${error}`, "error");
+          // We don't mark as processed so it can be retried
+        }
+      }
+      
+    } catch (error) {
+      log(`Error in message queue processor: ${error}`, "error");
+    } finally {
+      this.processingQueue = false;
+    }
+  }
+
   async start() {
     if (this.isStarting) {
       log("Bot is already starting, waiting...");
@@ -579,6 +774,7 @@ export class TelegramBot {
       this._isConnected = true;
       this.updateConnectionState('connected');
       this.startHeartbeat();
+      this.startMessageQueueProcessor();
       this.reconnectAttempts = 0;
 
       log("Telegram bot started successfully");
@@ -605,6 +801,7 @@ export class TelegramBot {
     try {
       log("Stopping Telegram bot...");
       this.stopHeartbeat();
+      this.stopMessageQueueProcessor();
       
       // Stop the rate limit manager's cleanup interval
       this.rateLimitManager.stop();
@@ -1809,6 +2006,37 @@ ID: ${activeTicket.id}`;
         await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
         return;
       }
+      
+      // If bot is not connected, queue the message
+      if (!this._isConnected) {
+        try {
+          const user = await storage.getUserByTelegramId(userId.toString());
+          if (!user) return;
+          
+          const ticket = await storage.getNonClosedTicketByUserId(user.id);
+          if (!ticket) {
+            await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
+            return;
+          }
+          
+          // Queue the text message
+          await storage.queueMessage({
+            telegramUserId: userId.toString(),
+            messageType: 'text',
+            content: ctx.message.text,
+            processed: false,
+            processingAttempts: 0,
+            timestamp: new Date()
+          });
+          
+          await ctx.reply("📤 The bot is currently reconnecting. Your message has been queued and will be processed soon.");
+          return;
+        } catch (error) {
+          log(`Error queueing message: ${error}`, "error");
+          await ctx.reply("⚠️ Could not queue your message. Please try again when the bot is online.");
+          return;
+        }
+      }
 
       const state = this.userStates.get(userId);
       console.log(`Received message from user ${userId}. Current state:`, state);
@@ -1839,6 +2067,42 @@ ID: ${activeTicket.id}`;
       if (!this.checkRateLimit(userId, 'message')) {
         await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
         return;
+      }
+      
+      // If bot is not connected, queue the photo
+      if (!this._isConnected) {
+        try {
+          const user = await storage.getUserByTelegramId(userId.toString());
+          if (!user) return;
+          
+          const ticket = await storage.getNonClosedTicketByUserId(user.id);
+          if (!ticket) {
+            await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
+            return;
+          }
+          
+          // Get the best photo
+          const photos = ctx.message.photo;
+          const bestPhoto = photos[photos.length - 1];
+          
+          // Queue the photo - we only store the file_id since we can't get the file now
+          await storage.queueMessage({
+            telegramUserId: userId.toString(),
+            messageType: 'photo',
+            photoId: bestPhoto.file_id,
+            content: ctx.message.caption || null,
+            processed: false,
+            processingAttempts: 0,
+            timestamp: new Date()
+          });
+          
+          await ctx.reply("📤 The bot is currently reconnecting. Your photo has been queued and will be processed soon.");
+          return;
+        } catch (error) {
+          log(`Error queueing photo: ${error}`, "error");
+          await ctx.reply("⚠️ Could not queue your photo. Please try again when the bot is online.");
+          return;
+        }
       }
 
       const user = await storage.getUserByTelegramId(userId.toString());

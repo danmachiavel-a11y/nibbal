@@ -1,9 +1,9 @@
 import { eq, and, desc, sql, or } from 'drizzle-orm';
 import { db } from './db';
 import {
-  users, categories, tickets, messages, botConfig,
-  type User, type Category, type Ticket, type Message, type BotConfig,
-  type InsertUser, type InsertCategory, type InsertTicket, type InsertMessage, type InsertBotConfig
+  users, categories, tickets, messages, botConfig, messageQueue,
+  type User, type Category, type Ticket, type Message, type BotConfig, type MessageQueue,
+  type InsertUser, type InsertCategory, type InsertTicket, type InsertMessage, type InsertBotConfig, type InsertMessageQueue
 } from '@shared/schema';
 import { log } from './vite';
 
@@ -13,6 +13,12 @@ export interface IStorage {
   updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig>;
   isAdmin(telegramId: string): Promise<boolean>;
   isDiscordAdmin(discordId: string): Promise<boolean>;
+  
+  // Message queue operations
+  queueMessage(message: InsertMessageQueue): Promise<MessageQueue>;
+  getUnprocessedMessages(limit?: number): Promise<MessageQueue[]>;
+  markMessageProcessed(id: number): Promise<void>;
+  incrementMessageAttempt(id: number): Promise<void>;
 
   // User operations
   getUser(id: number): Promise<User | undefined>;
@@ -645,6 +651,49 @@ export class DatabaseStorage implements IStorage {
       .from(tickets)
       .where(eq(tickets.userId, userId))
       .orderBy(desc(tickets.id));
+  }
+
+  // Message queue operations
+  async queueMessage(message: InsertMessageQueue): Promise<MessageQueue> {
+    const [queuedMessage] = await db
+      .insert(messageQueue)
+      .values(message)
+      .returning();
+    return queuedMessage;
+  }
+
+  async getUnprocessedMessages(limit = 50): Promise<MessageQueue[]> {
+    return db
+      .select()
+      .from(messageQueue)
+      .where(
+        and(
+          eq(messageQueue.processed, false),
+          // Only get messages that have been attempted less than 5 times
+          sql`${messageQueue.processingAttempts} < 5`
+        )
+      )
+      .orderBy(messageQueue.timestamp)
+      .limit(limit);
+  }
+
+  async markMessageProcessed(id: number): Promise<void> {
+    await db
+      .update(messageQueue)
+      .set({ 
+        processed: true
+      })
+      .where(eq(messageQueue.id, id));
+  }
+
+  async incrementMessageAttempt(id: number): Promise<void> {
+    await db
+      .update(messageQueue)
+      .set({ 
+        processingAttempts: sql`${messageQueue.processingAttempts} + 1`,
+        lastAttempt: new Date()
+      })
+      .where(eq(messageQueue.id, id));
   }
 }
 
