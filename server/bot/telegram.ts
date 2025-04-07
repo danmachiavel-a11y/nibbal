@@ -1057,9 +1057,50 @@ export class TelegramBot {
       const supportedCommands = ['close', 'start', 'switch', 'ban', 'unban', 'paid', 'reopen', 'ping'];
       
       if (supportedCommands.includes(command)) {
-        log(`Redirecting to command handler for /${command}`, "info");
-        // Manually trigger the command handler
-        return await ctx.reply(`Please use Telegram commands by tapping on the command button /${command} directly. Text-based commands are not supported.`);
+        log(`Detected /${command} command in ticket message - processing command directly`, "info");
+        
+        try {
+          // Special case for /close command
+          if (command === 'close') {
+            log(`Processing /close command for ticket ${ticket.id}`, "info");
+            
+            // Update ticket status first to ensure it's closed
+            await storage.updateTicketStatus(ticket.id, "closed");
+            log(`Updated ticket ${ticket.id} status to closed`, "info");
+            
+            // Then try to move to transcripts if there's a Discord channel
+            if (ticket.discordChannelId) {
+              try {
+                await this.bridge.moveToTranscripts(ticket.id);
+                log(`Successfully moved ticket ${ticket.id} to transcripts`, "info");
+                
+                await ctx.reply(
+                  "✅ Your ticket has been closed and moved to transcripts.\n" +
+                  "Use /start to create a new ticket if needed."
+                );
+              } catch (error) {
+                log(`Error moving ticket ${ticket.id} to transcripts: ${error}`, "error");
+                await ctx.reply(
+                  "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
+                  "An administrator will handle this. You can use /start to create a new ticket if needed."
+                );
+              }
+            } else {
+              await ctx.reply(
+                "✅ Your ticket has been closed.\n" +
+                "Use /start to create a new ticket if needed."
+              );
+            }
+            return;
+          } else {
+            // For other commands, suggest using the command directly
+            return await ctx.reply(`Please use the /${command} command by tapping or typing it directly.`);
+          }
+        } catch (error) {
+          log(`Error processing command ${command} in message: ${error}`, "error");
+          await ctx.reply(`There was an error processing the /${command} command. Please try again.`);
+          return;
+        }
       }
     }
 

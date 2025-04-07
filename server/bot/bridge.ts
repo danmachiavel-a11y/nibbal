@@ -6,6 +6,7 @@ import type { Ticket } from "@shared/schema";
 import { log } from "../vite";
 import fetch from 'node-fetch';
 import { TextChannel } from 'discord.js';
+import crypto from 'crypto';
 
 class BridgeError extends Error {
   code?: string;
@@ -63,6 +64,9 @@ export class BridgeManager {
   private readonly messageDedupCache: Map<string, number> = new Map();
   private readonly messageDedupWindow: number = 180000; // 3 minutes (increased from 60s)
   private readonly MAX_DEDUP_CACHE_SIZE = 1000; // Maximum number of cached entries
+  
+  // Enable extra deduplication logging to debug duplicate messages
+  private readonly ENABLE_DEDUP_LOGGING = true;
   private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB per image
   private readonly MIN_IMAGE_SIZE = 32; // 32 bytes minimum
 
@@ -589,14 +593,27 @@ export class BridgeManager {
       // Create a more robust deduplication key using content hash and context
       // For short content, use the full content, otherwise use a limited substring to avoid key size issues
       const contentForKey = content.length <= 50 ? content : content.substring(0, 50);
-      // Add microsecond timestamp to reduce chance of key collision for rapid updates
-      const timestampPart = Math.floor(Date.now() / 1000).toString();
+      
+      // Remove timestamp from deduplication key to better catch duplicates sent rapidly
+      // Instead, use fixed window time-based deduplication
+      
+      // Use content hash to better detect identical messages
+      const contentHash = crypto
+        .createHash('md5')
+        .update(content)
+        .digest('hex')
+        .substring(0, 8);
+      
       // Add attachments info to the key
       const attachmentInfo = attachments ? `${attachments.length}:${JSON.stringify(attachments).length}` : '0';
       
-      // Create a more robust deduplication key
-      const dedupKey = `tg:${ticketId}:${timestampPart}:${contentForKey}:${attachmentInfo}:${username}`;
+      // Create a more robust deduplication key without timestamp component
+      const dedupKey = `tg:${ticketId}:${contentHash}:${contentForKey}:${attachmentInfo}:${username}`;
       const now = Date.now();
+      
+      if (this.ENABLE_DEDUP_LOGGING) {
+        log(`[DEDUP] Generated key for Telegram: ${dedupKey}`, "debug");
+      }
       
       // Check if this message was recently sent
       if (this.messageDedupCache.has(dedupKey)) {
@@ -772,14 +789,27 @@ export class BridgeManager {
       // Create a more robust deduplication key using content hash and context
       // For short content, use the full content, otherwise use a limited substring to avoid key size issues
       const contentForKey = content.length <= 50 ? content : content.substring(0, 50);
-      // Add microsecond timestamp to reduce chance of key collision for rapid updates
-      const timestampPart = Math.floor(Date.now() / 1000).toString();
+      
+      // Remove timestamp from deduplication key to better catch duplicates sent rapidly
+      // Instead, use fixed window time-based deduplication
+      
+      // Use content hash to better detect identical messages
+      const contentHash = crypto
+        .createHash('md5')
+        .update(content)
+        .digest('hex')
+        .substring(0, 8);
+        
       // Add photo information to the key
       const photoInfo = photo ? 'photo:' + photo.substring(0, 10) : 'text';
       
-      // Create a more robust deduplication key
-      const dedupKey = `dc:${ticketId}:${timestampPart}:${contentForKey}:${photoInfo}:${username}`;
+      // Create a more robust deduplication key without timestamp component
+      const dedupKey = `dc:${ticketId}:${contentHash}:${contentForKey}:${photoInfo}:${username}`;
       const now = Date.now();
+      
+      if (this.ENABLE_DEDUP_LOGGING) {
+        log(`[DEDUP] Generated key for Discord: ${dedupKey}`, "debug");
+      }
       
       // Check if this message was recently sent
       if (this.messageDedupCache.has(dedupKey)) {
