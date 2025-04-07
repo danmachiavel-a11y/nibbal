@@ -1045,6 +1045,24 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId) return;
 
+    // Check if this is actually a command that should be handled by a command handler instead
+    const messageText = ctx.message.text || "";
+    if (messageText.startsWith('/')) {
+      const commandParts = messageText.split(' ')[0].split('@');
+      const command = commandParts[0].substring(1); // Remove the leading '/'
+      
+      log(`Detected command in text message: /${command}`, "info");
+      
+      // List of supported commands that should be properly handled
+      const supportedCommands = ['close', 'start', 'switch', 'ban', 'unban', 'paid', 'reopen', 'ping'];
+      
+      if (supportedCommands.includes(command)) {
+        log(`Redirecting to command handler for /${command}`, "info");
+        // Manually trigger the command handler
+        return await ctx.reply(`Please use Telegram commands by tapping on the command button /${command} directly. Text-based commands are not supported.`);
+      }
+    }
+
     // Rate limit is already checked in the caller (text handler), we don't need to check again
     log(`Processing ticket message from user ${userId} for ticket ${ticket.id} with status ${ticket.status}`);
 
@@ -1198,6 +1216,33 @@ export class TelegramBot {
 
       // Use our new preserveMarkdown function to keep markdown formatting while escaping special chars
       const welcomeMessage = preserveMarkdown(botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:");
+
+      // Check if we have a welcome image to send
+      if (botConfig?.welcomeImageUrl) {
+        log(`Found welcome image URL: ${botConfig.welcomeImageUrl}`, "info");
+        try {
+          // Try to send the photo with caption and inline keyboard
+          await ctx.replyWithPhoto(
+            botConfig.welcomeImageUrl,
+            {
+              caption: welcomeMessage,
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            }
+          );
+          log("Successfully sent welcome image with categories", "info");
+          
+          // If we successfully sent the photo, we're done
+          if (ctx.callbackQuery) {
+            await ctx.answerCbQuery();
+          }
+          return;
+        } catch (error) {
+          // If sending the image fails, log the error and fall back to text-only
+          log(`Error sending welcome image: ${error}`, "error");
+          // Continue with text-only approach below
+        }
+      }
 
       try {
         // Try to edit existing message if this was triggered by a callback
