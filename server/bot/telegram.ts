@@ -961,19 +961,29 @@ export class TelegramBot {
 
     try {
       // Get an updated version of the ticket directly from the database
+      // This is critical as the ticket status may have changed since the user state was created
       const currentTicket = await storage.getTicket(ticket.id);
       
-      // Log the current state of the ticket
-      log(`Retrieved ticket from database: ${JSON.stringify(currentTicket)}`, "debug");
+      // Log the current state of the ticket for debugging
+      log(`Retrieved ticket ${ticket.id} from database: ${JSON.stringify(currentTicket)}`, "debug");
       
-      // Double check that ticket exists and is active
+      // Comprehensive ticket validation
       if (!currentTicket) {
         log(`Ticket ${ticket.id} not found in database`, "error");
         await ctx.reply("❌ This ticket is no longer available. Use /start to create a new ticket.");
         return;
       }
       
-      if (currentTicket.status === 'closed' || currentTicket.status === 'completed' || currentTicket.status === 'transcript') {
+      // Verify the ticket belongs to the current user for security
+      if (currentTicket.userId !== user.id) {
+        log(`Ticket ${ticket.id} belongs to user ${currentTicket.userId}, not current user ${user.id}`, "error");
+        await ctx.reply("❌ This ticket doesn't belong to you. Use /start to create your own ticket.");
+        return;
+      }
+      
+      // Check if the ticket is in a valid state for receiving messages
+      const invalidStates = ['closed', 'completed', 'transcript'];
+      if (invalidStates.includes(currentTicket.status)) {
         log(`Ticket ${ticket.id} is in ${currentTicket.status} status, cannot accept new messages`, "warn");
         await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
         return;
