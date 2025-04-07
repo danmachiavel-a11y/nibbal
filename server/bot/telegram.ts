@@ -94,8 +94,8 @@ interface ConnectionState {
 
 
 // Simple rate limiting configuration
-const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW || "30000", 10); // 30 seconds default
-const RATE_LIMIT_MAX_COUNT = parseInt(process.env.RATE_LIMIT_MAX_COUNT || "20", 10); // 20 requests default
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW || "60000", 10); // 60 seconds default (was 30)
+const RATE_LIMIT_MAX_COUNT = parseInt(process.env.RATE_LIMIT_MAX_COUNT || "50", 10); // 50 requests default (was 20)
 
 // User state cleanup configuration 
 const USER_STATE_CLEANUP_INTERVAL = 300000; // 5 minutes
@@ -2101,16 +2101,11 @@ ID: ${activeTicket.id}`;
             try {
               log(`Attempting to move ticket ${ticket.id} to transcripts with channel ${ticket.discordChannelId}`, "info");
               
-              // Even if the bot reports as disconnected, attempt to move to transcripts
-              // This works because Discord bot might still be operational
-              if (this._isConnected) {
-                await this.bridge.moveToTranscripts(ticket.id);
-                log(`Successfully moved ticket ${ticket.id} to transcripts`, "info");
-              } else {
-                log(`Telegram bot reports disconnected, using direct bridge call to move to transcripts`, "warn");
-                await this.bridge.moveToTranscripts(ticket.id);
-                log(`Successfully moved ticket ${ticket.id} to transcripts despite disconnection state`, "info");
-              }
+              // Always attempt to move to transcripts regardless of reported connection state
+              // This works because the bridge may be operational even if this bot thinks it's disconnected
+              log(`Attempting to move ticket ${ticket.id} to transcripts regardless of connection state`, "info");
+              await this.bridge.moveToTranscripts(ticket.id);
+              log(`Successfully moved ticket ${ticket.id} to transcripts`, "info");
               
               await ctx.reply(
                 "✅ Your ticket has been closed and moved to transcripts.\n" +

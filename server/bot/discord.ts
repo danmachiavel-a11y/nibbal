@@ -74,12 +74,12 @@ export class DiscordBot {
 
   // Rate limit configurations
   private readonly LIMITS = {
-    global: { capacity: 45, refillTime: 1000 }, // 45 per second
-    webhook: { capacity: 4, refillTime: 5000 }, // 4 per 5 seconds
-    channelCreate: { capacity: 9, refillTime: 10000 }, // 9 per 10 seconds
-    channelEdit: { capacity: 4, refillTime: 10000 }, // 4 per 10 seconds
-    messagesFetch: { capacity: 45, refillTime: 1000 }, // 45 per second
-    application: { capacity: 5, refillTime: 20000 }, // 5 per 20 seconds - for application commands
+    global: { capacity: 90, refillTime: 1000 }, // 90 per second (was 45)
+    webhook: { capacity: 8, refillTime: 5000 }, // 8 per 5 seconds (was 4)
+    channelCreate: { capacity: 15, refillTime: 10000 }, // 15 per 10 seconds (was 9)
+    channelEdit: { capacity: 8, refillTime: 10000 }, // 8 per 10 seconds (was 4)
+    messagesFetch: { capacity: 90, refillTime: 1000 }, // 90 per second (was 45)
+    application: { capacity: 10, refillTime: 20000 }, // 10 per 20 seconds (was 5) - for application commands
   };
 
   // Webhook management constants
@@ -1719,10 +1719,32 @@ export class DiscordBot {
     });
 
     // Handle all text messages
+    // Track recently processed messages to prevent duplicates
+    const recentMessages = new Map<string, number>();
+    const MESSAGE_EXPIRY = 30000; // 30 seconds (was 10)
+
     this.client.on("messageCreate", async (message) => {
       // Ignore bot messages to prevent loops
       if (message.author.bot) return;
       if (message.content.startsWith('.')) return;
+
+      // Deduplicate messages by checking against recently processed messages
+      const messageKey = `${message.id}-${message.channelId}`;
+      if (recentMessages.has(messageKey)) {
+        log(`Skipping duplicate message ${message.id} in channel ${message.channelId}`);
+        return;
+      }
+      
+      // Mark this message as recently processed
+      recentMessages.set(messageKey, Date.now());
+      
+      // Clean up old entries from the recentMessages map
+      const now = Date.now();
+      for (const [key, timestamp] of recentMessages.entries()) {
+        if (now - timestamp > MESSAGE_EXPIRY) {
+          recentMessages.delete(key);
+        }
+      }
 
       const ticket = await storage.getTicketByDiscordChannel(message.channelId);
       if (!ticket) {
@@ -1774,9 +1796,31 @@ export class DiscordBot {
     });
 
     // Handle message edits
+    // Track recently edited messages to prevent duplicates
+    const recentEditedMessages = new Map<string, number>();
+    const EDIT_MESSAGE_EXPIRY = 30000; // 30 seconds (was 10)
+
     this.client.on("messageUpdate", async (oldMessage, newMessage) => {
       if (newMessage.author?.bot) return;
       if (!newMessage.content || newMessage.content.startsWith('.')) return;
+
+      // Deduplicate edited messages
+      const messageKey = `${newMessage.id}-${newMessage.channelId}-edit`;
+      if (recentEditedMessages.has(messageKey)) {
+        log(`Skipping duplicate edited message ${newMessage.id} in channel ${newMessage.channelId}`);
+        return;
+      }
+      
+      // Mark this edited message as recently processed
+      recentEditedMessages.set(messageKey, Date.now());
+      
+      // Clean up old entries
+      const now = Date.now();
+      for (const [key, timestamp] of recentEditedMessages.entries()) {
+        if (now - timestamp > EDIT_MESSAGE_EXPIRY) {
+          recentEditedMessages.delete(key);
+        }
+      }
 
       const ticket = await storage.getTicketByDiscordChannel(newMessage.channelId);
       if (!ticket) return;
