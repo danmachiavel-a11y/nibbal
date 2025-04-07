@@ -552,6 +552,7 @@ export class TelegramBot {
       const messages = await storage.getUnprocessedMessages(10);
       
       if (messages.length === 0) {
+        this.processingQueue = false;
         return;
       }
       
@@ -580,6 +581,9 @@ export class TelegramBot {
                 // Get ticket from user for forwarding
                 const ticket = await storage.getNonClosedTicketByUserId(user.id);
                 if (ticket) {
+                  // Mark as processed BEFORE storing/forwarding to prevent duplicates if something fails
+                  await storage.markMessageProcessed(message.id);
+                  
                   // Store message in database
                   await storage.createMessage({
                     ticketId: ticket.id,
@@ -590,7 +594,7 @@ export class TelegramBot {
                   });
                   
                   // If ticket is active (not just pending), forward to Discord
-                  if (ticket.status !== 'pending') {
+                  if (ticket.status !== 'pending' && ticket.discordChannelId) {
                     try {
                       await this.bridge.forwardToDiscord(
                         message.content,
@@ -598,15 +602,17 @@ export class TelegramBot {
                         user.username || "Telegram User",
                         undefined // We don't have the avatar URL in the queue
                       );
+                      await this.sendSafeMessage(chatId, "✓ Your queued message has been delivered to Discord.");
                     } catch (error) {
                       log(`Error forwarding queued message to Discord: ${error}`, "error");
+                      await this.sendSafeMessage(chatId, "⚠️ Your message was saved but could not be forwarded to Discord.");
                     }
+                  } else {
+                    await this.sendSafeMessage(chatId, "✓ Your message has been saved and will be delivered when your ticket is processed.");
                   }
-                  
-                  // Send confirmation to the user
-                  await this.sendSafeMessage(chatId, "Your message has been processed from the queue.");
                 } else {
-                  await this.sendSafeMessage(chatId, "You don't have an active ticket. Use /start to create one.");
+                  await this.sendSafeMessage(chatId, "❌ You don't have an active ticket. Use /start to create one.");
+                  await storage.markMessageProcessed(message.id);
                 }
               }
               break;
@@ -627,6 +633,9 @@ export class TelegramBot {
                 // Get ticket from user for forwarding
                 const ticket = await storage.getNonClosedTicketByUserId(user.id);
                 if (ticket) {
+                  // Mark as processed BEFORE storing/forwarding to prevent duplicates if something fails
+                  await storage.markMessageProcessed(message.id);
+                  
                   // Store message in database
                   await storage.createMessage({
                     ticketId: ticket.id,
@@ -636,10 +645,10 @@ export class TelegramBot {
                     timestamp: new Date()
                   });
                   
-                  // If ticket is active (not just pending), forward to Discord
-                  if (ticket.status !== 'pending') {
+                  // If ticket is active (not just pending) and has a Discord channel, forward to Discord
+                  if (ticket.status !== 'pending' && ticket.discordChannelId) {
                     try {
-                      const displayName = user.telegramName || "Telegram User";
+                      const displayName = user.telegramName || user.username || "Telegram User";
                       
                       // Send caption if it exists
                       if (message.content) {
@@ -663,13 +672,14 @@ export class TelegramBot {
                       await this.sendSafeMessage(chatId, "✓ Your queued photo has been forwarded to the support team.");
                     } catch (error) {
                       log(`Error forwarding queued photo to Discord: ${error}`, "error");
-                      await this.sendSafeMessage(chatId, "❌ There was an error processing your queued photo. Please try sending it again.");
+                      await this.sendSafeMessage(chatId, "⚠️ Your photo was saved but could not be forwarded to Discord.");
                     }
                   } else {
                     await this.sendSafeMessage(chatId, "✓ Your photo has been received, but your ticket is still pending.");
                   }
                 } else {
-                  await this.sendSafeMessage(chatId, "You don't have an active ticket. Use /start to create one.");
+                  await this.sendSafeMessage(chatId, "❌ You don't have an active ticket. Use /start to create one.");
+                  await storage.markMessageProcessed(message.id);
                 }
               }
               break;
@@ -687,6 +697,9 @@ export class TelegramBot {
                   continue;
                 }
 
+                // Mark command as processed
+                await storage.markMessageProcessed(message.id);
+                
                 // For commands, just notify the user to try again
                 await this.sendSafeMessage(chatId, 
                   `Your /${message.commandName} command was queued but couldn't be fully processed. Please try the command again now that the bot is online.`);
@@ -694,8 +707,8 @@ export class TelegramBot {
               break;
           }
           
-          // Mark message as processed
-          await storage.markMessageProcessed(message.id);
+          // Only mark the message as processed if we haven't already marked it
+          // This is already done for messages that were successfully processed
           
         } catch (error) {
           log(`Error processing queued message ${message.id}: ${error}`, "error");
@@ -943,22 +956,10 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId) return;
 
-    // Get user state before rate limit check
-    const state = this.userStates.get(userId);
-    log(`Received message from user ${userId}. Current state: ${JSON.stringify(state)}`);
-
-    if (!this.checkRateLimit(userId, 'message')) {
-      await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
-      return;
-    }
+    // Rate limit is already checked in the caller (text handler), we don't need to check again
+    log(`Processing ticket message from user ${userId} for ticket ${ticket.id}`);
 
     try {
-      // If we're in a questionnaire, handle that first
-      if (state?.inQuestionnaire) {
-        await this.handleQuestionnaireResponse(ctx, state);
-        return;
-      }
-
       // Check if user still has a valid ticket (pending, open, or in-progress)
       const currentTicket = await storage.getNonClosedTicketByUserId(user.id);
       if (!currentTicket || currentTicket.id !== ticket.id) {
@@ -981,17 +982,24 @@ export class TelegramBot {
         await ctx.reply("✓ Message received. It will be forwarded when your ticket is processed.");
         return;
       }
+      
+      // Check if the ticket has a Discord channel
+      if (!currentTicket.discordChannelId) {
+        await ctx.reply("⚠️ Your ticket is active but not yet connected to Discord. The staff will see your message when they create a channel.");
+        return;
+      }
 
+      // Get user profile picture for avatar
       let avatarUrl: string | undefined;
       try {
-        // Use telegram getter for null safety
-        if (!ctx.from?.id) return;
-        const photos = await this.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
-        if (photos && photos.total_count > 0) {
-          const fileId = photos.photos[0][0].file_id;
-          const file = await this.telegram.getFile(fileId);
-          if (file?.file_path) {
-            avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        if (ctx.from?.id) {
+          const photos = await this.telegram.getUserProfilePhotos(ctx.from.id, 0, 1);
+          if (photos && photos.total_count > 0) {
+            const fileId = photos.photos[0][0].file_id;
+            const file = await this.telegram.getFile(fileId);
+            if (file?.file_path) {
+              avatarUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+            }
           }
         }
       } catch (error) {
@@ -1003,17 +1011,21 @@ export class TelegramBot {
       const lastName = ctx.from?.last_name || "";
       const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
-      await this.bridge.forwardToDiscord(
-        ctx.message.text,
-        ticket.id,
-        displayName,
-        avatarUrl,
-        undefined,
-        firstName,
-        lastName
-      );
-
-      log(`Message processed successfully for ticket ${ticket.id}`);
+      try {
+        await this.bridge.forwardToDiscord(
+          ctx.message.text,
+          ticket.id,
+          displayName,
+          avatarUrl,
+          undefined,
+          firstName,
+          lastName
+        );
+        log(`Message processed successfully for ticket ${ticket.id}`);
+      } catch (error) {
+        log(`Error forwarding message to Discord: ${error}`, "error");
+        await ctx.reply("⚠️ Your message was saved but could not be forwarded to Discord staff. They will still see it in the chat history.");
+      }
     } catch (error) {
       log(`Error in handleTicketMessage: ${error}`, "error");
       await ctx.reply("Sorry, there was an error processing your message. Please try again.");
@@ -2006,6 +2018,13 @@ ID: ${activeTicket.id}`;
         await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
         return;
       }
+
+      // Check if we're in questionnaire mode first to avoid ticket checks when unnecessary
+      const state = this.userStates.get(userId);
+      if (state?.inQuestionnaire) {
+        await this.handleQuestionnaireResponse(ctx, state);
+        return;
+      }
       
       // If bot is not connected, queue the message
       if (!this._isConnected) {
@@ -2038,25 +2057,26 @@ ID: ${activeTicket.id}`;
         }
       }
 
-      const state = this.userStates.get(userId);
-      console.log(`Received message from user ${userId}. Current state:`, state);
-
       const user = await storage.getUserByTelegramId(userId.toString());
       if (user) {
-        // For text messages, use the same logic as photos
+        // For text messages, check for active tickets
         const ticket = await storage.getNonClosedTicketByUserId(user.id);
         if (ticket) {
-          // If it's a pending ticket, inform the user but still accept the message
-          if (ticket.status === 'pending') {
-            await ctx.reply("⚠️ Your ticket is in pending state due to high volume. Staff will see your message when a channel becomes available.");
-          }
+          log(`Handling ticket message from user ${userId} for ticket ${ticket.id}`, "info");
+          // Now we delegate to handleTicketMessage which has its own check for pending tickets
           await this.handleTicketMessage(ctx, user, ticket);
           return;
+        } else {
+          log(`No active ticket found for user ${userId}`, "info");
         }
       }
 
+      // If we reached here without finding an active ticket but have a state, handle questionnaire
       if (state) {
         await this.handleQuestionnaireResponse(ctx, state);
+      } else {
+        // No active ticket and no state, inform the user
+        await ctx.reply("❌ You don't have an active ticket or ongoing conversation. Use /start to create one.");
       }
     });
 
@@ -2124,12 +2144,18 @@ ID: ${activeTicket.id}`;
       if (ticket.status === 'pending') {
         await ctx.reply("⚠️ Your ticket is in pending state due to high volume. Staff will see your photo when a channel becomes available.");
       }
+      
+      // Check if the ticket has a Discord channel if it's not pending
+      if (ticket.status !== 'pending' && !ticket.discordChannelId) {
+        await ctx.reply("⚠️ Your ticket is active but not yet connected to Discord. The staff will see your photo when they create a channel.");
+      }
 
       try {
         const photos = ctx.message.photo;
         const bestPhoto = photos[photos.length - 1]; // Get highest quality photo
         const file = await ctx.telegram.getFile(bestPhoto.file_id);
 
+        // Store message in database for all ticket states
         await storage.createMessage({
           ticketId: ticket.id,
           content: ctx.message.caption || "[Image]", // This is just for database storage, not what's displayed on Discord
@@ -2137,6 +2163,12 @@ ID: ${activeTicket.id}`;
           platform: "telegram",
           timestamp: new Date()
         });
+        
+        // If ticket is pending or has no Discord channel, just acknowledge receipt
+        if (ticket.status === 'pending' || !ticket.discordChannelId) {
+          await ctx.reply("✓ Your photo has been received and will be forwarded when your ticket is processed.");
+          return;
+        }
 
         // Get avatar URL if possible
         let avatarUrl: string | undefined;
@@ -2159,31 +2191,37 @@ ID: ${activeTicket.id}`;
         const lastName = ctx.from?.last_name || "";
         const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
-        // Send caption if exists
-        if (ctx.message.caption) {
+        try {
+          // Send caption if exists
+          if (ctx.message.caption) {
+            await this.bridge.forwardToDiscord(
+              ctx.message.caption,
+              ticket.id,
+              displayName,
+              avatarUrl,
+              undefined,
+              firstName,
+              lastName
+            );
+          }
+
+          // Forward the photo using the file_id
           await this.bridge.forwardToDiscord(
-            ctx.message.caption,
+            "",
             ticket.id,
             displayName,
             avatarUrl,
-            undefined,
+            bestPhoto.file_id, // Pass the file_id directly
             firstName,
             lastName
           );
+
+          log(`Successfully forwarded photo from Telegram to Discord for ticket ${ticket.id}`);
+        } catch (error) {
+          log(`Error forwarding photo to Discord: ${error}`, "error");
+          await ctx.reply("⚠️ Your photo was saved but could not be forwarded to Discord staff. They will still see it in the chat history.");
+          return;
         }
-
-        // Forward the photo using the file_id
-        await this.bridge.forwardToDiscord(
-          "",
-          ticket.id,
-          displayName,
-          avatarUrl,
-          bestPhoto.file_id, // Pass the file_id directly
-          firstName,
-          lastName
-        );
-
-        log(`Successfully forwarded photo from Telegram to Discord for ticket ${ticket.id}`);
       } catch (error) {
         log(`Error handling photo message: ${error}`, "error");
         await ctx.reply("Sorry, there was an error processing your photo. Please try again.");

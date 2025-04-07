@@ -436,7 +436,7 @@ export class DiscordBot {
           await new Promise(resolve => setTimeout(resolve, 1000));
           
           // Enhanced logging for command registration
-          if (command.name === 'ban' || command.name === 'unban') {
+          if (command.name === 'ban' || command.name === 'unban' || command.name === 'closeall' || command.name === 'deleteall') {
             log(`Registered special command: ${command.name} with options: ${JSON.stringify(command.options)}`, "info");
           } else {
             log(`Registered command: ${command.name}`);
@@ -1135,47 +1135,89 @@ export class DiscordBot {
         }
 
         try {
+          // First, reply to let the user know we're processing
+          await interaction.reply({
+            content: `Processing channels in ${categoryChannel.name}...`,
+            ephemeral: true
+          });
+
           // Get all text channels in the category
           const channels = categoryChannel.children.cache.filter(
             channel => channel.type === ChannelType.GuildText
           );
 
           if (channels.size === 0) {
-            await interaction.reply({
-              content: "No ticket channels found in this category.",
-              ephemeral: true
+            await interaction.editReply({
+              content: "No ticket channels found in this category."
             });
             return;
           }
 
           // Confirm with user
-          await interaction.reply({
-            content: `Are you sure you want to delete all ${channels.size} tickets in ${categoryChannel.name}? This action cannot be undone.`,
-            ephemeral: true
+          await interaction.editReply({
+            content: `Are you sure you want to delete all ${channels.size} tickets in ${categoryChannel.name}? This action cannot be undone.`
           });
+          
+          let processedCount = 0;
+          let errorCount = 0;
 
           // Delete all channels and update tickets
           for (const [_, channel] of channels) {
-            if (channel instanceof TextChannel) {
-              const ticket = await storage.getTicketByDiscordChannel(channel.id);
-              if (ticket) {
-                await storage.updateTicketStatus(ticket.id, "deleted");
+            try {
+              if (channel instanceof TextChannel) {
+                const ticket = await storage.getTicketByDiscordChannel(channel.id);
+                if (ticket) {
+                  await storage.updateTicketStatus(ticket.id, "deleted");
+                }
+                await channel.delete();
+                processedCount++;
+                
+                // Update progress every 5 channels
+                if (processedCount % 5 === 0) {
+                  await interaction.editReply({
+                    content: `Progress: ${processedCount}/${channels.size} channels processed...`
+                  });
+                }
               }
-              await channel.delete();
+            } catch (channelError) {
+              errorCount++;
+              log(`Error deleting channel ${channel.name}: ${channelError}`, "error");
             }
           }
 
           // Send final confirmation
-          await interaction.followUp({
-            content: `✅ Deleted ${channels.size} tickets from ${categoryChannel.name}`,
-            ephemeral: true
+          await interaction.editReply({
+            content: `✅ Processed ${channels.size} tickets from ${categoryChannel.name}:\n` +
+                     `• ${processedCount} tickets successfully deleted\n` +
+                     `• ${errorCount} errors encountered`
           });
         } catch (error) {
           log(`Error in deleteall command: ${error}`, "error");
-          await interaction.followUp({
-            content: "An error occurred while deleting tickets. Some tickets may not have been deleted.",
-            ephemeral: true
-          });
+          
+          // Make sure we have a reply
+          try {
+            await interaction.followUp({
+              content: "An error occurred while deleting tickets. Some tickets may not have been deleted.",
+              ephemeral: true
+            });
+          } catch (replyError) {
+            // If followUp fails (e.g., if the original reply wasn't sent), try editReply
+            try {
+              await interaction.editReply({
+                content: "An error occurred while deleting tickets. Some tickets may not have been deleted."
+              });
+            } catch (editError) {
+              // If both fail, last resort is to try a new reply
+              try {
+                await interaction.reply({
+                  content: "An error occurred while deleting tickets. Some tickets may not have been deleted.",
+                  ephemeral: true
+                });
+              } catch (finalError) {
+                log(`Failed to send error message to user: ${finalError}`, "error");
+              }
+            }
+          }
         }
       }
 
@@ -1223,14 +1265,15 @@ export class DiscordBot {
             return;
           }
 
-          let moveCount = 0;
-          let errorCount = 0;
-
-          // Start the process
+          // First, reply to let the user know we're processing
           await interaction.reply({
             content: `Moving ${channels.size} tickets to their respective transcript categories...`,
             ephemeral: true
           });
+
+          let moveCount = 0;
+          let errorCount = 0;
+          let processedCount = 0;
 
           // Get staff member's display name with type safety
           let staffName = "Discord Staff";
@@ -1248,15 +1291,27 @@ export class DiscordBot {
                 if (ticket && ticket.categoryId) {
                   const category = await storage.getCategory(ticket.categoryId);
                   if (category?.transcriptCategoryId) {
+                    // Update progress every 5 channels
+                    processedCount++;
+                    if (processedCount % 5 === 0) {
+                      await interaction.editReply({
+                        content: `Progress: ${processedCount}/${channels.size} channels processed...`
+                      });
+                    }
+                    
                     const transcriptCategory = await this.client.channels.fetch(category.transcriptCategoryId);
                     if (transcriptCategory instanceof CategoryChannel) {
                       // Notify Telegram user before moving the channel
                       const user = await storage.getUser(ticket.userId!);
                       if (user?.telegramId) {
-                        await this.bridge.getTelegramBot().sendMessage(
-                          parseInt(user.telegramId),
-                          `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-                        );
+                        try {
+                          await this.bridge.getTelegramBot().sendMessage(
+                            parseInt(user.telegramId),
+                            `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
+                          );
+                        } catch (notifyError) {
+                          log(`Error notifying Telegram user for ticket ${ticket.id}: ${notifyError}`, "warn");
+                        }
                       }
 
                       // Use the bridge.moveToTranscripts method to ensure consistent permission handling
@@ -1273,18 +1328,38 @@ export class DiscordBot {
           }
 
           // Send final status
-          await interaction.followUp({
+          await interaction.editReply({
             content: `✅ Processed ${channels.size} tickets:\n` +
               `• ${moveCount} tickets moved to transcripts\n` +
-              `• ${errorCount} errors encountered`,
-            ephemeral: true
+              `• ${errorCount} errors encountered`
           });
         } catch (error) {
           log(`Error in closeall command: ${error}`, "error");
-          await interaction.followUp({
-            content: "An error occurred while closing tickets. Some tickets may not have been processed.",
-            ephemeral: true
-          });
+          
+          // Make sure we have a reply
+          try {
+            await interaction.followUp({
+              content: "An error occurred while closing tickets. Some tickets may not have been processed.",
+              ephemeral: true
+            });
+          } catch (replyError) {
+            // If followUp fails (e.g., if the original reply wasn't sent), try editReply
+            try {
+              await interaction.editReply({
+                content: "An error occurred while closing tickets. Some tickets may not have been processed."
+              });
+            } catch (editError) {
+              // If both fail, last resort is to try a new reply
+              try {
+                await interaction.reply({
+                  content: "An error occurred while closing tickets. Some tickets may not have been processed.",
+                  ephemeral: true
+                });
+              } catch (finalError) {
+                log(`Failed to send error message to user: ${finalError}`, "error");
+              }
+            }
+          }
         }
       }
 
