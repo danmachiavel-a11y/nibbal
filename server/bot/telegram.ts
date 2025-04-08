@@ -1064,12 +1064,33 @@ export class TelegramBot {
           if (command === 'close') {
             log(`Processing /close command for ticket ${ticket.id}`, "info");
             
+            // Get an updated version of the ticket directly from the database
+            const currentTicket = await storage.getTicket(ticket.id);
+            if (!currentTicket) {
+              log(`Ticket ${ticket.id} not found in database`, "error");
+              await ctx.reply("❌ This ticket is no longer available. Use /start to create a new ticket.");
+              return;
+            }
+            
+            // Verify the ticket belongs to the current user for security
+            if (currentTicket.userId !== user.id) {
+              log(`Ticket ${ticket.id} belongs to user ${currentTicket.userId}, not current user ${user.id}`, "error");
+              await ctx.reply("❌ This ticket doesn't belong to you. Use /start to create your own ticket.");
+              return;
+            }
+            
+            // Check if the ticket is already closed
+            if (['closed', 'completed', 'transcript'].includes(currentTicket.status)) {
+              await ctx.reply("This ticket is already closed. Use /start to create a new ticket if needed.");
+              return;
+            }
+            
             // Update ticket status first to ensure it's closed
             await storage.updateTicketStatus(ticket.id, "closed");
             log(`Updated ticket ${ticket.id} status to closed`, "info");
             
             // Then try to move to transcripts if there's a Discord channel
-            if (ticket.discordChannelId) {
+            if (currentTicket.discordChannelId) {
               try {
                 await this.bridge.moveToTranscripts(ticket.id);
                 log(`Successfully moved ticket ${ticket.id} to transcripts`, "info");
