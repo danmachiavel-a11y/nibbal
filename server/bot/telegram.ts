@@ -2047,75 +2047,10 @@ ID: ${activeTicket.id}`;
     });
 
     this.bot.command("switch", async (ctx) => {
-      // COMPLETELY REWRITTEN IMPLEMENTATION
-      log("===== SWITCH COMMAND HANDLER =====", "info");
-      
-      try {
-        const userId = ctx.from?.id;
-        if (!userId) {
-          log("[SWITCH] No user ID in command", "error");
-          return;
-        }
-        
-        log(`[SWITCH] Command received from user: ${userId}`, "info");
-        
-        if (!this.checkRateLimit(userId, 'command', 'switch')) {
-          await ctx.reply("⚠️ Please wait before using this command again.");
-          return;
-        }
-        
-        const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) {
-          await ctx.reply("You haven't created any tickets yet.");
-          return;
-        }
-
-        // Get all tickets for this user
-        const userTickets = await storage.getTicketsByUserId(user.id);
-        const activeTickets = userTickets.filter(ticket => 
-          ticket.status !== 'closed' && ticket.status !== 'deleted'
-        );
-
-        if (activeTickets.length === 0) {
-          // No active tickets - just start new one
-          await ctx.reply("You don't have any active tickets. Starting a new ticket...");
-          await this.handleCategoryMenu(ctx);
-          return;
-        }
-
-        // Create inline keyboard with active tickets and an option to create a new one
-        const inlineKeyboard = [];
-        
-        // Add buttons for each active ticket
-        for (const ticket of activeTickets) {
-          const categoryId = ticket.categoryId ?? 0;
-          const category = await storage.getCategory(categoryId);
-          const categoryName = category ? category.name : "Unknown category";
-          
-          inlineKeyboard.push([{
-            text: `📝 Ticket #${ticket.id} (${categoryName})`,
-            callback_data: `switch_to_${ticket.id}`
-          }]);
-        }
-        
-        // Add button to create a new ticket
-        inlineKeyboard.push([{
-          text: "➕ Create New Ticket",
-          callback_data: "create_new_ticket"
-        }]);
-
-        await ctx.reply(
-          "Your active tickets:",
-          {
-            reply_markup: {
-              inline_keyboard: inlineKeyboard
-            }
-          }
-        );
-      } catch (error) {
-        log(`Error in switch command: ${error}`, "error");
-        await ctx.reply("❌ There was an error processing your request. Please try again.");
-      }
+      // COMPLETELY DISABLED DUE TO POTENTIAL CONFLICT WITH /close
+      log("===== SWITCH COMMAND DISABLED =====", "info");
+      await ctx.reply("⚠️ The /switch command is temporarily disabled for maintenance.");
+      return;
     });
 
     this.bot.command("ban", async (ctx) => {
