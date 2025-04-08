@@ -1092,6 +1092,23 @@ export class TelegramBot {
               );
             }
             return;
+          } else if (command === 'ping') {
+            log(`Processing /ping command for ticket ${ticket.id}`, "info");
+            
+            // Get user's display name
+            if (!ctx.from) return;
+            const displayName = [ctx.from.first_name, ctx.from.last_name]
+              .filter(Boolean)
+              .join(' ') || ctx.from.username || "Telegram User";
+            
+            try {
+              await this.bridge.forwardPingToDiscord(ticket.id, displayName);
+              await ctx.reply("✅ Staff has been successfully notified.");
+            } catch (error) {
+              log(`Error sending ping: ${error}`, "error");
+              await ctx.reply("❌ Failed to send ping. Please try again.");
+            }
+            return;
           } else {
             // For other commands, suggest using the command directly
             return await ctx.reply(`Please use the /${command} command by tapping or typing it directly.`);
