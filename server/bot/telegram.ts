@@ -1704,57 +1704,72 @@ export class TelegramBot {
       if (!text) return;
       
       // Check if this is a /close command
-      if (!text.startsWith('/close')) return;
-      
-      console.log("DETECTED /close COMMAND VIA TEXT HANDLER");
-      console.log("DIRECT CLOSE HANDLER TRIGGERED");
-      try {
+      const normalizedText = text.trim().toLowerCase();
+      if (normalizedText === '/close' || normalizedText.startsWith('/close ')) {
         const userId = ctx.from?.id;
         if (!userId) return;
         
-        console.log(`CLOSE COMMAND from user ${userId}`);
+        console.log(`SUPER DIRECT TEXT HANDLER CAUGHT /close FROM USER ${userId}`);
+        log(`[SUPER DIRECT] /close command received from user ${userId}`, "info");
         
-        // Find the user
-        const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) {
-          await ctx.reply("You haven't created any tickets yet.");
-          return;
-        }
-        
-        // Get active tickets
-        const tickets = await storage.getTicketsByUserId(user.id);
-        const activeTickets = tickets.filter(t => 
-          !['closed', 'completed', 'transcript'].includes(t.status)
-        );
-        
-        if (activeTickets.length === 0) {
-          await ctx.reply("You don't have any active tickets to close.");
-          return;
-        }
-        
-        // Take the most recent active ticket
-        activeTickets.sort((a, b) => b.id - a.id);
-        const ticket = activeTickets[0];
-        
-        // Close the ticket
-        await storage.updateTicketStatus(ticket.id, "closed");
-        console.log(`Closed ticket ${ticket.id}`);
-        
-        // If there's a Discord channel, move to transcripts
-        if (ticket.discordChannelId) {
-          try {
-            await this.bridge.moveToTranscripts(ticket.id);
-            await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
-          } catch (error) {
-            console.error(`Error moving ticket to transcripts: ${error}`);
-            await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
+        try {
+          // Find the user
+          const user = await storage.getUserByTelegramId(userId.toString());
+          if (!user) {
+            await ctx.reply("You haven't created any tickets yet.");
+            return;
           }
-        } else {
-          await ctx.reply("✅ Your ticket has been closed.");
+          
+          // Get active tickets directly from database
+          const ticketsResult = await pool.query(`
+            SELECT * FROM tickets 
+            WHERE user_id = $1 
+            AND status NOT IN ('closed', 'completed', 'transcript')
+            ORDER BY id DESC
+          `, [user.id]);
+          
+          if (!ticketsResult.rows || ticketsResult.rows.length === 0) {
+            await ctx.reply("You don't have any active tickets to close.");
+            return;
+          }
+          
+          // Take the most recent active ticket
+          const ticket = ticketsResult.rows[0];
+          console.log(`SUPER DIRECT CLOSE: Found ticket ${ticket.id} with status ${ticket.status}`);
+          
+          // Close the ticket directly with database query
+          await pool.query(`
+            UPDATE tickets SET status = 'closed' WHERE id = $1
+          `, [ticket.id]);
+          
+          console.log(`SUPER DIRECT CLOSE: Successfully closed ticket ${ticket.id}`);
+          
+          // Mark this message as processed to prevent Discord forwarding
+          (ctx.message as any)._isCommand = true;
+          
+          // If there's a Discord channel, move to transcripts
+          if (ticket.discord_channel_id) {
+            try {
+              // Convert to number to ensure type safety
+              const ticketId = parseInt(ticket.id.toString(), 10);
+              await this.bridge.moveToTranscripts(ticketId);
+              console.log(`SUPER DIRECT CLOSE: Successfully moved ticket ${ticket.id} to transcripts`);
+              await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
+            } catch (error) {
+              console.error(`SUPER DIRECT CLOSE: Error moving ticket to transcripts: ${error}`);
+              await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
+            }
+          } else {
+            await ctx.reply("✅ Your ticket has been closed.");
+          }
+          
+          // Return immediately to prevent other handlers
+          return;
+        } catch (error) {
+          console.error(`SUPER DIRECT CLOSE: Error in handler: ${error}`);
+          await ctx.reply("❌ There was an error closing your ticket. Please try again.");
+          return;
         }
-      } catch (error) {
-        console.error(`Error in direct close handler: ${error}`);
-        await ctx.reply("❌ There was an error closing your ticket.");
       }
     });
     

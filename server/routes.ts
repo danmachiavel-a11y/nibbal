@@ -770,5 +770,68 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  // EMERGENCY API: Close ticket by Telegram ID
+  // This endpoint is a last resort to close tickets when the Telegram bot command fails
+  app.post("/api/emergency/close-ticket-by-telegram", async (req, res) => {
+    try {
+      // Require telegramId in the request body
+      const { telegramId } = req.body;
+      
+      if (!telegramId) {
+        return res.status(400).json({ message: "telegramId is required" });
+      }
+      
+      log(`EMERGENCY CLOSE API: Attempting to close ticket for Telegram ID ${telegramId}`, "info");
+      
+      // Get user by Telegram ID
+      const user = await storage.getUserByTelegramId(telegramId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Get active tickets for this user
+      const userTickets = await storage.getTicketsByUserId(user.id);
+      const activeTickets = userTickets.filter(t => 
+        !['closed', 'completed', 'transcript'].includes(t.status)
+      );
+      
+      if (activeTickets.length === 0) {
+        return res.status(404).json({ message: "No active tickets found" });
+      }
+      
+      // Close the most recent active ticket
+      activeTickets.sort((a, b) => b.id - a.id);
+      const ticket = activeTickets[0];
+      
+      log(`EMERGENCY CLOSE API: Closing ticket #${ticket.id} with status "${ticket.status}"`, "info");
+      
+      // Update ticket status
+      await storage.updateTicketStatus(ticket.id, "closed");
+      
+      // If there's a Discord channel, try to move it to transcripts
+      if (ticket.discordChannelId && bridge) {
+        try {
+          await bridge.moveToTranscripts(ticket.id);
+          log(`EMERGENCY CLOSE API: Moved ticket #${ticket.id} to transcripts`, "info");
+        } catch (error) {
+          log(`EMERGENCY CLOSE API: Error moving ticket to transcripts: ${error}`, "error");
+        }
+      }
+      
+      return res.json({ 
+        success: true, 
+        message: "Ticket closed successfully",
+        ticket: {
+          id: ticket.id,
+          status: "closed",
+          previousStatus: ticket.status
+        }
+      });
+    } catch (error) {
+      log(`Error in emergency close API: ${error}`, "error");
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   return httpServer;
 }
