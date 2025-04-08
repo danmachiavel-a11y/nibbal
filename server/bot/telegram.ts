@@ -1922,22 +1922,54 @@ Please use /close to close your current ticket first, or continue chatting here 
         }
 
         // Force close any active ticket
+        log(`[CANCEL DEBUG] Processing /cancel command for user ${userId}`, "info");
         const user = await storage.getUserByTelegramId(userId.toString());
         let activeTicket; // Define variable at this scope
-        if (user) {
-          activeTicket = await storage.getActiveTicketByUserId(user.id);
-          if (activeTicket) {
-            // Force close the ticket regardless of transcript category
-            await storage.updateTicketStatus(activeTicket.id, "closed");
-
-            // Try to move to transcripts if possible, but don't block on failure
-            if (activeTicket.discordChannelId) {
-              try {
-                await this.bridge.moveToTranscripts(activeTicket.id);
-              } catch (error) {
-                log(`Failed to move ticket ${activeTicket.id} to transcripts during force cancel: ${error}`, "warn");
+        
+        if (!user) {
+          log(`[CANCEL DEBUG] No user found with Telegram ID ${userId}`, "warn");
+        } else {
+          log(`[CANCEL DEBUG] Found user with ID ${user.id}`, "info");
+          
+          // Get active ticket with detailed logging
+          try {
+            activeTicket = await storage.getActiveTicketByUserId(user.id);
+            
+            if (!activeTicket) {
+              log(`[CANCEL DEBUG] No active tickets found for user ${user.id}`, "info");
+              
+              // Let's try to get non-closed tickets to see if there are any in other states
+              const nonClosedTicket = await storage.getNonClosedTicketByUserId(user.id);
+              if (nonClosedTicket) {
+                log(`[CANCEL DEBUG] Found non-closed ticket with ID ${nonClosedTicket.id} and status "${nonClosedTicket.status}"`, "info");
+                activeTicket = nonClosedTicket; // Use this ticket instead
+              }
+            } else {
+              log(`[CANCEL DEBUG] Found active ticket with ID ${activeTicket.id} and status "${activeTicket.status}"`, "info");
+            }
+            
+            if (activeTicket) {
+              log(`[CANCEL DEBUG] Closing ticket ${activeTicket.id}`, "info");
+              
+              // Force close the ticket regardless of transcript category
+              await storage.updateTicketStatus(activeTicket.id, "closed");
+              log(`[CANCEL DEBUG] Updated ticket status to "closed"`, "info");
+              
+              // Try to move to transcripts if possible, but don't block on failure
+              if (activeTicket.discordChannelId) {
+                log(`[CANCEL DEBUG] Ticket has Discord channel ${activeTicket.discordChannelId}, moving to transcripts...`, "info");
+                try {
+                  await this.bridge.moveToTranscripts(activeTicket.id);
+                  log(`[CANCEL DEBUG] Successfully moved ticket to transcripts`, "info");
+                } catch (error) {
+                  log(`[CANCEL DEBUG] Failed to move ticket ${activeTicket.id} to transcripts: ${error}`, "error");
+                }
+              } else {
+                log(`[CANCEL DEBUG] Ticket has no Discord channel, skipping transcript move`, "info");
               }
             }
+          } catch (error) {
+            log(`[CANCEL DEBUG] Error getting or processing ticket: ${error}`, "error");
           }
         }
 
