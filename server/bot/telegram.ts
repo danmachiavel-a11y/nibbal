@@ -799,6 +799,19 @@ export class TelegramBot {
         handlerTimeout: 90000, // 90 seconds
       });
 
+      // EXPLICITLY REGISTER COMMANDS WITH TELEGRAM
+      try {
+        await this.bot.telegram.setMyCommands([
+          { command: 'start', description: 'Start a new ticket or see available services' },
+          { command: 'close', description: 'Close your current ticket' },
+          { command: 'switch', description: 'Switch to a different service' },
+          { command: 'help', description: 'Get help with using the bot' }
+        ]);
+        log("Successfully registered commands with Telegram API", "info");
+      } catch (error) {
+        log(`Failed to register commands with Telegram API: ${error}`, "error");
+      }
+
       // Add handlers
       await this.setupHandlers();
 
@@ -1374,9 +1387,23 @@ export class TelegramBot {
       const lastName = ctx.from?.last_name || "";
       const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
-      // Skip forwarding if this is a command
-      if (!(ctx.message as any)._isCommand) {
+      // TRIPLE CHECK to skip forwarding if this is a command
+      // 1. Check for the _isCommand flag
+      // 2. Check for _commandHandled flag
+      // 3. Direct text check for commands
+      const messageIsCommand = 
+        (ctx.message as any)._isCommand || 
+        (ctx.message as any)._commandHandled || 
+        (ctx.message.text && ctx.message.text.trim().startsWith('/'));
+      
+      if (!messageIsCommand) {
         try {
+          log(`Forwarding message to Discord - Ticket: ${JSON.stringify(currentTicket)}`, "info");
+          
+          // Generate a deduplication key
+          const dedupKey = `dc:${ticket.id}:${require('crypto').createHash('md5').update(ctx.message.text).digest('hex').slice(0, 8)}:${ctx.message.text.slice(0, 20)}:text:${displayName}`;
+          log(`[DEDUP] Generated key for Discord: ${dedupKey}`, "debug");
+          
           await this.bridge.forwardToDiscord(
             ctx.message.text,
             ticket.id,
@@ -2376,8 +2403,9 @@ ID: ${activeTicket.id}`;
       }
     });
     
-    this.bot.command("close", async (ctx) => {
-      log("===== CLOSE COMMAND HANDLER =====", "info");
+    // ADD ANY TEXT MESSAGE HANDLER THAT STARTS WITH /CLOSE
+    this.bot.hears(/^\/close($|\s)/i, async (ctx) => {
+      log("===== SLASH CLOSE TEXT HANDLER =====", "info");
       
       try {
         const userId = ctx.from?.id;
@@ -2386,131 +2414,153 @@ ID: ${activeTicket.id}`;
           return;
         }
         
-        log(`[CLOSE] Command received from user: ${userId}`, "info");
+        log(`[CLOSE] Text command received from user: ${userId}`, "info");
         
-        // Get user information
-        const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) {
+        // Get user information DIRECTLY FROM DATABASE
+        const userQueryResult = await pool.query(`
+          SELECT * FROM users WHERE telegram_id = $1
+        `, [userId.toString()]);
+        
+        if (!userQueryResult.rows || userQueryResult.rows.length === 0) {
+          log(`[CLOSE] User ${userId} not found in database`, "warn");
           await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
           return;
         }
         
-        // Find active tickets for this user
-        const userTickets = await storage.getTicketsByUserId(user.id);
-        const activeTickets = userTickets.filter(t => 
-          !['closed', 'completed', 'transcript'].includes(t.status)
-        ).sort((a, b) => b.id - a.id); // Sort newest first
+        const user = userQueryResult.rows[0];
+        log(`[CLOSE] Found user ${user.id} for Telegram ID ${userId}`, "info");
         
-        if (activeTickets.length === 0) {
-          log(`[CLOSE] No active tickets found for user ${userId}`, "info");
+        // Query tickets directly
+        const ticketsQueryResult = await pool.query(`
+          SELECT * FROM tickets 
+          WHERE user_id = $1 
+          AND status NOT IN ('closed', 'completed', 'transcript')
+          ORDER BY id DESC
+        `, [user.id]);
+        
+        if (!ticketsQueryResult.rows || ticketsQueryResult.rows.length === 0) {
+          log(`[CLOSE] No active tickets found for user ${user.id}`, "warn");
           await ctx.reply("❌ You don't have any active tickets to close. Use /start to create a new ticket.");
           return;
         }
         
-        // Use the most recent active ticket
-        const ticket = activeTickets[0];
+        const ticket = ticketsQueryResult.rows[0];
         log(`[CLOSE] Found active ticket ${ticket.id} with status ${ticket.status}`, "info");
         
-        try {
-          // Update ticket status to closed
-          await storage.updateTicketStatus(ticket.id, "closed");
-          log(`[CLOSE] Successfully closed ticket ${ticket.id}`, "info");
-          
-          // If there's a Discord channel, move to transcripts
-          if (ticket.discordChannelId) {
-            try {
-              await this.bridge.moveToTranscripts(ticket.id);
-              log(`[CLOSE] Successfully moved ticket ${ticket.id} to transcripts`, "info");
-              await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
-            } catch (error) {
-              log(`[CLOSE] Error moving to transcripts: ${error}`, "error");
-              await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
-            }
-          } else {
-            await ctx.reply("✅ Your ticket has been closed.");
+        // Update ticket status directly
+        await pool.query(`
+          UPDATE tickets SET status = 'closed' WHERE id = $1
+        `, [ticket.id]);
+        
+        log(`[CLOSE] Successfully closed ticket ${ticket.id}`, "info");
+        
+        // If there's a Discord channel, move to transcripts
+        if (ticket.discord_channel_id) {
+          try {
+            // Convert to number to ensure type safety
+            const ticketId = parseInt(ticket.id.toString(), 10);
+            await this.bridge.moveToTranscripts(ticketId);
+            log(`[CLOSE] Successfully moved ticket ${ticketId} to transcripts`, "info");
+            await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
+          } catch (error) {
+            log(`[CLOSE] Error moving ticket to transcripts: ${error}`, "error");
+            await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
           }
-        } catch (error) {
-          log(`[CLOSE] Error closing ticket: ${error}`, "error");
-          await ctx.reply("❌ There was an error closing your ticket. Please try again.");
+        } else {
+          await ctx.reply("✅ Your ticket has been closed.");
         }
       } catch (error) {
-        log(`[CLOSE] Unhandled error: ${error}`, "error");
-        await ctx.reply("❌ There was an error processing your request. Please try again later.");
+        log(`[CLOSE] Error in close handler: ${error}`, "error");
+        await ctx.reply("❌ An error occurred while trying to close your ticket. Please try again later.");
       }
       
-      log("===== END CLOSE COMMAND =====", "info");
+      log("===== END SLASH CLOSE TEXT HANDLER =====", "info");
     });
 
-    // ULTRA DIRECT MESSAGE HANDLER - Run this before ANY other handlers
+    // HIGHEST PRIORITY MIDDLEWARE - Runs before ANY other handlers
     this.bot.use(async (ctx, next) => {
       // Check if it's a message with text
-      if (ctx.message && 'text' in ctx.message && ctx.message.text && ctx.message.text.startsWith('/close')) {
-        const userId = ctx.from?.id;
-        if (!userId) return next();
-
-        log(`[PREFILTER] Intercepted /close command from user ${userId}`, "info");
+      if (ctx.message && 'text' in ctx.message && ctx.message.text) {
+        // Normalize the text by trimming and converting to lowercase
+        const normalizedText = ctx.message.text.trim().toLowerCase();
         
-        try {
-          // Query database directly to ensure we get a user
-          const userQueryResult = await pool.query(`
-            SELECT * FROM users WHERE telegram_id = $1
-          `, [userId.toString()]);
+        // Check if this is a close command
+        if (normalizedText === '/close' || normalizedText.startsWith('/close ')) {
+          const userId = ctx.from?.id;
+          if (!userId) return next();
           
-          if (!userQueryResult.rows || userQueryResult.rows.length === 0) {
-            log(`[PREFILTER] User ${userId} not found in database`, "warn");
-            await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
-            return;
+          log(`[ULTRA_PRIORITY_MIDDLEWARE] Intercepted /close command from user ${userId}`, "info");
+          
+          // Mark this message as handled to prevent forwarding to Discord
+          if (ctx.message) {
+            // Add special markers to prevent forwarding
+            (ctx.message as any)._isCommand = true;
+            // Set a safe text that won't trigger other command handlers
+            (ctx.message as any)._commandHandled = true;
           }
           
-          const user = userQueryResult.rows[0];
-          log(`[PREFILTER] Found user ${user.id} for Telegram ID ${userId}`, "info");
-          
-          // Query tickets directly
-          const ticketsQueryResult = await pool.query(`
-            SELECT * FROM tickets 
-            WHERE user_id = $1 
-            AND status NOT IN ('closed', 'completed', 'transcript')
-            ORDER BY id DESC
-          `, [user.id]);
-          
-          if (!ticketsQueryResult.rows || ticketsQueryResult.rows.length === 0) {
-            log(`[PREFILTER] No active tickets found for user ${user.id}`, "warn");
-            await ctx.reply("❌ You don't have any active tickets to close. Use /start to create a new ticket.");
-            return;
-          }
-          
-          const ticket = ticketsQueryResult.rows[0];
-          log(`[PREFILTER] Found active ticket ${ticket.id} with status ${ticket.status}`, "info");
-          
-          // Update ticket status directly
-          await pool.query(`
-            UPDATE tickets SET status = 'closed' WHERE id = $1
-          `, [ticket.id]);
-          
-          log(`[PREFILTER] Successfully closed ticket ${ticket.id}`, "info");
-          
-          // If there's a Discord channel, move to transcripts
-          if (ticket.discord_channel_id) {
-            try {
-              // Convert to number to ensure type safety
-              const ticketId = parseInt(ticket.id.toString(), 10);
-              await this.bridge.moveToTranscripts(ticketId);
-              log(`[PREFILTER] Successfully moved ticket ${ticketId} to transcripts`, "info");
-              await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
-            } catch (error) {
-              log(`[PREFILTER] Error moving ticket to transcripts: ${error}`, "error");
-              await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
+          try {
+            // Query database directly to ensure we get a user
+            const userQueryResult = await pool.query(`
+              SELECT * FROM users WHERE telegram_id = $1
+            `, [userId.toString()]);
+            
+            if (!userQueryResult.rows || userQueryResult.rows.length === 0) {
+              log(`[ULTRA] User ${userId} not found in database`, "warn");
+              await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
+              return;
             }
-          } else {
-            await ctx.reply("✅ Your ticket has been closed.");
-          }
+            
+            const user = userQueryResult.rows[0];
+            log(`[ULTRA] Found user ${user.id} for Telegram ID ${userId}`, "info");
+            
+            // Query tickets directly
+            const ticketsQueryResult = await pool.query(`
+              SELECT * FROM tickets 
+              WHERE user_id = $1 
+              AND status NOT IN ('closed', 'completed', 'transcript')
+              ORDER BY id DESC
+            `, [user.id]);
+            
+            if (!ticketsQueryResult.rows || ticketsQueryResult.rows.length === 0) {
+              log(`[ULTRA] No active tickets found for user ${user.id}`, "warn");
+              await ctx.reply("❌ You don't have any active tickets to close. Use /start to create a new ticket.");
+              return;
+            }
+            
+            const ticket = ticketsQueryResult.rows[0];
+            log(`[ULTRA] Found active ticket ${ticket.id} with status ${ticket.status}`, "info");
+            
+            // Update ticket status directly
+            await pool.query(`
+              UPDATE tickets SET status = 'closed' WHERE id = $1
+            `, [ticket.id]);
+            
+            log(`[ULTRA] Successfully closed ticket ${ticket.id}`, "info");
+            
+            // If there's a Discord channel, move to transcripts
+            if (ticket.discord_channel_id) {
+              try {
+                // Convert to number to ensure type safety
+                const ticketId = parseInt(ticket.id.toString(), 10);
+                await this.bridge.moveToTranscripts(ticketId);
+                log(`[ULTRA] Successfully moved ticket ${ticketId} to transcripts`, "info");
+                await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
+              } catch (error) {
+                log(`[ULTRA] Error moving ticket to transcripts: ${error}`, "error");
+                await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
+              }
+            } else {
+              await ctx.reply("✅ Your ticket has been closed.");
+            }
 
-          // Never proceed to other handlers for this message
-          return;
-        } catch (error) {
-          log(`[PREFILTER] Error in /close command: ${error}`, "error");
-          await ctx.reply("❌ An error occurred while trying to close your ticket. Please try again later.");
-          return;
+            // Never proceed to other handlers for this message
+            return;
+          } catch (error) {
+            log(`[ULTRA] Error in /close command: ${error}`, "error");
+            await ctx.reply("❌ An error occurred while trying to close your ticket. Please try again later.");
+            return;
+          }
         }
       }
       
