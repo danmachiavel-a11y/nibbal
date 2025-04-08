@@ -1,5 +1,7 @@
+#!/usr/bin/env node
+
 /**
- * EMERGENCY CLOSE-ONLY BOT
+ * EMERGENCY CLOSE-ONLY BOT (CommonJS Version)
  * 
  * This is a completely separate bot that handles ONLY the close command
  * with no other functionality. It uses a separate Telegram bot token.
@@ -7,13 +9,12 @@
  * Usage: 
  * 1. Create a new bot with @BotFather on Telegram
  * 2. Set the EMERGENCY_BOT_TOKEN env variable with the new token
- * 3. Run this script: node close-only-bot.js
+ * 3. Run this script: node close-only-bot.cjs
  * 4. Talk to your new emergency bot with /close [telegram_id]
  */
 
-import { Telegraf } from 'telegraf';
-import pg from 'pg';
-const { Pool } = pg;
+const { Telegraf } = require('telegraf');
+const { Pool } = require('pg');
 
 // Configure Telegraf with the emergency bot token
 const token = process.env.EMERGENCY_BOT_TOKEN;
@@ -146,12 +147,78 @@ bot.command('close', async (ctx) => {
   }
 });
 
+// Self-close command - for users to close their own tickets
+bot.command('selfclose', async (ctx) => {
+  try {
+    // Get the user's Telegram ID
+    const telegramId = ctx.from.id.toString();
+    
+    // Tell the user we're processing
+    await ctx.reply(`🔄 Processing self-close for your account (ID: ${telegramId})...`);
+    
+    // 1. Find the user by telegram ID
+    const userResult = await pool.query(
+      'SELECT * FROM users WHERE telegram_id = $1',
+      [telegramId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return ctx.reply(`❌ Error: Your account was not found in our system.`);
+    }
+    
+    const user = userResult.rows[0];
+    await ctx.reply(`✅ Found your account: ${user.username || 'Unknown'} (ID: ${user.id})`);
+    
+    // 2. Find active tickets for this user
+    const ticketsResult = await pool.query(
+      `SELECT * FROM tickets 
+       WHERE user_id = $1 
+       AND status NOT IN ('closed', 'completed', 'transcript', 'deleted')
+       ORDER BY id DESC`,
+      [user.id]
+    );
+    
+    if (ticketsResult.rows.length === 0) {
+      return ctx.reply(`❌ Error: You don't have any active tickets to close.`);
+    }
+    
+    // Get the most recent active ticket
+    const ticket = ticketsResult.rows[0];
+    await ctx.reply(`✅ Found your active ticket: ID ${ticket.id}, Status: ${ticket.status}`);
+    
+    // 3. Close the ticket
+    await pool.query(
+      'UPDATE tickets SET status = $1 WHERE id = $2',
+      ['closed', ticket.id]
+    );
+    
+    await ctx.reply(
+      `✅ SUCCESS: Your ticket #${ticket.id} has been closed.\n\n` +
+      `Previous Status: ${ticket.status}\n` +
+      `Current Status: closed`
+    );
+    
+    // 4. Note about Discord channel
+    if (ticket.discord_channel_id) {
+      await ctx.reply(
+        `ℹ️ NOTE: Your ticket has a Discord channel associated with it. An administrator will move it to the transcripts category.`
+      );
+    }
+    
+    await ctx.reply('✅ Operation completed successfully. Use /start with the main bot if you need to create a new ticket.');
+    
+  } catch (error) {
+    console.error('ERROR:', error);
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
 // Start the bot
 bot.launch()
   .then(() => {
     console.log(`✅ Emergency close-only bot is running!`);
     console.log(`Bot username: @${bot.botInfo.username}`);
-    console.log('Ready to handle /close commands');
+    console.log('Ready to handle /close and /selfclose commands');
   })
   .catch((error) => {
     console.error('Error starting bot:', error);

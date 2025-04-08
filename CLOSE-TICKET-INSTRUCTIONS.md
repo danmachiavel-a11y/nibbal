@@ -71,17 +71,39 @@ JOIN users u ON t.user_id = u.id
 WHERE t.status NOT IN ('closed', 'completed', 'transcript');
 ```
 
+## Alternative: Using a Secondary Bot
+
+Since the /close command isn't working with the main bot, you can create a completely separate
+"emergency bot" that only handles close commands:
+
+1. Create a new bot with @BotFather on Telegram
+2. Set the token as an environment variable:
+```
+export EMERGENCY_BOT_TOKEN=your_token_here
+```
+3. Run one of the emergency bot scripts:
+```bash
+node close-only-bot.cjs  # CommonJS version (recommended)
+# or
+node close-only-bot.js   # ES Modules version
+```
+4. Talk to this emergency bot and use:
+   - `/help` - Show available commands
+   - `/close [telegram_id]` - Close another user's ticket (admin only)
+   - `/selfclose` - Close your own ticket (any user)
+
 ## Technical Notes
 
 There are multiple approaches to close a ticket, from highest to lowest level:
 
-1. **telegram-direct.cjs** - Uses raw HTTP to communicate with Telegram bypassing all frameworks
-2. **telegram-force-close.js** - Uses HTTP API to bypass Telegraf bot framework
-3. **ultimate-close.js** - Connects directly to database with minimal dependencies
-4. **Web Interface** - Simple HTTP API access through a browser
-5. **Shell Script** - Wrapper around the API endpoint with colored output
-6. **super-close-command.js** - Another database-direct approach with extra error handling
-7. **direct-close-command.js** - Original direct database method
+1. **close-only-bot.cjs** - Separate Telegram bot with only close functionality
+2. **telegram-direct.cjs** - Uses raw HTTP to communicate with Telegram bypassing all frameworks
+3. **telegram-force-close.js** - Uses HTTP API to bypass Telegraf bot framework
+4. **ultimate-close.js** - Connects directly to database with minimal dependencies
+5. **Web Interface** - Simple HTTP API access through a browser
+6. **Shell Script** - Wrapper around the API endpoint with colored output
+7. **super-close-command.js** - Another database-direct approach with extra error handling
+8. **direct-close-command.js** - Original direct database method
 
 If none of these approaches work, you may need to manually update the database:
 
