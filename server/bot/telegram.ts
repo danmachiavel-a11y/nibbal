@@ -1903,20 +1903,23 @@ ID: ${activeTicket.id}`;
     });
 
     this.bot.command("switch", async (ctx) => {
-      const userId = ctx.from?.id;
-      if (!userId) {
-        log("[COMMAND] No user ID in switch command", "error");
-        return;
-      }
+      // COMPLETELY REWRITTEN IMPLEMENTATION
+      log("===== SWITCH COMMAND HANDLER =====", "info");
       
-      log(`[COMMAND] /switch command received from user: ${userId}`, "info");
-      
-      if (!this.checkRateLimit(userId, 'command', 'switch')) {
-        await ctx.reply("⚠️ Please wait before using this command again.");
-        return;
-      }
-
       try {
+        const userId = ctx.from?.id;
+        if (!userId) {
+          log("[SWITCH] No user ID in command", "error");
+          return;
+        }
+        
+        log(`[SWITCH] Command received from user: ${userId}`, "info");
+        
+        if (!this.checkRateLimit(userId, 'command', 'switch')) {
+          await ctx.reply("⚠️ Please wait before using this command again.");
+          return;
+        }
+        
         const user = await storage.getUserByTelegramId(userId.toString());
         if (!user) {
           await ctx.reply("You haven't created any tickets yet.");
@@ -2050,7 +2053,7 @@ ID: ${activeTicket.id}`;
           
           // Send direct message to user if possible
           try {
-            const telegramId = targetUser.telegramId;
+            const telegramId = targetUser?.telegramId;
             if (telegramId && typeof telegramId === 'string') {
               await this.bot.telegram.sendMessage(
                 telegramId,
@@ -2108,7 +2111,7 @@ ID: ${activeTicket.id}`;
           
           // Send direct message to user if possible
           try {
-            const telegramId = targetUser.telegramId;
+            const telegramId = targetUser?.telegramId;
             if (telegramId && typeof telegramId === 'string') {
               await this.bot.telegram.sendMessage(
                 telegramId,
@@ -2252,7 +2255,7 @@ ID: ${activeTicket.id}`;
           
           // Send direct message to user if possible
           try {
-            const telegramId = targetUser.telegramId;
+            const telegramId = targetUser?.telegramId;
             if (telegramId && typeof telegramId === 'string') {
               await this.bot.telegram.sendMessage(
                 telegramId,
@@ -2289,7 +2292,7 @@ ID: ${activeTicket.id}`;
           
           // Send direct message to user if possible
           try {
-            const telegramId = targetUser.telegramId;
+            const telegramId = targetUser?.telegramId;
             if (telegramId && typeof telegramId === 'string') {
               await this.bot.telegram.sendMessage(
                 telegramId,
@@ -2310,131 +2313,101 @@ ID: ${activeTicket.id}`;
     });
     
     this.bot.command("close", async (ctx) => {
+      // COMPLETELY REWRITTEN IMPLEMENTATION
+      log("===== CLOSE COMMAND HANDLER =====", "info");
+      
       try {
         const userId = ctx.from?.id;
         if (!userId) {
-          log("[COMMAND] No user ID in close command", "error");
+          log("No user ID in close command", "error");
           return;
         }
         
-        log(`[COMMAND] /close command received from user: ${userId}`, "info");
+        log(`[CLOSE] Command received from user: ${userId}`, "info");
+        
+        // Rate limiting
         if (!this.checkRateLimit(userId, 'command', 'close')) {
           await ctx.reply("⚠️ Please wait before using this command again.");
           return;
         }
-
-        log(`Looking up user with Telegram ID: ${userId.toString()}`, "info");
+        
+        // Find the user
+        log(`[CLOSE] Looking up user: ${userId}`, "info");
         const user = await storage.getUserByTelegramId(userId.toString());
         if (!user) {
-          log(`User not found for telegram ID: ${userId}`, "warn");
-          await ctx.reply("You haven't created any tickets yet.");
+          log(`[CLOSE] User not found: ${userId}`, "info");
+          await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
           return;
         }
         
-        log(`Looking up tickets for user ID: ${user.id}`, "info");
-        // First get all tickets for the user
+        // Find tickets
+        log(`[CLOSE] Getting tickets for user: ${user.id}`, "info");
         const userTickets = await storage.getTicketsByUserId(user.id);
         
         if (!userTickets || userTickets.length === 0) {
-          log(`No tickets found for user ID: ${user.id}`, "warn");
-          await ctx.reply("You don't have any tickets to close.");
+          log(`[CLOSE] No tickets found for user: ${user.id}`, "info");
+          await ctx.reply("❌ You don't have any tickets to close. Use /start to create a ticket.");
           return;
         }
         
-        log(`Found ${userTickets.length} tickets for user ID: ${user.id}, statuses: ${userTickets.map(t => t.status).join(', ')}`, "debug");
-        
-        // Find tickets that are not closed or completed
+        // Filter to active tickets (not closed/completed/transcript)
         const activeTickets = userTickets.filter(t => 
-          t.status !== 'closed' && 
-          t.status !== 'completed' && 
-          t.status !== 'transcript'
+          !['closed', 'completed', 'transcript'].includes(t.status)
         );
         
-        log(`Filtered to ${activeTickets.length} active tickets for user ID: ${user.id}`, "debug");
+        log(`[CLOSE] Found ${activeTickets.length} active tickets out of ${userTickets.length} total`, "info");
         
         if (activeTickets.length === 0) {
-          log(`No active tickets found for user ID: ${user.id}`, "warn");
-          await ctx.reply("You don't have any active tickets to close.");
+          log(`[CLOSE] No active tickets for user: ${user.id}`, "info");
+          await ctx.reply("❌ You don't have any active tickets to close. Use /start to create a new ticket.");
           return;
         }
         
-        // Use the most recent active ticket
-        const ticket = activeTickets[0]; // Assuming they're ordered by ID desc
-        log(`Found ticket: ${ticket.id} with status: ${ticket.status}`, "info");
-
-        // Get category info and protect against null/undefined
-        const categoryId = ticket.categoryId ?? 0;
-        log(`Processing ticket in category: ${categoryId}`, "info");
+        // Sort newest first and take the first one
+        activeTickets.sort((a, b) => b.id - a.id);
+        const ticket = activeTickets[0];
         
+        log(`[CLOSE] Selected ticket: ${ticket.id} with status: ${ticket.status}`, "info");
+        
+        // Close the ticket
         try {
-          // Update ticket status first to ensure it's closed
-          log(`Updating ticket ${ticket.id} status to closed in database`, "debug");
           await storage.updateTicketStatus(ticket.id, "closed");
-          log(`Updated ticket ${ticket.id} status to closed`, "info");
+          log(`[CLOSE] Successfully updated ticket status to closed: ${ticket.id}`, "info");
           
-          // For pending tickets, just close them since they don't have Discord channels
-          if (ticket.status === 'pending') {
-            log(`Ticket ${ticket.id} was in pending state, simply marking as closed`, "info");
-            await ctx.reply(
-              "✅ Your ticket has been closed.\n" +
-              "Use /start to create a new ticket if needed."
-            );
-            return;
-          }
-          
-          // Then try to move to transcripts if there's a Discord channel
+          // Handle Discord channel if exists
           if (ticket.discordChannelId) {
             try {
-              log(`Attempting to move ticket ${ticket.id} to transcripts with channel ${ticket.discordChannelId}`, "info");
-              
-              // Always attempt to move to transcripts regardless of reported connection state
-              // This works because the bridge may be operational even if this bot thinks it's disconnected
-              log(`Attempting to move ticket ${ticket.id} to transcripts regardless of connection state`, "info");
+              log(`[CLOSE] Moving ticket to transcripts: ${ticket.id}`, "info");
               await this.bridge.moveToTranscripts(ticket.id);
-              log(`Successfully moved ticket ${ticket.id} to transcripts`, "info");
-              
+              log(`[CLOSE] Successfully moved to transcripts: ${ticket.id}`, "info");
               await ctx.reply(
                 "✅ Your ticket has been closed and moved to transcripts.\n" +
                 "Use /start to create a new ticket if needed."
               );
-              log(`Successfully closed and moved ticket ${ticket.id}`, "info");
             } catch (error) {
-              log(`Error moving ticket ${ticket.id} to transcripts: ${error}`, "error");
+              log(`[CLOSE] Error moving to transcripts: ${error}`, "error");
               await ctx.reply(
                 "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
-                "An administrator will handle this. You can use /start to create a new ticket if needed."
+                "An administrator will handle this. Use /start to create a new ticket if needed."
               );
             }
           } else {
-            log(`Ticket ${ticket.id} has no Discord channel, just closing`, "info");
+            log(`[CLOSE] No Discord channel for ticket: ${ticket.id}`, "info");
             await ctx.reply(
               "✅ Your ticket has been closed.\n" +
               "Use /start to create a new ticket if needed."
             );
           }
-        } catch (innerError) {
-          log(`Error during ticket closing process: ${innerError}`, "error");
-          // Make sure we still try to close the ticket even if moving fails
-          try {
-            log(`Attempting to update ticket status again after error`, "debug");
-            await storage.updateTicketStatus(ticket.id, "closed");
-            await ctx.reply(
-              "✅ Your ticket has been closed, but there was an error during the process.\n" +
-              "Use /start to create a new ticket if needed."
-            );
-          } catch (finalError) {
-            log(`Failed final attempt to close ticket: ${finalError}`, "error");
-            await ctx.reply(
-              "❌ There was an error closing your ticket. Please try again or contact an administrator."
-            );
-          }
+        } catch (error) {
+          log(`[CLOSE] Error updating ticket status: ${error}`, "error");
+          await ctx.reply("❌ There was an error closing your ticket. Please try again or contact an administrator.");
         }
       } catch (error) {
-        log(`Critical error in close command: ${error}`, "error");
-        await ctx.reply(
-          "❌ There was an error processing your request. Please try again or contact an administrator."
-        );
+        log(`[CLOSE] Unhandled error: ${error}`, "error");
+        await ctx.reply("❌ There was an error processing your request. Please try again later.");
       }
+      
+      log("===== END CLOSE COMMAND =====", "info");
     });
 
     this.bot.on("text", async (ctx) => {
