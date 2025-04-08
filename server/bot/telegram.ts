@@ -4,8 +4,80 @@ import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 import fetch from 'node-fetch';
 import { pool } from "../db";
-// Use the CommonJS version with .cjs extension
-const { handleCloseCommand } = require("./close-command-handler.cjs");
+
+/**
+ * Centralized implementation of the close command handler
+ * This provides a single reliable implementation to be reused across the codebase
+ */
+async function handleCloseCommand(userId: number, ctx: Context, bridge: BridgeManager): Promise<boolean> {
+  try {
+    log(`[CLOSE HANDLER] Processing /close for user ${userId}`, "info");
+    
+    // 1. Find the user in the database
+    const userQueryResult = await pool.query(
+      `SELECT * FROM users WHERE telegram_id = $1`,
+      [userId.toString()]
+    );
+    
+    if (!userQueryResult.rows || userQueryResult.rows.length === 0) {
+      log(`[CLOSE HANDLER] User ${userId} not found in database`, "warn");
+      await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
+      return false;
+    }
+    
+    const user = userQueryResult.rows[0];
+    log(`[CLOSE HANDLER] Found user ${user.id} for Telegram ID ${userId}`, "info");
+    
+    // 2. Find active tickets
+    const ticketsQueryResult = await pool.query(
+      `SELECT * FROM tickets 
+       WHERE user_id = $1 
+       AND status NOT IN ('closed', 'completed', 'transcript')
+       ORDER BY id DESC`,
+      [user.id]
+    );
+    
+    if (!ticketsQueryResult.rows || ticketsQueryResult.rows.length === 0) {
+      log(`[CLOSE HANDLER] No active tickets found for user ${user.id}`, "warn");
+      await ctx.reply("❌ You don't have any active tickets to close. Use /start to create a new ticket.");
+      return false;
+    }
+    
+    // 3. Get the most recent active ticket
+    const ticket = ticketsQueryResult.rows[0];
+    log(`[CLOSE HANDLER] Found active ticket ${ticket.id} with status ${ticket.status}`, "info");
+    
+    // 4. Close the ticket
+    await pool.query(
+      `UPDATE tickets SET status = $1 WHERE id = $2`,
+      ['closed', ticket.id]
+    );
+    
+    log(`[CLOSE HANDLER] Successfully closed ticket ${ticket.id}`, "info");
+    
+    // 5. Handle Discord channel if applicable
+    if (ticket.discord_channel_id) {
+      try {
+        // Convert to number to ensure type safety
+        const ticketId = parseInt(ticket.id.toString(), 10);
+        await bridge.moveToTranscripts(ticketId);
+        log(`[CLOSE HANDLER] Successfully moved ticket ${ticketId} to transcripts`, "info");
+        await ctx.reply("✅ Your ticket has been closed and moved to transcripts. Use /start to create a new ticket if needed.");
+      } catch (error) {
+        log(`[CLOSE HANDLER] Error moving ticket to transcripts: ${error}`, "error");
+        await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel. Use /start to create a new ticket if needed.");
+      }
+    } else {
+      await ctx.reply("✅ Your ticket has been closed. Use /start to create a new ticket if needed.");
+    }
+    
+    return true;
+  } catch (error) {
+    log(`[CLOSE HANDLER] Error in close handler: ${error}`, "error");
+    await ctx.reply("❌ An error occurred while trying to close your ticket. Please try again later.");
+    return false;
+  }
+}
 
 // Simple rate limiting approach
 interface RateLimit {
@@ -2277,8 +2349,33 @@ ID: ${activeTicket.id}`;
       }
     });
     
-    // Use dedicated close command handler with the hears pattern
+    // Register actual command handler for /close
+    this.bot.command("close", async (ctx) => {
+      console.log("===== DIRECT /close COMMAND TRIGGERED =====");
+      log("===== DIRECT /close COMMAND =====", "info");
+      
+      const userId = ctx.from?.id;
+      if (!userId) {
+        log("No user ID in close command", "error");
+        return;
+      }
+      
+      try {
+        console.log(`Handling /close command from user ${userId} via direct command`);
+        const result = await handleCloseCommand(userId, ctx, this.bridge);
+        console.log(`/close command handler completed with result: ${result}`);
+      } catch (error) {
+        console.error("ERROR IN DIRECT /close COMMAND HANDLER:", error);
+        log(`ERROR IN DIRECT /close COMMAND HANDLER: ${error}`, "error");
+      }
+      
+      log("===== END DIRECT /close COMMAND =====", "info");
+      console.log("===== END DIRECT /close COMMAND =====");
+    });
+    
+    // Also keep the hears handler as fallback
     this.bot.hears(/^\/close($|\s)/i, async (ctx) => {
+      console.log("===== SLASH CLOSE TEXT HANDLER TRIGGERED =====");
       log("===== SLASH CLOSE TEXT HANDLER =====", "info");
       
       const userId = ctx.from?.id;
@@ -2287,10 +2384,21 @@ ID: ${activeTicket.id}`;
         return;
       }
       
-      // Use our dedicated handler for maximum reliability
-      await handleCloseCommand(userId, ctx, this.bridge);
+      log(`/close command received from ${userId} - Starting handler`, "info");
+      console.log(`/close command received from ${userId} - Starting handler`);
+      
+      try {
+        // Use our dedicated handler for maximum reliability
+        const result = await handleCloseCommand(userId, ctx, this.bridge);
+        console.log(`/close handler completed with result: ${result}`);
+        log(`/close handler completed with result: ${result}`, "info");
+      } catch (error) {
+        console.error("ERROR IN /CLOSE HANDLER:", error);
+        log(`ERROR IN /CLOSE HANDLER: ${error}`, "error");
+      }
       
       log("===== END SLASH CLOSE TEXT HANDLER =====", "info");
+      console.log("===== END SLASH CLOSE TEXT HANDLER =====");
     });
 
     // HIGHEST PRIORITY MIDDLEWARE - Runs before ANY other handlers
@@ -2300,13 +2408,9 @@ ID: ${activeTicket.id}`;
         // Normalize the text by trimming and converting to lowercase
         const normalizedText = ctx.message.text.trim().toLowerCase();
         
-        // Check if this is a close command
+        // Check if this is a close command but don't handle it here anymore
+        // Instead, just mark it as a command to prevent forwarding
         if (normalizedText === '/close' || normalizedText.startsWith('/close ')) {
-          const userId = ctx.from?.id;
-          if (!userId) return next();
-          
-          log(`[ULTRA_PRIORITY_MIDDLEWARE] Intercepted /close command from user ${userId}`, "info");
-          
           // Mark this message as handled to prevent forwarding to Discord
           if (ctx.message) {
             // Add special markers to prevent forwarding
@@ -2314,16 +2418,10 @@ ID: ${activeTicket.id}`;
             // Set a safe text that won't trigger other command handlers
             (ctx.message as any)._commandHandled = true;
           }
-          
-          // Use our dedicated handler for maximum reliability
-          await handleCloseCommand(userId, ctx, this.bridge);
-            
-          // Never proceed to other handlers for this message
-          return;
         }
       }
       
-      // Continue to other handlers if not a /close command
+      // Continue to other handlers in all cases
       return next();
     });
     
