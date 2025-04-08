@@ -1668,19 +1668,74 @@ export class TelegramBot {
   private setupHandlers() {
     if (!this.bot) return;
     
-    // SPECIAL DIRECT HANDLING FOR CLOSE COMMAND
-    // This is a special handler added at the top level to ensure it always works
-    // Using on('text') with manual detection for maximum compatibility
+    // Primary close command handler - will catch all /close commands first
+    this.bot.command('close', async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      log(`[CLOSE] Direct close command received from user ${userId}`, "info");
+      
+      try {
+        // Get user and their tickets directly using database queries
+        const result = await pool.query(
+          'SELECT id FROM users WHERE telegram_id = $1',
+          [userId.toString()]
+        );
+        
+        if (!result.rows.length) {
+          await ctx.reply("❌ You haven't created any tickets yet.");
+          return;
+        }
+
+        const user = result.rows[0];
+        
+        // Get active tickets
+        const ticketsResult = await pool.query(
+          `SELECT * FROM tickets 
+           WHERE user_id = $1 
+           AND status NOT IN ('closed', 'completed', 'transcript')
+           ORDER BY id DESC`,
+          [user.id]
+        );
+
+        if (!ticketsResult.rows.length) {
+          await ctx.reply("❌ You don't have any active tickets to close.");
+          return;
+        }
+
+        const ticket = ticketsResult.rows[0];
+        log(`[CLOSE] Found active ticket ${ticket.id} for user ${userId}`, "info");
+
+        // Close the ticket
+        await pool.query(
+          'UPDATE tickets SET status = $1 WHERE id = $2',
+          ['closed', ticket.id]
+        );
+        
+        log(`[CLOSE] Successfully closed ticket ${ticket.id}`, "info");
+
+        // If there's a Discord channel, try to move it
+        if (ticket.discord_channel_id) {
+          try {
+            await this.bridge.moveToTranscripts(ticket.id);
+            await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
+          } catch (error) {
+            log(`[CLOSE] Error moving to transcripts: ${error}`, "error");
+            await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
+          }
+        } else {
+          await ctx.reply("✅ Your ticket has been closed.");
+        }
+      } catch (error) {
+        log(`[CLOSE] Error processing close command: ${error}`, "error");
+        await ctx.reply("❌ There was an error closing your ticket. Please try again.");
+      }
+    });
+
+    // Backup close command handler for maximum compatibility
     this.bot.on('text', async (ctx) => {
-      // Extract the message text
       const text = ctx.message?.text;
-      if (!text) return;
-      
-      // Check if this is a /close command
-      if (!text.startsWith('/close')) return;
-      
-      console.log("DETECTED /close COMMAND VIA TEXT HANDLER");
-      console.log("DIRECT CLOSE HANDLER TRIGGERED");
+      if (!text || !text.startsWith('/close')) return;
       try {
         const userId = ctx.from?.id;
         if (!userId) return;
