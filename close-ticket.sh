@@ -1,78 +1,44 @@
 #!/bin/bash
-# Simple shell script to close a ticket by Telegram ID
 
-# Check if Telegram ID is provided
+# Emergency CLI Tool for Closing Tickets
+#
+# This script provides a simple command-line interface to close a ticket
+# using the emergency API endpoint.
+#
+# Usage: ./close-ticket.sh [telegram_id]
+
+# Text colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Check if Telegram ID was provided
 if [ -z "$1" ]; then
-  echo "Usage: ./close-ticket.sh [TELEGRAM_ID]"
+  echo -e "${RED}Error: Telegram ID is required${NC}"
+  echo "Usage: $0 [telegram_id]"
   exit 1
 fi
 
-TELEGRAM_ID=$1
+TELEGRAM_ID="$1"
 
-# Load environment variables
-if [ -f .env ]; then
-  export $(grep -v '^#' .env | xargs)
-fi
+# Display warning
+echo -e "${RED}"
+echo "========== EMERGENCY TICKET CLOSE UTILITY =========="
+echo -e "${NC}"
+echo -e "${YELLOW}WARNING: This is an emergency utility to close a ticket when other methods fail.${NC}"
+echo -e "Attempting to close ticket for Telegram ID: ${GREEN}$TELEGRAM_ID${NC}"
+echo ""
 
-# Check if DATABASE_URL is set
-if [ -z "$DATABASE_URL" ]; then
-  echo "Error: DATABASE_URL environment variable not set"
-  exit 1
-fi
+# Make API request to close the ticket
+echo "Sending request to emergency close endpoint..."
+curl -s -X POST "http://localhost:5000/api/tickets/close-by-telegram-id/$TELEGRAM_ID" | jq .
 
-echo "Closing ticket for Telegram ID: $TELEGRAM_ID"
-
-# Extract connection parameters from DATABASE_URL
-DB_USER=$(echo $DATABASE_URL | sed -n 's/.*:\/\/\([^:]*\).*/\1/p')
-DB_PASSWORD=$(echo $DATABASE_URL | sed -n 's/.*:\/\/[^:]*:\([^@]*\).*/\1/p')
-DB_HOST=$(echo $DATABASE_URL | sed -n 's/.*@\([^:]*\).*/\1/p')
-DB_PORT=$(echo $DATABASE_URL | sed -n 's/.*:\([0-9]*\)\/.*/\1/p')
-DB_NAME=$(echo $DATABASE_URL | sed -n 's/.*\/\([^?]*\).*/\1/p')
-
-# Use PGPASSWORD environment variable for authentication
-export PGPASSWORD=$DB_PASSWORD
-
-# Execute SQL commands
-psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME << EOF
--- Find and close the most recent active ticket
-DO \$\$
-DECLARE
-    v_user_id INT;
-    v_ticket_id INT;
-    v_ticket_status TEXT;
-BEGIN
-    -- Get the user ID
-    SELECT id INTO v_user_id 
-    FROM users 
-    WHERE telegram_id = '$TELEGRAM_ID';
-    
-    IF v_user_id IS NULL THEN
-        RAISE NOTICE 'User with Telegram ID % not found', '$TELEGRAM_ID';
-        RETURN;
-    END IF;
-    
-    RAISE NOTICE 'Found user with ID %', v_user_id;
-    
-    -- Find the most recent active ticket
-    SELECT id, status INTO v_ticket_id, v_ticket_status
-    FROM tickets
-    WHERE user_id = v_user_id
-    AND status NOT IN ('closed', 'completed', 'transcript')
-    ORDER BY id DESC
-    LIMIT 1;
-    
-    IF v_ticket_id IS NULL THEN
-        RAISE NOTICE 'No active tickets found for user %', v_user_id;
-        RETURN;
-    END IF;
-    
-    RAISE NOTICE 'Found ticket % with status %', v_ticket_id, v_ticket_status;
-    
-    -- Close the ticket
-    UPDATE tickets SET status = 'closed' WHERE id = v_ticket_id;
-    
-    RAISE NOTICE 'Successfully closed ticket %', v_ticket_id;
-END \$\$;
-EOF
-
-echo "Operation complete!"
+# Display help information
+echo ""
+echo -e "${YELLOW}If this tool fails, you can also try the following:${NC}"
+echo "1. Use the emergency close web interface: http://localhost:5000/emergency-close"
+echo "2. Run the node script directly: node super-close-command.js $TELEGRAM_ID"
+echo "3. Run the direct database command: node direct-close-command.js $TELEGRAM_ID"
+echo ""
+echo "Thank you for using the emergency close utility."

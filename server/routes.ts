@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { BridgeManager } from "./bot/bridge";
 import { z } from "zod";
 import { log } from "./vite";
+import { pool } from "./db";
 
 let bridge: BridgeManager | null = null;
 
@@ -104,6 +105,11 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  // Emergency ticket closing page
+  app.get("/emergency-close", (req, res) => {
+    res.sendFile("emergency-close.html", { root: "." });
+  });
+  
   // Initialize bridge after routes are registered
   process.nextTick(async () => {
     log("Initializing bot bridge...");
@@ -450,6 +456,104 @@ export async function registerRoutes(app: Express) {
   });
 
   // Ticket Routes
+  // EMERGENCY ENDPOINT FOR CLOSING TICKETS DIRECTLY
+  // This bypasses the bot entirely and works directly with the database
+  app.post("/api/tickets/close-by-telegram-id/:telegramId", async (req, res) => {
+    try {
+      const telegramId = req.params.telegramId;
+      if (!telegramId) {
+        return res.status(400).json({ success: false, message: "Telegram ID is required" });
+      }
+      
+      console.log(`[EMERGENCY CLOSE API] Attempting to close ticket for Telegram ID ${telegramId}`);
+      log(`[EMERGENCY CLOSE API] Attempting to close ticket for Telegram ID ${telegramId}`, "info");
+      
+      // Step 1: Find the user by Telegram ID
+      console.log(`Looking up user with Telegram ID ${telegramId}...`);
+      const userResult = await pool.query(
+        `SELECT * FROM users WHERE telegram_id = $1`,
+        [telegramId.toString()]
+      );
+      
+      if (userResult.rows.length === 0) {
+        const errorMsg = `No user found with Telegram ID ${telegramId}`;
+        console.error(`[EMERGENCY CLOSE API] ${errorMsg}`);
+        return res.status(404).json({ success: false, message: errorMsg });
+      }
+      
+      const user = userResult.rows[0];
+      console.log(`[EMERGENCY CLOSE API] Found user: ID ${user.id}, Telegram ID ${user.telegram_id}`);
+      
+      // Step 2: Find active tickets for this user
+      console.log(`[EMERGENCY CLOSE API] Looking for active tickets for user ${user.id}...`);
+      const ticketsResult = await pool.query(
+        `SELECT * FROM tickets 
+         WHERE user_id = $1 
+         AND status NOT IN ('closed', 'completed', 'transcript', 'deleted')
+         ORDER BY id DESC`,
+        [user.id]
+      );
+      
+      if (ticketsResult.rows.length === 0) {
+        const errorMsg = `No active tickets found for user ${user.id}`;
+        console.error(`[EMERGENCY CLOSE API] ${errorMsg}`);
+        return res.status(404).json({ success: false, message: errorMsg });
+      }
+      
+      const ticket = ticketsResult.rows[0];
+      console.log(`[EMERGENCY CLOSE API] Found active ticket: ID ${ticket.id}, Status ${ticket.status}`);
+      
+      // Step 3: Close the ticket
+      console.log(`[EMERGENCY CLOSE API] Closing ticket ${ticket.id}...`);
+      await pool.query(
+        `UPDATE tickets SET status = 'closed' WHERE id = $1`,
+        [ticket.id]
+      );
+      
+      // Step 4: Try to move to transcripts if Discord is available
+      let discordResult = "Discord channel handling skipped";
+      if (ticket.discord_channel_id && bridge) {
+        try {
+          console.log(`[EMERGENCY CLOSE API] Ticket has Discord channel. Attempting to move to transcripts...`);
+          const ticketId = parseInt(ticket.id.toString(), 10);
+          await bridge.moveToTranscripts(ticketId);
+          discordResult = "Discord channel moved to transcripts successfully";
+          console.log(`[EMERGENCY CLOSE API] ${discordResult}`);
+        } catch (error) {
+          discordResult = `Error moving Discord channel: ${error instanceof Error ? error.message : String(error)}`;
+          console.error(`[EMERGENCY CLOSE API] ${discordResult}`);
+        }
+      }
+      
+      console.log(`[EMERGENCY CLOSE API] Ticket ${ticket.id} closed successfully`);
+      log(`[EMERGENCY CLOSE API] Ticket ${ticket.id} closed successfully`, "info");
+      
+      // Return success response with details
+      return res.json({
+        success: true,
+        message: "Ticket closed successfully",
+        ticket: {
+          id: ticket.id,
+          status: "closed",
+          previousStatus: ticket.status
+        },
+        user: {
+          id: user.id,
+          telegramId: user.telegram_id
+        },
+        discordResult
+      });
+    } catch (error) {
+      console.error("[EMERGENCY CLOSE API] Error:", error);
+      log(`[EMERGENCY CLOSE API] Error: ${error instanceof Error ? error.message : String(error)}`, "error");
+      return res.status(500).json({ 
+        success: false, 
+        message: "Failed to close ticket", 
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
   app.get("/api/tickets", async (req, res) => {
     try {
       // Get tickets from all categories if no specific category is provided

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emergency Ticket Close</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        h1 {
+            color: #e03131;
+            border-bottom: 2px solid #e03131;
+            padding-bottom: 10px;
+        }
+        .desc {
+            background-color: #fff3f3;
+            border-left: 4px solid #e03131;
+            padding: 15px;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #e03131;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #c92a2a;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🚨 Emergency Ticket Close</h1>
+    
+    <div class="desc">
+        <p><strong>WARNING:</strong> This is an emergency tool to close a Telegram ticket when the regular /close command isn't working. Use this only as a last resort.</p>
+        <p>This will directly update the database to close the ticket, bypassing all the normal bot command handlers.</p>
+    </div>
+    
+    <div class="form-group">
+        <label for="telegramId">Telegram User ID:</label>
+        <input type="text" id="telegramId" placeholder="Enter Telegram ID (e.g., 1234567890)">
+    </div>
+    
+    <button onclick="closeTicket()">Close Ticket</button>
+    
+    <div id="result"></div>
+    
+    <script>
+        async function closeTicket() {
+            const telegramId = document.getElementById('telegramId').value.trim();
+            const resultDiv = document.getElementById('result');
+            
+            if (!telegramId) {
+                resultDiv.className = 'error';
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = '<strong>Error:</strong> Telegram ID is required.';
+                return;
+            }
+            
+            // Disable the button and show loading state
+            const button = document.querySelector('button');
+            const originalText = button.innerText;
+            button.disabled = true;
+            button.innerText = 'Processing...';
+            
+            try {
+                // Call our emergency API endpoint
+                const response = await fetch(`/api/tickets/close-by-telegram-id/${telegramId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.className = 'success';
+                    resultDiv.innerHTML = `
+                        <strong>Success!</strong> Ticket was closed successfully.
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                } else {
+                    resultDiv.className = 'error';
+                    resultDiv.innerHTML = `
+                        <strong>Error:</strong> ${data.message || 'Failed to close ticket'}
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.className = 'error';
+                resultDiv.innerHTML = `<strong>Error:</strong> ${error.message || 'An unexpected error occurred'}`;
+            } finally {
+                // Restore button state
+                button.disabled = false;
+                button.innerText = originalText;
+                resultDiv.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+</html>
