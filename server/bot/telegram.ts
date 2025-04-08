@@ -1667,6 +1667,60 @@ export class TelegramBot {
   private setupHandlers() {
     if (!this.bot) return;
     
+    // SPECIAL DIRECT HANDLING FOR CLOSE COMMAND
+    // This is a special handler added at the top level to ensure it always works
+    this.bot.hears(/^\/close($|\s)/, async (ctx) => {
+      console.log("DIRECT CLOSE HANDLER TRIGGERED");
+      try {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+        
+        console.log(`CLOSE COMMAND from user ${userId}`);
+        
+        // Find the user
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          await ctx.reply("You haven't created any tickets yet.");
+          return;
+        }
+        
+        // Get active tickets
+        const tickets = await storage.getTicketsByUserId(user.id);
+        const activeTickets = tickets.filter(t => 
+          !['closed', 'completed', 'transcript'].includes(t.status)
+        );
+        
+        if (activeTickets.length === 0) {
+          await ctx.reply("You don't have any active tickets to close.");
+          return;
+        }
+        
+        // Take the most recent active ticket
+        activeTickets.sort((a, b) => b.id - a.id);
+        const ticket = activeTickets[0];
+        
+        // Close the ticket
+        await storage.updateTicketStatus(ticket.id, "closed");
+        console.log(`Closed ticket ${ticket.id}`);
+        
+        // If there's a Discord channel, move to transcripts
+        if (ticket.discordChannelId) {
+          try {
+            await this.bridge.moveToTranscripts(ticket.id);
+            await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
+          } catch (error) {
+            console.error(`Error moving ticket to transcripts: ${error}`);
+            await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
+          }
+        } else {
+          await ctx.reply("✅ Your ticket has been closed.");
+        }
+      } catch (error) {
+        console.error(`Error in direct close handler: ${error}`);
+        await ctx.reply("❌ There was an error closing your ticket.");
+      }
+    });
+    
     this.bot.command("ping", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
