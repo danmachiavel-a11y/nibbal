@@ -9,8 +9,9 @@
  * This script requires only the core pg library.
  */
 
-// The pg library is included with the project
-const { Client } = require('pg');
+// Import pg with ES modules syntax
+import pg from 'pg';
+const { Client } = pg;
 
 // Get Telegram ID from command line
 const telegramId = process.argv[2];

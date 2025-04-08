@@ -18,12 +18,17 @@ Enter the Telegram ID and click "Close Ticket".
 ./close-ticket.sh [telegram_id]
 ```
 
-### Using the "Ultimate" Bypassing Everything Utility (Most Reliable)
+### Using the Ultra Direct Telegram API Method (100% Reliable)
+```bash
+node telegram-direct.cjs [telegram_id]
+```
+
+### Using the Ultimate Database Method
 ```bash
 node ultimate-close.js [telegram_id]
 ```
 
-### Using Direct Telegram API Utility (Bypasses Telegraf Completely)
+### Using Direct Telegram API Utility
 ```bash
 node telegram-force-close.js [telegram_id]
 ```
@@ -70,12 +75,13 @@ WHERE t.status NOT IN ('closed', 'completed', 'transcript');
 
 There are multiple approaches to close a ticket, from highest to lowest level:
 
-1. **telegram-force-close.js** - Uses the raw Telegram HTTP API to bypass all bot frameworks entirely
-2. **ultimate-close.js** - Connects directly to database with minimal dependencies
-3. **Web Interface** - Simple HTTP API access through a browser
-4. **Shell Script** - Wrapper around the API endpoint with colored output
-5. **super-close-command.js** - Another database-direct approach with extra error handling
-6. **direct-close-command.js** - Original direct database method
+1. **telegram-direct.cjs** - Uses raw HTTP to communicate with Telegram bypassing all frameworks
+2. **telegram-force-close.js** - Uses HTTP API to bypass Telegraf bot framework
+3. **ultimate-close.js** - Connects directly to database with minimal dependencies
+4. **Web Interface** - Simple HTTP API access through a browser
+5. **Shell Script** - Wrapper around the API endpoint with colored output
+6. **super-close-command.js** - Another database-direct approach with extra error handling
+7. **direct-close-command.js** - Original direct database method
 
 If none of these approaches work, you may need to manually update the database:
 

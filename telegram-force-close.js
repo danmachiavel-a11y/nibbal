@@ -8,8 +8,9 @@
  * Usage: node telegram-force-close.js [telegram_id]
  */
 
-const https = require('https');
-const { Pool } = require('pg');
+import https from 'https';
+import pg from 'pg';
+const { Pool } = pg;
 
 // Get Telegram ID from command line
 const telegramId = process.argv[2];
