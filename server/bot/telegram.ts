@@ -1923,8 +1923,9 @@ Please use /close to close your current ticket first, or continue chatting here 
 
         // Force close any active ticket
         const user = await storage.getUserByTelegramId(userId.toString());
+        let activeTicket; // Define variable at this scope
         if (user) {
-          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          activeTicket = await storage.getActiveTicketByUserId(user.id);
           if (activeTicket) {
             // Force close the ticket regardless of transcript category
             await storage.updateTicketStatus(activeTicket.id, "closed");
@@ -1940,7 +1941,11 @@ Please use /close to close your current ticket first, or continue chatting here 
           }
         }
 
-        await ctx.reply("✅ All operations cancelled. Use /start when you're ready to begin again.");
+        if (activeTicket) {
+          await ctx.reply("✅ Your ticket has been closed! Use /start when you're ready to begin again.");
+        } else {
+          await ctx.reply("✅ All operations cancelled. Use /start when you're ready to begin again.");
+        }
       } catch (error) {
         log(`Error in cancel command: ${error}`, "error");
         // Even if there's an error, try to clear states
