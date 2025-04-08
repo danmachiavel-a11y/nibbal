@@ -8,27 +8,64 @@ import { pool } from "../db";
 /**
  * Centralized implementation of the close command handler
  * This provides a single reliable implementation to be reused across the codebase
+ * WITH ENHANCED DEBUGGING
  */
 async function handleCloseCommand(userId: number, ctx: Context, bridge: BridgeManager): Promise<boolean> {
+  console.log(`[CLOSE HANDLER DEBUG] Starting /close handler for user ${userId}`);
   try {
     log(`[CLOSE HANDLER] Processing /close for user ${userId}`, "info");
     
+    // Confirm we have a valid context object
+    if (!ctx) {
+      console.error("[CLOSE HANDLER ERROR] Context object is null or undefined");
+      return false;
+    }
+    
+    // Check if we have message access in the context
+    if (ctx.message) {
+      console.log("[CLOSE HANDLER DEBUG] ctx.message exists");
+    } else {
+      console.log("[CLOSE HANDLER DEBUG] ctx.message is undefined");
+    }
+    
+    // First respond to confirm we're processing
+    try {
+      console.log("[CLOSE HANDLER DEBUG] Attempting to send confirmation message");
+      await ctx.reply("⏱️ Looking up ticket information...");
+      console.log("[CLOSE HANDLER DEBUG] Confirmation message sent successfully");
+    } catch (replyError) {
+      console.error("[CLOSE HANDLER ERROR] Failed to send initial confirmation:", replyError);
+      // Continue with the function even if initial reply fails
+    }
+    
     // 1. Find the user in the database
+    console.log("[CLOSE HANDLER DEBUG] Querying database for user");
     const userQueryResult = await pool.query(
       `SELECT * FROM users WHERE telegram_id = $1`,
       [userId.toString()]
     );
+    console.log(`[CLOSE HANDLER DEBUG] User query result: ${JSON.stringify(userQueryResult.rowCount)} rows`);
     
     if (!userQueryResult.rows || userQueryResult.rows.length === 0) {
+      console.log(`[CLOSE HANDLER DEBUG] No user found with telegram_id ${userId}`);
       log(`[CLOSE HANDLER] User ${userId} not found in database`, "warn");
       await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
       return false;
     }
     
     const user = userQueryResult.rows[0];
+    console.log(`[CLOSE HANDLER DEBUG] Found user: ${JSON.stringify(user)}`);
     log(`[CLOSE HANDLER] Found user ${user.id} for Telegram ID ${userId}`, "info");
     
+    // Send a progress update
+    try {
+      await ctx.reply("🔍 Found your user account, checking for active tickets...");
+    } catch (progressError) {
+      console.error("[CLOSE HANDLER ERROR] Failed to send progress message:", progressError);
+    }
+    
     // 2. Find active tickets
+    console.log(`[CLOSE HANDLER DEBUG] Querying tickets for user ${user.id}`);
     const ticketsQueryResult = await pool.query(
       `SELECT * FROM tickets 
        WHERE user_id = $1 
@@ -36,8 +73,10 @@ async function handleCloseCommand(userId: number, ctx: Context, bridge: BridgeMa
        ORDER BY id DESC`,
       [user.id]
     );
+    console.log(`[CLOSE HANDLER DEBUG] Tickets query result: ${JSON.stringify(ticketsQueryResult.rowCount)} rows`);
     
     if (!ticketsQueryResult.rows || ticketsQueryResult.rows.length === 0) {
+      console.log(`[CLOSE HANDLER DEBUG] No active tickets found for user ${user.id}`);
       log(`[CLOSE HANDLER] No active tickets found for user ${user.id}`, "warn");
       await ctx.reply("❌ You don't have any active tickets to close. Use /start to create a new ticket.");
       return false;
@@ -45,34 +84,51 @@ async function handleCloseCommand(userId: number, ctx: Context, bridge: BridgeMa
     
     // 3. Get the most recent active ticket
     const ticket = ticketsQueryResult.rows[0];
+    console.log(`[CLOSE HANDLER DEBUG] Found ticket: ${JSON.stringify(ticket)}`);
     log(`[CLOSE HANDLER] Found active ticket ${ticket.id} with status ${ticket.status}`, "info");
     
+    // Send another progress update
+    try {
+      await ctx.reply(`🎫 Found active ticket #${ticket.id} with status "${ticket.status}". Closing it now...`);
+    } catch (progressError) {
+      console.error("[CLOSE HANDLER ERROR] Failed to send ticket found message:", progressError);
+    }
+    
     // 4. Close the ticket
+    console.log(`[CLOSE HANDLER DEBUG] Updating ticket ${ticket.id} status to 'closed'`);
     await pool.query(
       `UPDATE tickets SET status = $1 WHERE id = $2`,
       ['closed', ticket.id]
     );
     
+    console.log(`[CLOSE HANDLER DEBUG] Successfully closed ticket ${ticket.id}`);
     log(`[CLOSE HANDLER] Successfully closed ticket ${ticket.id}`, "info");
     
     // 5. Handle Discord channel if applicable
     if (ticket.discord_channel_id) {
+      console.log(`[CLOSE HANDLER DEBUG] Ticket has Discord channel ID: ${ticket.discord_channel_id}`);
       try {
         // Convert to number to ensure type safety
         const ticketId = parseInt(ticket.id.toString(), 10);
+        console.log(`[CLOSE HANDLER DEBUG] Calling bridge.moveToTranscripts(${ticketId})`);
         await bridge.moveToTranscripts(ticketId);
+        console.log(`[CLOSE HANDLER DEBUG] Successfully moved ticket to transcripts`);
         log(`[CLOSE HANDLER] Successfully moved ticket ${ticketId} to transcripts`, "info");
         await ctx.reply("✅ Your ticket has been closed and moved to transcripts. Use /start to create a new ticket if needed.");
       } catch (error) {
+        console.error(`[CLOSE HANDLER ERROR] Error moving ticket to transcripts:`, error);
         log(`[CLOSE HANDLER] Error moving ticket to transcripts: ${error}`, "error");
         await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel. Use /start to create a new ticket if needed.");
       }
     } else {
+      console.log(`[CLOSE HANDLER DEBUG] Ticket has no Discord channel ID`);
       await ctx.reply("✅ Your ticket has been closed. Use /start to create a new ticket if needed.");
     }
     
+    console.log(`[CLOSE HANDLER DEBUG] Close handler completed successfully`);
     return true;
   } catch (error) {
+    console.error(`[CLOSE HANDLER ERROR] Detailed error:`, error);
     log(`[CLOSE HANDLER] Error in close handler: ${error}`, "error");
     await ctx.reply("❌ An error occurred while trying to close your ticket. Please try again later.");
     return false;
@@ -2349,10 +2405,12 @@ ID: ${activeTicket.id}`;
       }
     });
     
-    // Register actual command handler for /close
+    // Register actual command handler for /close with MAXIMUM VERBOSITY for debugging
     this.bot.command("close", async (ctx) => {
       console.log("===== DIRECT /close COMMAND TRIGGERED =====");
       log("===== DIRECT /close COMMAND =====", "info");
+      
+      console.log("FULL CTX OBJECT:", JSON.stringify(ctx, null, 2));
       
       const userId = ctx.from?.id;
       if (!userId) {
@@ -2360,13 +2418,37 @@ ID: ${activeTicket.id}`;
         return;
       }
       
+      // Immediately send a reply to confirm the command was received
+      try {
+        await ctx.reply("🔄 Processing close command...");
+        console.log("Sent initial acknowledgment message");
+      } catch (replyErr) {
+        console.error("ERROR SENDING INITIAL REPLY:", replyErr);
+      }
+      
       try {
         console.log(`Handling /close command from user ${userId} via direct command`);
+        console.log("Before handleCloseCommand call");
         const result = await handleCloseCommand(userId, ctx, this.bridge);
         console.log(`/close command handler completed with result: ${result}`);
+        
+        // Send additional confirmation after completion
+        try {
+          await ctx.reply(`✅ Close command processed with result: ${result}`);
+          console.log("Sent final confirmation message");
+        } catch (finalReplyErr) {
+          console.error("ERROR SENDING FINAL REPLY:", finalReplyErr);
+        }
       } catch (error) {
         console.error("ERROR IN DIRECT /close COMMAND HANDLER:", error);
         log(`ERROR IN DIRECT /close COMMAND HANDLER: ${error}`, "error");
+        
+        // Try to notify the user of the error
+        try {
+          await ctx.reply("❌ Error processing close command. Please try again.");
+        } catch (errorReplyErr) {
+          console.error("ERROR SENDING ERROR REPLY:", errorReplyErr);
+        }
       }
       
       log("===== END DIRECT /close COMMAND =====", "info");
@@ -2442,6 +2524,24 @@ ID: ${activeTicket.id}`;
         const command = commandParts[0].substring(1).toLowerCase(); // Remove leading / and normalize
         
         log(`[ROOT HANDLER] Detected command /${command} from user ${userId}`, "info");
+        console.log(`[ROOT HANDLER] Detected command /${command} from user ${userId}`);
+        
+        // Super high priority - handle /close command directly at the source level
+        if (command === 'close') {
+          log(`[ROOT HANDLER] Directly handling /close command from user ${userId} in text handler`, "info");
+          console.log(`[ROOT HANDLER] Directly handling /close command from user ${userId} in text handler`);
+          
+          try {
+            await ctx.reply("🔄 Processing close command from raw message handler...");
+            const result = await handleCloseCommand(userId, ctx, this.bridge);
+            console.log(`Direct text handler close command completed with result: ${result}`);
+            return; // Exit after handling the command
+          } catch (error) {
+            console.error("ERROR in direct text handler /close command:", error);
+            await ctx.reply("❌ Error processing close command. Please try again.");
+            return;
+          }
+        }
         
         // Handle the /switch command specially
         if (command === 'switch') {
