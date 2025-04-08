@@ -4,6 +4,8 @@ import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 import fetch from 'node-fetch';
 import { pool } from "../db";
+// Use the CommonJS version with .cjs extension
+const { handleCloseCommand } = require("./close-command-handler.cjs");
 
 // Simple rate limiting approach
 interface RateLimit {
@@ -1087,63 +1089,8 @@ export class TelegramBot {
         if (command === 'close') {
           log(`[COMMAND DEBUG] Executing CLOSE command for ticket ${ticket.id}`, "info");
           
-          // Get an updated version of the ticket directly from the database
-          const currentTicket = await storage.getTicket(ticket.id);
-          log(`[COMMAND DEBUG] Retrieved ticket from DB: ${JSON.stringify(currentTicket)}`, "info");
-          
-          if (!currentTicket) {
-            log(`[COMMAND DEBUG] Ticket ${ticket.id} not found in database`, "error");
-            await ctx.reply("❌ This ticket is no longer available. Use /start to create a new ticket.");
-            return true;
-          }
-          
-          // Verify the ticket belongs to the current user for security
-          if (currentTicket.userId !== user.id) {
-            log(`[COMMAND DEBUG] Ticket ${ticket.id} belongs to user ${currentTicket.userId}, not current user ${user.id}`, "error");
-            await ctx.reply("❌ This ticket doesn't belong to you. Use /start to create your own ticket.");
-            return true;
-          }
-          
-          // Check if the ticket is already closed
-          if (['closed', 'completed', 'transcript'].includes(currentTicket.status)) {
-            log(`[COMMAND DEBUG] Ticket ${ticket.id} is already in ${currentTicket.status} state`, "info");
-            await ctx.reply("This ticket is already closed. Use /start to create a new ticket if needed.");
-            return true;
-          }
-          
-          try {
-            // Update ticket status first to ensure it's closed
-            await storage.updateTicketStatus(ticket.id, "closed");
-            log(`[COMMAND DEBUG] Successfully updated ticket ${ticket.id} status to closed`, "info");
-            
-            // Then try to move to transcripts if there's a Discord channel
-            if (currentTicket.discordChannelId) {
-              try {
-                await this.bridge.moveToTranscripts(ticket.id);
-                log(`[COMMAND DEBUG] Successfully moved ticket ${ticket.id} to transcripts`, "info");
-                
-                await ctx.reply(
-                  "✅ Your ticket has been closed and moved to transcripts.\n" +
-                  "Use /start to create a new ticket if needed."
-                );
-              } catch (error) {
-                log(`[COMMAND DEBUG] Error moving ticket ${ticket.id} to transcripts: ${error}`, "error");
-                await ctx.reply(
-                  "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
-                  "An administrator will handle this. You can use /start to create a new ticket if needed."
-                );
-              }
-            } else {
-              log(`[COMMAND DEBUG] Ticket ${ticket.id} has no Discord channel, just closing the ticket`, "info");
-              await ctx.reply(
-                "✅ Your ticket has been closed.\n" +
-                "Use /start to create a new ticket if needed."
-              );
-            }
-          } catch (error) {
-            log(`[COMMAND DEBUG] Error updating ticket status: ${error}`, "error");
-            await ctx.reply("❌ There was an error closing your ticket. Please try again or contact an administrator.");
-          }
+          // Use our dedicated handler for maximum reliability
+          await handleCloseCommand(userId, ctx, this.bridge);
           return true;
         }
         // PING COMMAND
@@ -1219,46 +1166,8 @@ export class TelegramBot {
       if (command === 'close') {
         log(`[DIRECT COMMAND] Processing /close for ticket ${ticket.id}`, "info");
         
-        try {
-          // Get latest ticket info
-          const currentTicket = await storage.getTicket(ticket.id);
-          if (!currentTicket) {
-            await ctx.reply("❌ This ticket no longer exists.");
-            return;
-          }
-          
-          // Verify ownership
-          if (currentTicket.userId !== user.id) {
-            await ctx.reply("❌ This ticket doesn't belong to you.");
-            return;
-          }
-          
-          // Check if already closed
-          if (['closed', 'completed', 'transcript'].includes(currentTicket.status)) {
-            await ctx.reply("This ticket is already closed.");
-            return;
-          }
-          
-          // Close ticket
-          await storage.updateTicketStatus(ticket.id, "closed");
-          log(`[DIRECT COMMAND] Closed ticket ${ticket.id}`, "info");
-          
-          // Move to transcripts if possible
-          if (currentTicket.discordChannelId) {
-            try {
-              await this.bridge.moveToTranscripts(ticket.id);
-              await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
-            } catch (error) {
-              log(`[DIRECT COMMAND] Error moving to transcripts: ${error}`, "error");
-              await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
-            }
-          } else {
-            await ctx.reply("✅ Your ticket has been closed.");
-          }
-        } catch (error) {
-          log(`[DIRECT COMMAND] Error processing /close: ${error}`, "error");
-          await ctx.reply("❌ There was an error closing your ticket. Please try again.");
-        }
+        // Use our dedicated handler for maximum reliability
+        await handleCloseCommand(userId, ctx, this.bridge);
         return;
       }
       else if (command === 'switch') {
@@ -1712,64 +1621,14 @@ export class TelegramBot {
         console.log(`SUPER DIRECT TEXT HANDLER CAUGHT /close FROM USER ${userId}`);
         log(`[SUPER DIRECT] /close command received from user ${userId}`, "info");
         
-        try {
-          // Find the user
-          const user = await storage.getUserByTelegramId(userId.toString());
-          if (!user) {
-            await ctx.reply("You haven't created any tickets yet.");
-            return;
-          }
-          
-          // Get active tickets directly from database
-          const ticketsResult = await pool.query(`
-            SELECT * FROM tickets 
-            WHERE user_id = $1 
-            AND status NOT IN ('closed', 'completed', 'transcript')
-            ORDER BY id DESC
-          `, [user.id]);
-          
-          if (!ticketsResult.rows || ticketsResult.rows.length === 0) {
-            await ctx.reply("You don't have any active tickets to close.");
-            return;
-          }
-          
-          // Take the most recent active ticket
-          const ticket = ticketsResult.rows[0];
-          console.log(`SUPER DIRECT CLOSE: Found ticket ${ticket.id} with status ${ticket.status}`);
-          
-          // Close the ticket directly with database query
-          await pool.query(`
-            UPDATE tickets SET status = 'closed' WHERE id = $1
-          `, [ticket.id]);
-          
-          console.log(`SUPER DIRECT CLOSE: Successfully closed ticket ${ticket.id}`);
-          
-          // Mark this message as processed to prevent Discord forwarding
-          (ctx.message as any)._isCommand = true;
-          
-          // If there's a Discord channel, move to transcripts
-          if (ticket.discord_channel_id) {
-            try {
-              // Convert to number to ensure type safety
-              const ticketId = parseInt(ticket.id.toString(), 10);
-              await this.bridge.moveToTranscripts(ticketId);
-              console.log(`SUPER DIRECT CLOSE: Successfully moved ticket ${ticket.id} to transcripts`);
-              await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
-            } catch (error) {
-              console.error(`SUPER DIRECT CLOSE: Error moving ticket to transcripts: ${error}`);
-              await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
-            }
-          } else {
-            await ctx.reply("✅ Your ticket has been closed.");
-          }
-          
-          // Return immediately to prevent other handlers
-          return;
-        } catch (error) {
-          console.error(`SUPER DIRECT CLOSE: Error in handler: ${error}`);
-          await ctx.reply("❌ There was an error closing your ticket. Please try again.");
-          return;
-        }
+        // Mark this message as processed to prevent Discord forwarding
+        (ctx.message as any)._isCommand = true;
+        
+        // Use our dedicated handler for maximum reliability
+        await handleCloseCommand(userId, ctx, this.bridge);
+        
+        // Return immediately to prevent other handlers
+        return;
       }
     });
     
@@ -2418,76 +2277,18 @@ ID: ${activeTicket.id}`;
       }
     });
     
-    // ADD ANY TEXT MESSAGE HANDLER THAT STARTS WITH /CLOSE
+    // Use dedicated close command handler with the hears pattern
     this.bot.hears(/^\/close($|\s)/i, async (ctx) => {
       log("===== SLASH CLOSE TEXT HANDLER =====", "info");
       
-      try {
-        const userId = ctx.from?.id;
-        if (!userId) {
-          log("No user ID in close command", "error");
-          return;
-        }
-        
-        log(`[CLOSE] Text command received from user: ${userId}`, "info");
-        
-        // Get user information DIRECTLY FROM DATABASE
-        const userQueryResult = await pool.query(`
-          SELECT * FROM users WHERE telegram_id = $1
-        `, [userId.toString()]);
-        
-        if (!userQueryResult.rows || userQueryResult.rows.length === 0) {
-          log(`[CLOSE] User ${userId} not found in database`, "warn");
-          await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
-          return;
-        }
-        
-        const user = userQueryResult.rows[0];
-        log(`[CLOSE] Found user ${user.id} for Telegram ID ${userId}`, "info");
-        
-        // Query tickets directly
-        const ticketsQueryResult = await pool.query(`
-          SELECT * FROM tickets 
-          WHERE user_id = $1 
-          AND status NOT IN ('closed', 'completed', 'transcript')
-          ORDER BY id DESC
-        `, [user.id]);
-        
-        if (!ticketsQueryResult.rows || ticketsQueryResult.rows.length === 0) {
-          log(`[CLOSE] No active tickets found for user ${user.id}`, "warn");
-          await ctx.reply("❌ You don't have any active tickets to close. Use /start to create a new ticket.");
-          return;
-        }
-        
-        const ticket = ticketsQueryResult.rows[0];
-        log(`[CLOSE] Found active ticket ${ticket.id} with status ${ticket.status}`, "info");
-        
-        // Update ticket status directly
-        await pool.query(`
-          UPDATE tickets SET status = 'closed' WHERE id = $1
-        `, [ticket.id]);
-        
-        log(`[CLOSE] Successfully closed ticket ${ticket.id}`, "info");
-        
-        // If there's a Discord channel, move to transcripts
-        if (ticket.discord_channel_id) {
-          try {
-            // Convert to number to ensure type safety
-            const ticketId = parseInt(ticket.id.toString(), 10);
-            await this.bridge.moveToTranscripts(ticketId);
-            log(`[CLOSE] Successfully moved ticket ${ticketId} to transcripts`, "info");
-            await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
-          } catch (error) {
-            log(`[CLOSE] Error moving ticket to transcripts: ${error}`, "error");
-            await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
-          }
-        } else {
-          await ctx.reply("✅ Your ticket has been closed.");
-        }
-      } catch (error) {
-        log(`[CLOSE] Error in close handler: ${error}`, "error");
-        await ctx.reply("❌ An error occurred while trying to close your ticket. Please try again later.");
+      const userId = ctx.from?.id;
+      if (!userId) {
+        log("No user ID in close command", "error");
+        return;
       }
+      
+      // Use our dedicated handler for maximum reliability
+      await handleCloseCommand(userId, ctx, this.bridge);
       
       log("===== END SLASH CLOSE TEXT HANDLER =====", "info");
     });
@@ -2514,68 +2315,11 @@ ID: ${activeTicket.id}`;
             (ctx.message as any)._commandHandled = true;
           }
           
-          try {
-            // Query database directly to ensure we get a user
-            const userQueryResult = await pool.query(`
-              SELECT * FROM users WHERE telegram_id = $1
-            `, [userId.toString()]);
+          // Use our dedicated handler for maximum reliability
+          await handleCloseCommand(userId, ctx, this.bridge);
             
-            if (!userQueryResult.rows || userQueryResult.rows.length === 0) {
-              log(`[ULTRA] User ${userId} not found in database`, "warn");
-              await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
-              return;
-            }
-            
-            const user = userQueryResult.rows[0];
-            log(`[ULTRA] Found user ${user.id} for Telegram ID ${userId}`, "info");
-            
-            // Query tickets directly
-            const ticketsQueryResult = await pool.query(`
-              SELECT * FROM tickets 
-              WHERE user_id = $1 
-              AND status NOT IN ('closed', 'completed', 'transcript')
-              ORDER BY id DESC
-            `, [user.id]);
-            
-            if (!ticketsQueryResult.rows || ticketsQueryResult.rows.length === 0) {
-              log(`[ULTRA] No active tickets found for user ${user.id}`, "warn");
-              await ctx.reply("❌ You don't have any active tickets to close. Use /start to create a new ticket.");
-              return;
-            }
-            
-            const ticket = ticketsQueryResult.rows[0];
-            log(`[ULTRA] Found active ticket ${ticket.id} with status ${ticket.status}`, "info");
-            
-            // Update ticket status directly
-            await pool.query(`
-              UPDATE tickets SET status = 'closed' WHERE id = $1
-            `, [ticket.id]);
-            
-            log(`[ULTRA] Successfully closed ticket ${ticket.id}`, "info");
-            
-            // If there's a Discord channel, move to transcripts
-            if (ticket.discord_channel_id) {
-              try {
-                // Convert to number to ensure type safety
-                const ticketId = parseInt(ticket.id.toString(), 10);
-                await this.bridge.moveToTranscripts(ticketId);
-                log(`[ULTRA] Successfully moved ticket ${ticketId} to transcripts`, "info");
-                await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
-              } catch (error) {
-                log(`[ULTRA] Error moving ticket to transcripts: ${error}`, "error");
-                await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
-              }
-            } else {
-              await ctx.reply("✅ Your ticket has been closed.");
-            }
-
-            // Never proceed to other handlers for this message
-            return;
-          } catch (error) {
-            log(`[ULTRA] Error in /close command: ${error}`, "error");
-            await ctx.reply("❌ An error occurred while trying to close your ticket. Please try again later.");
-            return;
-          }
+          // Never proceed to other handlers for this message
+          return;
         }
       }
       
