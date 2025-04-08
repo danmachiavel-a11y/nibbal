@@ -1777,37 +1777,19 @@ export class TelegramBot {
       return next();
     });
     
-    // SPECIAL DIRECT HANDLING FOR CLOSE COMMAND
-    // This is a special handler added at the top level to ensure it always works
-    // Using on('text') with manual detection for maximum compatibility
+    // We've removed the special text handler for /close command
+    // All command handling is done through the standard bot.command() handler
     this.bot.on('text', async (ctx) => {
       // Extract the message text
       const text = ctx.message?.text;
       if (!text) return;
       
-      // Check if this is a /close command
-      const normalizedText = text.trim().toLowerCase();
-      if (normalizedText === '/close' || normalizedText.startsWith('/close ')) {
-        const userId = ctx.from?.id;
-        if (!userId) return;
-        
-        // Skip if already handled by the raw update handler
-        if ((ctx.message as any)._commandHandled) {
-          console.log(`[SUPER DIRECT] Skipping already handled /close command from user ${userId}`);
-          return;
-        }
-        
-        console.log(`[SUPER DIRECT] TEXT HANDLER CAUGHT /close FROM USER ${userId}`);
-        log(`[SUPER DIRECT] /close command received from user ${userId}`, "info");
-        
-        // Mark this message as processed to prevent Discord forwarding
+      // Skip any command texts - they should be handled by the command handlers
+      if (text.startsWith('/')) {
+        // Just mark commands to prevent forwarding to Discord
         (ctx.message as any)._isCommand = true;
-        
-        // Use our dedicated handler for maximum reliability
-        await handleCloseCommand(userId, ctx, this.bridge);
-        
-        // Return immediately to prevent other handlers
         return;
+      }
       }
     });
     
@@ -2429,58 +2411,55 @@ ID: ${activeTicket.id}`;
       }
     });
     
-    // Register actual command handler for /close with MAXIMUM VERBOSITY for debugging
+    // Simple, direct implementation of close command
     this.bot.command("close", async (ctx) => {
-      console.log("===== DIRECT /close COMMAND TRIGGERED =====");
-      log("===== DIRECT /close COMMAND =====", "info");
-      
-      console.log("FULL CTX OBJECT:", JSON.stringify(ctx, null, 2));
+      console.log("===== /CLOSE COMMAND RECEIVED =====");
       
       const userId = ctx.from?.id;
       if (!userId) {
-        log("No user ID in close command", "error");
+        console.log("No user ID in close command");
         return;
       }
       
-      // Immediately send a reply to confirm the command was received
       try {
-        await ctx.reply("🔄 Processing close command...");
-        console.log("Sent initial acknowledgment message");
-      } catch (replyErr) {
-        console.error("ERROR SENDING INITIAL REPLY:", replyErr);
-      }
-      
-      try {
-        console.log(`Handling /close command from user ${userId} via direct command`);
-        console.log("Before handleCloseCommand call");
-        const result = await handleCloseCommand(userId, ctx, this.bridge);
-        console.log(`/close command handler completed with result: ${result}`);
-        
-        // Send additional confirmation after completion
-        try {
-          await ctx.reply(`✅ Close command processed with result: ${result}`);
-          console.log("Sent final confirmation message");
-        } catch (finalReplyErr) {
-          console.error("ERROR SENDING FINAL REPLY:", finalReplyErr);
+        // Find the user
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
+          return;
         }
+        
+        // Find active ticket
+        const activeTicket = await storage.getActiveTicketByUserId(user.id);
+        if (!activeTicket) {
+          await ctx.reply("❌ You don't have any active tickets. Use /start to create one.");
+          return;
+        }
+        
+        // Close the ticket
+        await storage.updateTicketStatus(activeTicket.id, "closed");
+        console.log(`Closed ticket ${activeTicket.id} for user ${user.id}`);
+        
+        // Move to transcripts if possible
+        if (activeTicket.discordChannelId) {
+          try {
+            await this.bridge.moveToTranscripts(activeTicket.id);
+            console.log(`Moved ticket ${activeTicket.id} to transcripts`);
+          } catch (moveError) {
+            console.error(`Error moving ticket to transcripts: ${moveError}`);
+          }
+        }
+        
+        // Send confirmation
+        await ctx.reply("✅ Your ticket has been closed! Use /start when you're ready to begin again.");
       } catch (error) {
-        console.error("ERROR IN DIRECT /close COMMAND HANDLER:", error);
-        log(`ERROR IN DIRECT /close COMMAND HANDLER: ${error}`, "error");
-        
-        // Try to notify the user of the error
-        try {
-          await ctx.reply("❌ Error processing close command. Please try again.");
-        } catch (errorReplyErr) {
-          console.error("ERROR SENDING ERROR REPLY:", errorReplyErr);
-        }
+        console.error(`Error in close command: ${error}`);
+        await ctx.reply("❌ There was an error closing your ticket. Please try again later.");
       }
-      
-      log("===== END DIRECT /close COMMAND =====", "info");
-      console.log("===== END DIRECT /close COMMAND =====");
     });
     
-    // Also keep the hears handler as fallback
-    this.bot.hears(/^\/close($|\s)/i, async (ctx) => {
+    // Remove the redundant hears handler
+    
       console.log("===== SLASH CLOSE TEXT HANDLER TRIGGERED =====");
       log("===== SLASH CLOSE TEXT HANDLER =====", "info");
       
