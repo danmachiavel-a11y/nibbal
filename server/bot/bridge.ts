@@ -1,6 +1,6 @@
 import { storage } from "../storage";
-// Use the safer implementation with enhanced null-safety
-import { TelegramBot } from "./telegram-safer";
+// Import the unified Telegram bot implementation
+import { TelegramBot } from "./telegram";
 import { DiscordBot } from "./discord";
 import type { Ticket } from "@shared/schema";
 import { log } from "../vite";
