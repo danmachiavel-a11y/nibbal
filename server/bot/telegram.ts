@@ -1188,6 +1188,100 @@ export class TelegramBot {
     const userId = ctx.from?.id;
     if (!userId) return;
 
+    // DIRECT COMMAND HANDLING APPROACH
+    // If the message is a command, handle it directly without using complex handlers
+    const messageText = ctx.message.text || "";
+    if (messageText.startsWith('/')) {
+      // Extract the command (e.g., '/close' -> 'close')
+      const commandParts = messageText.split(' ')[0].split('@');
+      const command = commandParts[0].substring(1); // Remove the leading '/'
+      
+      // Mark as command to prevent forwarding to Discord
+      (ctx.message as any)._isCommand = true;
+      
+      log(`[DIRECT COMMAND] Processing command /${command} in ticket ${ticket.id}`, "info");
+      
+      // Handle specific commands directly
+      if (command === 'close') {
+        log(`[DIRECT COMMAND] Processing /close for ticket ${ticket.id}`, "info");
+        
+        try {
+          // Get latest ticket info
+          const currentTicket = await storage.getTicket(ticket.id);
+          if (!currentTicket) {
+            await ctx.reply("❌ This ticket no longer exists.");
+            return;
+          }
+          
+          // Verify ownership
+          if (currentTicket.userId !== user.id) {
+            await ctx.reply("❌ This ticket doesn't belong to you.");
+            return;
+          }
+          
+          // Check if already closed
+          if (['closed', 'completed', 'transcript'].includes(currentTicket.status)) {
+            await ctx.reply("This ticket is already closed.");
+            return;
+          }
+          
+          // Close ticket
+          await storage.updateTicketStatus(ticket.id, "closed");
+          log(`[DIRECT COMMAND] Closed ticket ${ticket.id}`, "info");
+          
+          // Move to transcripts if possible
+          if (currentTicket.discordChannelId) {
+            try {
+              await this.bridge.moveToTranscripts(ticket.id);
+              await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
+            } catch (error) {
+              log(`[DIRECT COMMAND] Error moving to transcripts: ${error}`, "error");
+              await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
+            }
+          } else {
+            await ctx.reply("✅ Your ticket has been closed.");
+          }
+        } catch (error) {
+          log(`[DIRECT COMMAND] Error processing /close: ${error}`, "error");
+          await ctx.reply("❌ There was an error closing your ticket. Please try again.");
+        }
+        return;
+      }
+      else if (command === 'switch') {
+        log(`[DIRECT COMMAND] Processing /switch for ticket ${ticket.id}`, "info");
+        try {
+          await this.handleCategoryMenu(ctx);
+        } catch (error) {
+          log(`[DIRECT COMMAND] Error displaying category menu: ${error}`, "error");
+          await ctx.reply("❌ Failed to display categories. Please try again.");
+        }
+        return;
+      }
+      else if (command === 'ping') {
+        log(`[DIRECT COMMAND] Processing /ping for ticket ${ticket.id}`, "info");
+        if (!ctx.from) return;
+        
+        try {
+          const displayName = [ctx.from.first_name, ctx.from.last_name]
+            .filter(Boolean)
+            .join(' ') || ctx.from.username || "Telegram User";
+            
+          await this.bridge.forwardPingToDiscord(ticket.id, displayName);
+          await ctx.reply("✅ Staff has been notified.");
+        } catch (error) {
+          log(`[DIRECT COMMAND] Error sending ping: ${error}`, "error");
+          await ctx.reply("❌ Failed to send ping. Please try again.");
+        }
+        return;
+      }
+      
+      // For other commands, suggest using the command directly
+      log(`[DIRECT COMMAND] Unsupported command /${command} in ticket, showing help`, "info");
+      await ctx.reply(`Please use the /${command} command outside of a ticket conversation.`);
+      return;
+    }
+    
+    // Original approach as fallback
     // First, check if this is a command and process it separately
     const isCommand = await this.handleTicketCommand(ctx, user, ticket);
     if (isCommand) {
@@ -2350,6 +2444,94 @@ ID: ${activeTicket.id}`;
       if (!this.checkRateLimit(userId, 'message')) {
         await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
         return;
+      }
+      
+      // CRITICAL PATCH: Direct command handling at the source
+      // For all commands, process them immediately at this level
+      const messageText = ctx.message?.text || "";
+      if (messageText.startsWith('/')) {
+        const commandParts = messageText.split(' ')[0].split('@');
+        const command = commandParts[0].substring(1).toLowerCase(); // Remove leading / and normalize
+        
+        log(`[ROOT HANDLER] Detected command /${command} from user ${userId}`, "info");
+        
+        // Handle the /close command specially
+        if (command === 'close') {
+          log(`[ROOT HANDLER] Handling /close command from user ${userId}`, "info");
+          
+          // Get user information
+          const user = await storage.getUserByTelegramId(userId.toString());
+          if (!user) {
+            await ctx.reply("You haven't created any tickets yet.");
+            return;
+          }
+          
+          // Find active tickets for this user
+          const userTickets = await storage.getTicketsByUserId(user.id);
+          const activeTickets = userTickets.filter(t => 
+            !['closed', 'completed', 'transcript'].includes(t.status)
+          );
+          
+          if (activeTickets.length === 0) {
+            log(`[ROOT HANDLER] No active tickets found for user ${userId}`, "info");
+            await ctx.reply("❌ You don't have any active tickets to close.");
+            return;
+          }
+          
+          // Use the most recent active ticket
+          const ticket = activeTickets[0]; // Assuming they're sorted newest first
+          log(`[ROOT HANDLER] Found active ticket ${ticket.id} with status ${ticket.status}`, "info");
+          
+          try {
+            // Update ticket status to closed
+            await storage.updateTicketStatus(ticket.id, "closed");
+            log(`[ROOT HANDLER] Successfully closed ticket ${ticket.id}`, "info");
+            
+            // If there's a Discord channel, move to transcripts
+            if (ticket.discordChannelId) {
+              try {
+                await this.bridge.moveToTranscripts(ticket.id);
+                log(`[ROOT HANDLER] Successfully moved ticket ${ticket.id} to transcripts`, "info");
+                await ctx.reply("✅ Your ticket has been closed and moved to transcripts.");
+              } catch (error) {
+                log(`[ROOT HANDLER] Error moving ticket to transcripts: ${error}`, "error");
+                await ctx.reply("✅ Your ticket has been closed, but there was an error with the Discord channel.");
+              }
+            } else {
+              await ctx.reply("✅ Your ticket has been closed.");
+            }
+          } catch (error) {
+            log(`[ROOT HANDLER] Error closing ticket: ${error}`, "error");
+            await ctx.reply("❌ There was an error closing your ticket. Please try again.");
+          }
+          
+          return; // Exit after handling the command
+        }
+        
+        // Handle the /switch command specially
+        else if (command === 'switch') {
+          log(`[ROOT HANDLER] Handling /switch command from user ${userId}`, "info");
+          
+          // Get user information
+          const user = await storage.getUserByTelegramId(userId.toString());
+          if (!user) {
+            await ctx.reply("You haven't created any tickets yet.");
+            return;
+          }
+          
+          try {
+            await this.handleCategoryMenu(ctx);
+            log(`[ROOT HANDLER] Successfully displayed category menu for user ${userId}`, "info");
+          } catch (error) {
+            log(`[ROOT HANDLER] Error displaying category menu: ${error}`, "error");
+            await ctx.reply("❌ There was an error displaying categories. Please try again.");
+          }
+          
+          return; // Exit after handling the command
+        }
+        
+        // If it's not a special case, let the original command handler handle it
+        // The message will continue processing below
       }
 
       // Check if we're in questionnaire mode first to avoid ticket checks when unnecessary
