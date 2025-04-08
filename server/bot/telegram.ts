@@ -1910,6 +1910,7 @@ Please use /close to close your current ticket first, or continue chatting here 
 
     this.bot.command("cancel", async (ctx) => {
       const userId = ctx.from?.id;
+      console.log(`=== /CANCEL COMMAND RECEIVED FROM USER ${userId} ===`);
       if (!userId) return;
 
       try {
