@@ -1039,146 +1039,160 @@ export class TelegramBot {
     return true;
   }
 
+  private async handleTicketCommand(ctx: Context, user: any, ticket: any): Promise<boolean> {
+    if (!ctx.message || !('text' in ctx.message)) return false;
+
+    const userId = ctx.from?.id;
+    if (!userId) return false;
+
+    // Check if this is actually a command
+    const messageText = ctx.message.text || "";
+    if (!messageText.startsWith('/')) return false;
+
+    const commandParts = messageText.split(' ')[0].split('@');
+    const command = commandParts[0].substring(1); // Remove the leading '/'
+    
+    // Enhanced logging for command detection
+    log(`[COMMAND DEBUG] Detected command in text message: /${command} from user ${userId} for ticket ${ticket.id}`, "info");
+    
+    // List of supported commands that should be properly handled
+    const supportedCommands = ['close', 'start', 'switch', 'ban', 'unban', 'paid', 'reopen', 'ping'];
+    
+    // Set a flag on the message context to prevent it from being forwarded to Discord later
+    (ctx.message as any)._isCommand = true;
+    
+    // See if this is a recognized command
+    const isRecognizedCommand = supportedCommands.includes(command);
+    log(`[COMMAND DEBUG] Command /${command} is ${isRecognizedCommand ? 'recognized' : 'not recognized'}`, "info");
+    
+    if (isRecognizedCommand) {
+      log(`[COMMAND DEBUG] Processing command /${command} for ticket ${ticket.id}`, "info");
+      
+      try {
+        // CLOSE COMMAND
+        if (command === 'close') {
+          log(`[COMMAND DEBUG] Executing CLOSE command for ticket ${ticket.id}`, "info");
+          
+          // Get an updated version of the ticket directly from the database
+          const currentTicket = await storage.getTicket(ticket.id);
+          log(`[COMMAND DEBUG] Retrieved ticket from DB: ${JSON.stringify(currentTicket)}`, "info");
+          
+          if (!currentTicket) {
+            log(`[COMMAND DEBUG] Ticket ${ticket.id} not found in database`, "error");
+            await ctx.reply("❌ This ticket is no longer available. Use /start to create a new ticket.");
+            return true;
+          }
+          
+          // Verify the ticket belongs to the current user for security
+          if (currentTicket.userId !== user.id) {
+            log(`[COMMAND DEBUG] Ticket ${ticket.id} belongs to user ${currentTicket.userId}, not current user ${user.id}`, "error");
+            await ctx.reply("❌ This ticket doesn't belong to you. Use /start to create your own ticket.");
+            return true;
+          }
+          
+          // Check if the ticket is already closed
+          if (['closed', 'completed', 'transcript'].includes(currentTicket.status)) {
+            log(`[COMMAND DEBUG] Ticket ${ticket.id} is already in ${currentTicket.status} state`, "info");
+            await ctx.reply("This ticket is already closed. Use /start to create a new ticket if needed.");
+            return true;
+          }
+          
+          try {
+            // Update ticket status first to ensure it's closed
+            await storage.updateTicketStatus(ticket.id, "closed");
+            log(`[COMMAND DEBUG] Successfully updated ticket ${ticket.id} status to closed`, "info");
+            
+            // Then try to move to transcripts if there's a Discord channel
+            if (currentTicket.discordChannelId) {
+              try {
+                await this.bridge.moveToTranscripts(ticket.id);
+                log(`[COMMAND DEBUG] Successfully moved ticket ${ticket.id} to transcripts`, "info");
+                
+                await ctx.reply(
+                  "✅ Your ticket has been closed and moved to transcripts.\n" +
+                  "Use /start to create a new ticket if needed."
+                );
+              } catch (error) {
+                log(`[COMMAND DEBUG] Error moving ticket ${ticket.id} to transcripts: ${error}`, "error");
+                await ctx.reply(
+                  "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
+                  "An administrator will handle this. You can use /start to create a new ticket if needed."
+                );
+              }
+            } else {
+              log(`[COMMAND DEBUG] Ticket ${ticket.id} has no Discord channel, just closing the ticket`, "info");
+              await ctx.reply(
+                "✅ Your ticket has been closed.\n" +
+                "Use /start to create a new ticket if needed."
+              );
+            }
+          } catch (error) {
+            log(`[COMMAND DEBUG] Error updating ticket status: ${error}`, "error");
+            await ctx.reply("❌ There was an error closing your ticket. Please try again or contact an administrator.");
+          }
+          return true;
+        }
+        // PING COMMAND
+        else if (command === 'ping') {
+          log(`[COMMAND DEBUG] Executing PING command for ticket ${ticket.id}`, "info");
+          
+          // Get user's display name
+          if (!ctx.from) return false;
+          const displayName = [ctx.from.first_name, ctx.from.last_name]
+            .filter(Boolean)
+            .join(' ') || ctx.from.username || "Telegram User";
+          
+          try {
+            await this.bridge.forwardPingToDiscord(ticket.id, displayName);
+            log(`[COMMAND DEBUG] Successfully sent ping to Discord for ticket ${ticket.id}`, "info");
+            await ctx.reply("✅ Staff has been successfully notified.");
+          } catch (error) {
+            log(`[COMMAND DEBUG] Error sending ping: ${error}`, "error");
+            await ctx.reply("❌ Failed to send ping. Please try again.");
+          }
+          return true;
+        }
+        // SWITCH COMMAND
+        else if (command === 'switch') {
+          log(`[COMMAND DEBUG] Executing SWITCH command for ticket ${ticket.id}`, "info");
+          
+          try {
+            await this.handleCategoryMenu(ctx);
+            log(`[COMMAND DEBUG] Successfully displayed category menu for SWITCH command`, "info");
+          } catch (error) {
+            log(`[COMMAND DEBUG] Error displaying category menu for SWITCH: ${error}`, "error");
+            await ctx.reply("❌ Failed to display categories. Please try again.");
+          }
+          return true;
+        }
+        // OTHER COMMANDS - handle directly by top-level command handlers
+        else {
+          // Let the original command handler take care of it
+          log(`[COMMAND DEBUG] Delegating command ${command} to top-level handler`, "info");
+          return false;
+        }
+      } catch (error) {
+        log(`[COMMAND DEBUG] Unhandled error processing command ${command}: ${error}`, "error");
+        await ctx.reply(`There was an error processing the /${command} command. Please try again.`);
+        return true;
+      }
+    } else {
+      log(`[COMMAND DEBUG] Unrecognized command /${command}, letting it forward as normal message`, "info");
+      return false; // Not a known command, let the message processing continue
+    }
+  }
+
   private async handleTicketMessage(ctx: Context, user: any, ticket: any) {
     if (!ctx.message || !('text' in ctx.message)) return;
 
     const userId = ctx.from?.id;
     if (!userId) return;
 
-    // Check if this is actually a command that should be handled by a command handler instead
-    const messageText = ctx.message.text || "";
-    if (messageText.startsWith('/')) {
-      const commandParts = messageText.split(' ')[0].split('@');
-      const command = commandParts[0].substring(1); // Remove the leading '/'
-      
-      // Enhanced logging for command detection
-      log(`[COMMAND DEBUG] Detected command in text message: /${command} from user ${userId} for ticket ${ticket.id}`, "info");
-      
-      // List of supported commands that should be properly handled
-      const supportedCommands = ['close', 'start', 'switch', 'ban', 'unban', 'paid', 'reopen', 'ping'];
-      
-      // Set a flag on the message context to prevent it from being forwarded to Discord later
-      (ctx.message as any)._isCommand = true;
-      
-      // See if this is a recognized command
-      const isRecognizedCommand = supportedCommands.includes(command);
-      log(`[COMMAND DEBUG] Command /${command} is ${isRecognizedCommand ? 'recognized' : 'not recognized'}`, "info");
-      
-      if (isRecognizedCommand) {
-        log(`[COMMAND DEBUG] Processing command /${command} for ticket ${ticket.id}`, "info");
-        
-        try {
-          // CLOSE COMMAND
-          if (command === 'close') {
-            log(`[COMMAND DEBUG] Executing CLOSE command for ticket ${ticket.id}`, "info");
-            
-            // Get an updated version of the ticket directly from the database
-            const currentTicket = await storage.getTicket(ticket.id);
-            log(`[COMMAND DEBUG] Retrieved ticket from DB: ${JSON.stringify(currentTicket)}`, "info");
-            
-            if (!currentTicket) {
-              log(`[COMMAND DEBUG] Ticket ${ticket.id} not found in database`, "error");
-              await ctx.reply("❌ This ticket is no longer available. Use /start to create a new ticket.");
-              return;
-            }
-            
-            // Verify the ticket belongs to the current user for security
-            if (currentTicket.userId !== user.id) {
-              log(`[COMMAND DEBUG] Ticket ${ticket.id} belongs to user ${currentTicket.userId}, not current user ${user.id}`, "error");
-              await ctx.reply("❌ This ticket doesn't belong to you. Use /start to create your own ticket.");
-              return;
-            }
-            
-            // Check if the ticket is already closed
-            if (['closed', 'completed', 'transcript'].includes(currentTicket.status)) {
-              log(`[COMMAND DEBUG] Ticket ${ticket.id} is already in ${currentTicket.status} state`, "info");
-              await ctx.reply("This ticket is already closed. Use /start to create a new ticket if needed.");
-              return;
-            }
-            
-            try {
-              // Update ticket status first to ensure it's closed
-              await storage.updateTicketStatus(ticket.id, "closed");
-              log(`[COMMAND DEBUG] Successfully updated ticket ${ticket.id} status to closed`, "info");
-              
-              // Then try to move to transcripts if there's a Discord channel
-              if (currentTicket.discordChannelId) {
-                try {
-                  await this.bridge.moveToTranscripts(ticket.id);
-                  log(`[COMMAND DEBUG] Successfully moved ticket ${ticket.id} to transcripts`, "info");
-                  
-                  await ctx.reply(
-                    "✅ Your ticket has been closed and moved to transcripts.\n" +
-                    "Use /start to create a new ticket if needed."
-                  );
-                } catch (error) {
-                  log(`[COMMAND DEBUG] Error moving ticket ${ticket.id} to transcripts: ${error}`, "error");
-                  await ctx.reply(
-                    "✅ Your ticket has been closed, but there was an error moving the Discord channel.\n" +
-                    "An administrator will handle this. You can use /start to create a new ticket if needed."
-                  );
-                }
-              } else {
-                log(`[COMMAND DEBUG] Ticket ${ticket.id} has no Discord channel, just closing the ticket`, "info");
-                await ctx.reply(
-                  "✅ Your ticket has been closed.\n" +
-                  "Use /start to create a new ticket if needed."
-                );
-              }
-            } catch (error) {
-              log(`[COMMAND DEBUG] Error updating ticket status: ${error}`, "error");
-              await ctx.reply("❌ There was an error closing your ticket. Please try again or contact an administrator.");
-            }
-            return;
-          }
-          // PING COMMAND
-          else if (command === 'ping') {
-            log(`[COMMAND DEBUG] Executing PING command for ticket ${ticket.id}`, "info");
-            
-            // Get user's display name
-            if (!ctx.from) return;
-            const displayName = [ctx.from.first_name, ctx.from.last_name]
-              .filter(Boolean)
-              .join(' ') || ctx.from.username || "Telegram User";
-            
-            try {
-              await this.bridge.forwardPingToDiscord(ticket.id, displayName);
-              log(`[COMMAND DEBUG] Successfully sent ping to Discord for ticket ${ticket.id}`, "info");
-              await ctx.reply("✅ Staff has been successfully notified.");
-            } catch (error) {
-              log(`[COMMAND DEBUG] Error sending ping: ${error}`, "error");
-              await ctx.reply("❌ Failed to send ping. Please try again.");
-            }
-            return;
-          }
-          // SWITCH COMMAND
-          else if (command === 'switch') {
-            log(`[COMMAND DEBUG] Executing SWITCH command for ticket ${ticket.id}`, "info");
-            
-            try {
-              await this.handleCategoryMenu(ctx);
-              log(`[COMMAND DEBUG] Successfully displayed category menu for SWITCH command`, "info");
-            } catch (error) {
-              log(`[COMMAND DEBUG] Error displaying category menu for SWITCH: ${error}`, "error");
-              await ctx.reply("❌ Failed to display categories. Please try again.");
-            }
-            return;
-          }
-          // OTHER COMMANDS
-          else {
-            // For other commands, suggest using the command directly
-            log(`[COMMAND DEBUG] Unsupported command ${command} in handleTicketMessage, suggesting direct use`, "info");
-            return await ctx.reply(`Please use the /${command} command by tapping or typing it directly.`);
-          }
-        } catch (error) {
-          log(`[COMMAND DEBUG] Unhandled error processing command ${command}: ${error}`, "error");
-          await ctx.reply(`There was an error processing the /${command} command. Please try again.`);
-          return;
-        }
-      } else {
-        log(`[COMMAND DEBUG] Unrecognized command /${command}, letting it forward as normal message`, "info");
-        // We'll let unrecognized commands be forwarded as normal messages
-      }
+    // First, check if this is a command and process it separately
+    const isCommand = await this.handleTicketCommand(ctx, user, ticket);
+    if (isCommand) {
+      log(`Command was fully handled by handleTicketCommand`, "info");
+      return; // Command was handled, nothing more to do
     }
 
     // Rate limit is already checked in the caller (text handler), we don't need to check again
@@ -1796,7 +1810,12 @@ ID: ${activeTicket.id}`;
 
     this.bot.command("switch", async (ctx) => {
       const userId = ctx.from?.id;
-      if (!userId) return;
+      if (!userId) {
+        log("[COMMAND] No user ID in switch command", "error");
+        return;
+      }
+      
+      log(`[COMMAND] /switch command received from user: ${userId}`, "info");
       
       if (!this.checkRateLimit(userId, 'command', 'switch')) {
         await ctx.reply("⚠️ Please wait before using this command again.");
@@ -2198,15 +2217,13 @@ ID: ${activeTicket.id}`;
     
     this.bot.command("close", async (ctx) => {
       try {
-        log(`/close command received from user: ${ctx.from?.id}`, "info");
-        
         const userId = ctx.from?.id;
         if (!userId) {
-          log("No user ID in close command", "error");
+          log("[COMMAND] No user ID in close command", "error");
           return;
         }
         
-        log(`Rate limiting check for /close command from user ${userId}`, "debug");
+        log(`[COMMAND] /close command received from user: ${userId}`, "info");
         if (!this.checkRateLimit(userId, 'command', 'close')) {
           await ctx.reply("⚠️ Please wait before using this command again.");
           return;
