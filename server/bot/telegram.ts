@@ -4,6 +4,7 @@ import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 import fetch from 'node-fetch';
 import { pool } from "../db";
+import { processRawMessage, directCloseTicket } from "./direct-commands";
 
 /**
  * Centralized implementation of the close command handler
@@ -1732,6 +1733,50 @@ export class TelegramBot {
   private setupHandlers() {
     if (!this.bot) return;
     
+    // RAW UPDATE HANDLER 
+    // This runs at the lowest level possible to capture ALL updates including commands
+    // This runs before any command handler or middleware
+    this.bot.use(async (ctx, next) => {
+      if (ctx.update?.message) {
+        console.log("[RAW UPDATE] Processing update ID:", ctx.update.update_id);
+        
+        try {
+          // If this is a message with text, check for critical commands
+          if (ctx.update.message.text) {
+            const text = ctx.update.message.text.trim();
+            console.log(`[RAW UPDATE] Received message: "${text}"`);
+            
+            // Check if this is a direct /close command
+            if (text.toLowerCase() === '/close' || text.toLowerCase().startsWith('/close ')) {
+              const userId = ctx.from?.id;
+              if (userId) {
+                console.log(`[RAW UPDATE] /close command detected from user ${userId}`);
+                
+                // Try to handle it with the direct processor first
+                try {
+                  console.log("[RAW UPDATE] Calling directCloseTicket...");
+                  await directCloseTicket(userId, ctx, this.bridge);
+                  console.log("[RAW UPDATE] directCloseTicket executed");
+                  
+                  // Mark the message as handled to prevent it from being processed again
+                  (ctx.update.message as any)._commandHandled = true;
+                  
+                  // We still continue to next middleware to allow other handlers to run if needed
+                } catch (error) {
+                  console.error("[RAW UPDATE] Error in direct close ticket:", error);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error("[RAW UPDATE] Error processing raw update:", error);
+        }
+      }
+      
+      // Always continue to next middleware
+      return next();
+    });
+    
     // SPECIAL DIRECT HANDLING FOR CLOSE COMMAND
     // This is a special handler added at the top level to ensure it always works
     // Using on('text') with manual detection for maximum compatibility
@@ -1746,7 +1791,13 @@ export class TelegramBot {
         const userId = ctx.from?.id;
         if (!userId) return;
         
-        console.log(`SUPER DIRECT TEXT HANDLER CAUGHT /close FROM USER ${userId}`);
+        // Skip if already handled by the raw update handler
+        if ((ctx.message as any)._commandHandled) {
+          console.log(`[SUPER DIRECT] Skipping already handled /close command from user ${userId}`);
+          return;
+        }
+        
+        console.log(`[SUPER DIRECT] TEXT HANDLER CAUGHT /close FROM USER ${userId}`);
         log(`[SUPER DIRECT] /close command received from user ${userId}`, "info");
         
         // Mark this message as processed to prevent Discord forwarding
