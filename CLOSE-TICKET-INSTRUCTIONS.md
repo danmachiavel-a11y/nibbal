@@ -80,13 +80,16 @@ To help diagnose why the `/close` command isn't working, we've created several d
 3. **debug-all-bot-commands.cjs** - Checks if `/close` is registered with Telegram and adds it if missing
 4. **standalone-close-listener.cjs** - Creates a minimal bot that only listens for `/close` commands
 5. **reregister-commands.cjs** - Completely removes and re-adds all command registrations
+6. **patch-telegram-bot.cjs** - Adds low-level diagnostic middleware to the main bot
+7. **raw-telegram-monitor.cjs** - Creates an HTTP proxy to see all raw Telegram API traffic
+8. **telegram-close-button.cjs** - Button-based solution that bypasses text commands entirely
 
 Already confirmed:
-- The `/close` command is properly registered with the Telegram API
+- The `/close` command is properly registered with the Telegram API (confirmed with `debug-all-bot-commands.cjs`)
 - Other commands (/start) work correctly with the same bot
-- Multiple implementation approaches are detecting the pattern correctly
+- Nothing appears in the console when sending `/close` - indicating messages aren't reaching the bot
 
-See `telegram-debug-options.md` for instructions on using these diagnostic tools.
+See `telegram-debug-options.md` and `telegram-diagnostics.md` for instructions on using these tools.
 
 ## Direct Alternatives
 
