@@ -1056,6 +1056,10 @@ export class TelegramBot {
       // List of supported commands that should be properly handled
       const supportedCommands = ['close', 'start', 'switch', 'ban', 'unban', 'paid', 'reopen', 'ping'];
       
+      // Set a flag on the message context to prevent it from being forwarded to Discord later
+      // The _isCommand property will be checked later to avoid forwarding
+      (ctx.message as any)._isCommand = true;
+      
       if (supportedCommands.includes(command)) {
         log(`Detected /${command} command in ticket message - processing command directly`, "info");
         
@@ -1177,14 +1181,19 @@ export class TelegramBot {
       
       log(`Verified ticket ${ticket.id} is active with status: ${currentTicket.status}`);
       
-      // Store the message in the database first for all ticket states
-      await storage.createMessage({
-        ticketId: ticket.id,
-        content: ctx.message.text,
-        authorId: user.id,
-        platform: "telegram",
-        timestamp: new Date()
-      });
+      // Skip storing if this is a command (we don't want commands in the transcript)
+      if (!(ctx.message as any)._isCommand) {
+        // Store the message in the database first for all ticket states
+        await storage.createMessage({
+          ticketId: ticket.id,
+          content: ctx.message.text,
+          authorId: user.id,
+          platform: "telegram",
+          timestamp: new Date()
+        });
+      } else {
+        log(`Skipping database storage for command message: ${ctx.message.text}`, "info");
+      }
       
       // If it's a pending ticket, don't forward to Discord yet
       if (currentTicket.status === 'pending') {
@@ -1221,20 +1230,25 @@ export class TelegramBot {
       const lastName = ctx.from?.last_name || "";
       const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
-      try {
-        await this.bridge.forwardToDiscord(
-          ctx.message.text,
-          ticket.id,
-          displayName,
-          avatarUrl,
-          undefined,
-          firstName,
-          lastName
-        );
-        log(`Message processed successfully for ticket ${ticket.id}`);
-      } catch (error) {
-        log(`Error forwarding message to Discord: ${error}`, "error");
-        await ctx.reply("⚠️ Your message was saved but could not be forwarded to Discord staff. They will still see it in the chat history.");
+      // Skip forwarding if this is a command
+      if (!(ctx.message as any)._isCommand) {
+        try {
+          await this.bridge.forwardToDiscord(
+            ctx.message.text,
+            ticket.id,
+            displayName,
+            avatarUrl,
+            undefined,
+            firstName,
+            lastName
+          );
+          log(`Message processed successfully for ticket ${ticket.id}`);
+        } catch (error) {
+          log(`Error forwarding message to Discord: ${error}`, "error");
+          await ctx.reply("⚠️ Your message was saved but could not be forwarded to Discord staff. They will still see it in the chat history.");
+        }
+      } else {
+        log(`Skipping Discord forwarding for command message: ${ctx.message.text}`, "info");
       }
     } catch (error) {
       log(`Error in handleTicketMessage: ${error}`, "error");
