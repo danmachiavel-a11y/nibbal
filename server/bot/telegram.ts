@@ -2260,7 +2260,7 @@ Images/photos are also supported.
                 log(`Found ${otherTickets.length} other active tickets`, "debug");
                 
                 // Always send a notification to the current channel
-                const message = `**Note:** ${displayName} switched to this ticket`;
+                const message = `**Note:** User switched to this ticket`;
                 
                 log(`Sending Discord notification to current channel: ${ticket.discordChannelId}`, "debug");
                 await this.bridge.sendSystemMessageToDiscord(
@@ -2277,7 +2277,7 @@ Images/photos are also supported.
                     const buttonId = `force_ticket:${user.telegramId}:${otherTicket.id}:${displayName}`;
                     
                     // Create message content without the command instruction
-                    const messageContent = `**Note:** ${displayName} has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.`;
+                    const messageContent = `**Note:** The user has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.`;
                     
                     // Use specialized method to send message with button
                     await this.bridge.getDiscordBot().sendMessage(

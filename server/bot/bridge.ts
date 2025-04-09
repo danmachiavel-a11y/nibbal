@@ -1364,7 +1364,7 @@ export class BridgeManager {
         if (ticket.discordChannelId) {
           await this.sendSystemMessageToDiscord(
             ticket.discordChannelId,
-            `**Note:** ${user.username} has been forced back to this ticket by staff.`
+            `**Note:** The user has been forced back to this ticket by staff.`
           );
         }
         
@@ -1374,7 +1374,7 @@ export class BridgeManager {
           if (otherTicket.id !== ticketId && otherTicket.discordChannelId) {
             await this.sendSystemMessageToDiscord(
               otherTicket.discordChannelId,
-              `**Note:** ${user.username} has been forced to switch to ticket #${ticketId} by staff.`
+              `**Note:** The user has been forced to switch to ticket #${ticketId} by staff.`
             );
           }
         }

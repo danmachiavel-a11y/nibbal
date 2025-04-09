@@ -1937,7 +1937,7 @@ export class DiscordBot {
           const user = await storage.getUser(ticket.userId!);
           if (user && user.telegramId) {
             await this.bridge.sendMessageToTelegram(
-              user.telegramId,
+              parseInt(user.telegramId),
               `📢 *Staff Update:* Your ticket is now being handled exclusively by a dedicated staff member.`
             );
           }
@@ -1999,7 +1999,7 @@ export class DiscordBot {
           }
           
           // Update ticket in database as unclaimed
-          await storage.updateTicketStatus(ticket.id, ticket.status, null);
+          await storage.updateTicketStatus(ticket.id, ticket.status, undefined);
           
           // Get the category for this ticket
           const category = await this.client.channels.fetch(channel.parentId as string) as CategoryChannel;
@@ -2053,7 +2053,7 @@ export class DiscordBot {
           const user = await storage.getUser(ticket.userId!);
           if (user && user.telegramId) {
             await this.bridge.sendMessageToTelegram(
-              user.telegramId,
+              parseInt(user.telegramId),
               `📢 *Staff Update:* Your ticket is now open to all staff members again.`
             );
           }
