@@ -1980,7 +1980,7 @@ export class DiscordBot {
     }
   }
 
-  private async sendMessage(channelId: string, message: WebhookMessage, username: string): Promise<void> {
+  async sendMessage(channelId: string, message: WebhookMessage, username: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 

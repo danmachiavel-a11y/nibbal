@@ -121,6 +121,8 @@ interface UserState {
   answers: string[];
   inQuestionnaire: boolean;
   activeTicketId?: number;
+  // Record time of last state change to help with recovery logic
+  lastUpdated?: number;
 }
 
 interface StateCleanup {
@@ -392,13 +394,16 @@ export class TelegramBot {
     return true;
   }
 
-  private setState(userId: number, state: UserState) {
+  private async setState(userId: number, state: UserState) {
     // Clear existing timeout if any
     if (this.stateCleanups.has(userId)) {
       clearTimeout(this.stateCleanups.get(userId)!.timeout);
     }
     
-    // Set the state
+    // Update state with lastUpdated timestamp
+    state.lastUpdated = Date.now();
+    
+    // Set the state in memory
     this.userStates.set(userId, state);
     
     // Set up a timeout to clear the state
@@ -414,6 +419,21 @@ export class TelegramBot {
       timeout,
       createdAt: Date.now()
     });
+    
+    // Persist to database for recovery after restart
+    try {
+      const user = await storage.getUser(userId);
+      if (user && user.telegramId) {
+        // Convert state to JSON string
+        const stateStr = JSON.stringify(state);
+        await storage.saveUserState(userId, user.telegramId, stateStr);
+        log(`Persisted state for user ${userId} to database`, "debug");
+      } else {
+        log(`Could not persist state: User ${userId} not found in database or missing telegramId`, "warn");
+      }
+    } catch (error) {
+      log(`Error persisting state to database: ${error}`, "error");
+    }
     
     log(`Set state for user ${userId}: ${JSON.stringify(state)}`, "debug");
   }
@@ -521,6 +541,9 @@ export class TelegramBot {
       
       // Setup event handlers
       this.setupHandlers();
+      
+      // Restore user states from database
+      await this.restoreUserStates();
       
       // Start polling for updates
       await this.bot.launch();
@@ -1145,6 +1168,70 @@ export class TelegramBot {
     } catch (error) {
       log(`Error in createTicket: ${error}`, "error");
       await ctx.reply("❌ There was an error creating your ticket. Please try again or contact an administrator.");
+    }
+  }
+
+  /**
+   * Restore user states from database on application restart
+   */
+  private async restoreUserStates(): Promise<void> {
+    try {
+      // We need to query all active users from the database
+      const users = await storage.getUsers();
+      if (!users || users.length === 0) {
+        log(`No users found to restore states for`, "info");
+        return;
+      }
+
+      let restoredCount = 0;
+      let failedCount = 0;
+
+      for (const user of users) {
+        if (!user.telegramId) continue;
+        
+        try {
+          // Get the most recent active state from the database
+          const stateString = await storage.getUserStateByTelegramId(user.telegramId);
+          
+          if (stateString) {
+            // Parse the state and store it in memory
+            const state = JSON.parse(stateString) as UserState;
+            
+            // Only restore state if it has a valid activeTicketId or is in questionnaire mode
+            if (state.activeTicketId || state.inQuestionnaire) {
+              const telegramUserId = parseInt(user.telegramId);
+              if (!isNaN(telegramUserId)) {
+                this.userStates.set(telegramUserId, state);
+                
+                // Also setup cleanup for this state
+                const timeout = setTimeout(() => {
+                  this.userStates.delete(telegramUserId);
+                  this.stateCleanups.delete(telegramUserId);
+                  this.activeUsers.delete(telegramUserId);
+                  log(`Auto-cleared state for inactive user ${telegramUserId}`, "debug");
+                }, this.STATE_TIMEOUT);
+                
+                this.stateCleanups.set(telegramUserId, {
+                  timeout,
+                  createdAt: Date.now()
+                });
+                
+                this.activeUsers.add(telegramUserId);
+                restoredCount++;
+                
+                log(`Restored state for user ${user.id} (Telegram ID: ${user.telegramId}): ${JSON.stringify(state)}`, "info");
+              }
+            }
+          }
+        } catch (error) {
+          failedCount++;
+          log(`Error restoring state for user ${user.id} (Telegram ID: ${user.telegramId}): ${error}`, "error");
+        }
+      }
+      
+      log(`Restored ${restoredCount} user states, ${failedCount} failed`, "info");
+    } catch (error) {
+      log(`Error in restoreUserStates: ${error}`, "error");
     }
   }
 

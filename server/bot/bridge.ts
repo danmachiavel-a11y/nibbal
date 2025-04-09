@@ -188,14 +188,47 @@ export class BridgeManager {
 
       log(`[BRIDGE] Processing Telegram file ID: ${fileId}`);
 
+      // IMPROVEMENT: Better error handling for file ID format
+      // Check if it's a direct URL rather than a file ID
+      if (fileId.startsWith('http')) {
+        log(`[BRIDGE] Detected URL instead of file ID: ${fileId.substring(0, 50)}...`, "debug");
+        try {
+          // Try to download directly from URL
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000) as unknown as number;
+          const response = await fetch(fileId, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (response.ok) {
+            const buffer = Buffer.from(await response.arrayBuffer());
+            const validatedBuffer = await this.validateAndProcessImage(buffer, "processTelegramToDiscord-url");
+            if (validatedBuffer) {
+              // Cache the result
+              this.setCachedImage(cacheKey, { buffer: validatedBuffer });
+              log(`[BRIDGE] Successfully downloaded file from URL, size: ${validatedBuffer.length} bytes`);
+              return validatedBuffer;
+            }
+          }
+        } catch (urlError) {
+          log(`[BRIDGE] Error downloading from URL: ${urlError}`, "warn");
+        }
+      }
+
       // Use the telegram getter from TelegramBot which has built-in null safety
       try {
+        // IMPROVEMENT: Get file directly from bot with better error handling
         const file = await this.telegramBot.getFile(fileId);
         if (!file?.file_path) {
           throw new Error(`Could not get file path for ID: ${fileId}`);
         }
 
-        const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        // IMPROVEMENT: Make sure token is properly included
+        const botToken = process.env.TELEGRAM_BOT_TOKEN;
+        if (!botToken) {
+          throw new Error("Telegram bot token is missing");
+        }
+
+        const fileUrl = `https://api.telegram.org/file/bot${botToken}/${file.file_path}`;
+        log(`[BRIDGE] Attempting to download from Telegram API: ${fileUrl.substring(0, fileUrl.indexOf('/file/bot') + 9)}...`, "debug");
 
         // Use Promise.race to implement timeout
         const timeoutPromise = new Promise((_, reject) =>
@@ -226,17 +259,19 @@ export class BridgeManager {
         // If Telegram download fails, try to get the image from the photo cache directly
         log(`[BRIDGE] Error downloading from Telegram API: ${telegramError}. Trying alternative methods...`, "warn");
         
-        // Try to use ImgBB as a fallback
+        // Try to use ImgBB as a fallback if we have an API key
         if (process.env.IMGBB_API_KEY) {
           log(`[BRIDGE] Attempting to get photo directly from user state...`);
           
           try {
-            // Get latest message with this file ID from database
-            const allMessages = await storage.getRecentMessages(10);
+            // IMPROVEMENT: Get latest message with this file ID from database
+            // Fetch more messages to increase chance of finding the attachment
+            const allMessages = await storage.getRecentMessages(50);
             const messagesWithAttachments = allMessages.filter((msg: Message) => 
               msg.platform === 'telegram' && 
               msg.attachments && 
-              msg.attachments.includes(fileId)
+              Array.isArray(msg.attachments) && 
+              msg.attachments.some(att => att === fileId || (typeof att === 'string' && att.includes(fileId)))
             );
             
             if (messagesWithAttachments.length > 0) {
@@ -247,9 +282,10 @@ export class BridgeManager {
                 try {
                   // Try to parse the raw attachment data
                   const attachmentData = JSON.parse(message.rawAttachmentData);
-                  if (attachmentData.buffer) {
-                    // Convert base64 to buffer if needed
-                    const rawBuffer = Buffer.from(attachmentData.buffer, 'base64');
+                  if (attachmentData.buffer || attachmentData.data) {
+                    // Convert base64 to buffer if needed (support both buffer and data fields)
+                    const base64Data = attachmentData.buffer || attachmentData.data;
+                    const rawBuffer = Buffer.from(base64Data, 'base64');
                     const validatedBuffer = await this.validateAndProcessImage(rawBuffer, "processTelegramToDiscord-fallback");
                     
                     if (validatedBuffer) {
@@ -263,34 +299,89 @@ export class BridgeManager {
               }
             }
             
-            // If we couldn't recover the image from messages, use ImgBB as another fallback
-            log(`[BRIDGE] Telegram file not accessible. Using ImgBB upload as fallback...`);
-            
-            // As a last resort, try to capture a screenshot or placeholder image
-            const placeholderImage = Buffer.from(`
-              <svg width="400" height="200" xmlns="http://www.w3.org/2000/svg">
-                <rect width="400" height="200" fill="#f0f0f0"/>
-                <text x="200" y="100" font-family="Arial" font-size="16" text-anchor="middle">
-                  Image from Telegram (unable to process)
-                </text>
-              </svg>
-            `);
-            
-            // Try to upload placeholder to ImgBB
-            const imgUrl = await uploadToImgbb(placeholderImage);
-            if (imgUrl) {
-              log(`[BRIDGE] Created placeholder image and uploaded to ImgBB: ${imgUrl}`);
+            // IMPROVEMENT: Try to direct upload the original Telegram photo to ImgBB
+            try {
+              // Create a simple image with a link to view the original
+              const imageNotAvailableText = `🖼️ Image from Telegram\n\nFile ID: ${fileId.substring(0, 20)}...\n\nOriginal photo is available in Telegram`;
               
-              // Now download from ImgBB
-              const response = await fetch(imgUrl);
-              if (response.ok) {
-                const buffer = Buffer.from(await response.arrayBuffer());
-                const validatedBuffer = await this.validateAndProcessImage(buffer, "processTelegramToDiscord-imgbb");
+              // We'll upload this image directly to ImgBB, which needs raw image data
+              const canvas = require('canvas');
+              const canv = canvas.createCanvas(600, 300);
+              const ctx = canv.getContext('2d');
+              
+              // Draw background
+              ctx.fillStyle = '#f8f9fa';
+              ctx.fillRect(0, 0, 600, 300);
+              
+              // Draw text
+              ctx.fillStyle = '#333';
+              ctx.font = '24px Arial';
+              ctx.fillText('Image from Telegram', 30, 50);
+              
+              ctx.font = '16px Arial';
+              ctx.fillText(`Unable to process directly`, 30, 90);
+              
+              // Convert to buffer
+              const imgBuffer = canv.toBuffer('image/png');
+              
+              // Upload to ImgBB
+              log(`[BRIDGE] Attempting direct ImgBB upload...`);
+              const imgUrl = await uploadToImgbb(imgBuffer);
+              
+              if (imgUrl) {
+                log(`[BRIDGE] Successfully uploaded image to ImgBB: ${imgUrl}`);
                 
-                if (validatedBuffer) {
-                  log(`[BRIDGE] Successfully downloaded placeholder from ImgBB, size: ${validatedBuffer.length} bytes`);
-                  return validatedBuffer;
+                // Now download from ImgBB to get the correct format
+                const response = await fetch(imgUrl);
+                if (response.ok) {
+                  const buffer = Buffer.from(await response.arrayBuffer());
+                  const validatedBuffer = await this.validateAndProcessImage(buffer, "processTelegramToDiscord-imgbb");
+                  
+                  if (validatedBuffer) {
+                    log(`[BRIDGE] Successfully downloaded from ImgBB, size: ${validatedBuffer.length} bytes`);
+                    // Cache this for future use
+                    this.setCachedImage(cacheKey, { buffer: validatedBuffer });
+                    return validatedBuffer;
+                  }
                 }
+              }
+            } catch (canvasError) {
+              log(`[BRIDGE] Error creating image with canvas: ${canvasError}`, "error");
+              
+              // Fallback to simple SVG if canvas fails
+              try {
+                // Create an SVG as a fallback for simple image
+                const svgImage = Buffer.from(`
+                  <svg width="400" height="200" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="400" height="200" fill="#f0f0f0"/>
+                    <text x="200" y="80" font-family="Arial" font-size="18" text-anchor="middle" fill="#333">
+                      Image from Telegram
+                    </text>
+                    <text x="200" y="120" font-family="Arial" font-size="14" text-anchor="middle" fill="#666">
+                      (Unable to process directly)
+                    </text>
+                  </svg>
+                `);
+                
+                // Try to upload to ImgBB
+                const imgUrl = await uploadToImgbb(svgImage);
+                if (imgUrl) {
+                  log(`[BRIDGE] Created SVG image and uploaded to ImgBB: ${imgUrl}`);
+                  
+                  // Now download from ImgBB
+                  const response = await fetch(imgUrl);
+                  if (response.ok) {
+                    const buffer = Buffer.from(await response.arrayBuffer());
+                    const validatedBuffer = await this.validateAndProcessImage(buffer, "processTelegramToDiscord-imgbb-svg");
+                    
+                    if (validatedBuffer) {
+                      log(`[BRIDGE] Successfully downloaded from ImgBB (SVG), size: ${validatedBuffer.length} bytes`);
+                      return validatedBuffer;
+                    }
+                  }
+                }
+              } catch (svgError) {
+                log(`[BRIDGE] Error with SVG fallback: ${svgError}`, "error");
               }
             }
           } catch (fallbackError) {
@@ -974,22 +1065,26 @@ export class BridgeManager {
 
       if (photo) {
         try {
+          // Process the image first
           const buffer = await this.processTelegramToDiscord(photo);
           if (!buffer) {
             throw new BridgeError("Failed to process image", { context: "forwardToDiscord" });
           }
 
+          // If we have text content, send it first
           if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
                 content: content.toString().trim(),
+                username: displayName,
                 avatarURL: avatarUrl
               },
               displayName
             );
           }
 
+          // Now send the actual image
           await this.forwardImageToDiscord(
             ticket.discordChannelId,
             buffer,
@@ -997,25 +1092,54 @@ export class BridgeManager {
             displayName,
             avatarUrl
           );
+          
+          log(`Photo forwarded from Telegram to Discord for ticket ${ticketId}`);
 
         } catch (error) {
           handleBridgeError(error as BridgeError, "forwardToDiscord-photo");
-          if (content?.trim()) {
+          
+          // If image processing failed, send a notification with the content
+          try {
+            // Create a message indicating photo was sent but couldn't be processed
+            const photoNotification = content?.trim() 
+              ? `${content.toString().trim()}\n\n(User sent a photo that couldn't be processed)`
+              : "User sent a photo (couldn't be processed)";
+              
+            // Send the message with notification
+            log(`Attempting to send message to Discord channel ${ticket.discordChannelId}`);
+            
+            const messageOptions = {
+              content: photoNotification,
+              username: displayName,
+              avatarURL: avatarUrl
+            };
+            
+            log(`Sending message with options: ${JSON.stringify({
+              username: displayName,
+              avatarURL: avatarUrl ? "avatarURL present" : "no avatar",
+              content: photoNotification,
+              files: "no files",
+              embeds: "no embeds"
+            })}`);
+            
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
-              {
-                content: content.toString().trim(),
-                avatarURL: avatarUrl
-              },
+              messageOptions,
               displayName
             );
+            
+            log(`Successfully sent message to Discord channel ${ticket.discordChannelId}`);
+          } catch (secondaryError) {
+            handleBridgeError(secondaryError as BridgeError, "forwardToDiscord-photo-fallback");
           }
         }
       } else {
+        // Regular text message (no photo)
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
             content: content ? content.toString().trim() : "\u200B",
+            username: displayName,
             avatarURL: avatarUrl
           },
           displayName
@@ -1073,7 +1197,8 @@ export class BridgeManager {
         ticket.discordChannelId,
         {
           content: `🔔 <@&${category.discordRoleId}> You've been pinged by @${telegramUsername} in ticket #${ticketId}`,
-          allowedMentions: { roles: [category.discordRoleId] }
+          allowedMentions: { roles: [category.discordRoleId] },
+          username: "Ticket Bot"
         },
         "Ticket Bot"
       );

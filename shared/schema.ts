@@ -90,12 +90,23 @@ export const messageQueue = pgTable("message_queue", {
   lastAttempt: timestamp("last_attempt"),
 });
 
+// User state persistence to survive app restarts
+export const userStates = pgTable("user_states", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id),
+  telegramId: text("telegram_id").notNull(), 
+  state: text("state").notNull(), // JSON serialized state
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertCategorySchema = createInsertSchema(categories).omit({ id: true });
 export const insertTicketSchema = createInsertSchema(tickets).omit({ id: true });
 export const insertMessageSchema = createInsertSchema(messages).omit({ id: true });
 export const insertBotConfigSchema = createInsertSchema(botConfig).omit({ id: true });
 export const insertMessageQueueSchema = createInsertSchema(messageQueue).omit({ id: true });
+export const insertUserStateSchema = createInsertSchema(userStates).omit({ id: true });
 
 export type User = typeof users.$inferSelect;
 export type Category = typeof categories.$inferSelect;
@@ -103,6 +114,7 @@ export type Ticket = typeof tickets.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type BotConfig = typeof botConfig.$inferSelect;
 export type MessageQueue = typeof messageQueue.$inferSelect;
+export type UserState = typeof userStates.$inferSelect;
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
@@ -110,6 +122,7 @@ export type InsertTicket = z.infer<typeof insertTicketSchema>;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
 export type InsertMessageQueue = z.infer<typeof insertMessageQueueSchema>;
+export type InsertUserState = z.infer<typeof insertUserStateSchema>;
 
 // Add new type for date range filtering
 export type DateRangeFilter = {

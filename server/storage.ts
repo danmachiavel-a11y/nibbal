@@ -1,9 +1,10 @@
 import { eq, and, desc, sql, or } from 'drizzle-orm';
 import { db } from './db';
 import {
-  users, categories, tickets, messages, botConfig, messageQueue,
-  type User, type Category, type Ticket, type Message, type BotConfig, type MessageQueue,
-  type InsertUser, type InsertCategory, type InsertTicket, type InsertMessage, type InsertBotConfig, type InsertMessageQueue
+  users, categories, tickets, messages, botConfig, messageQueue, userStates,
+  type User, type Category, type Ticket, type Message, type BotConfig, type MessageQueue, type UserState,
+  type InsertUser, type InsertCategory, type InsertTicket, type InsertMessage, type InsertBotConfig, 
+  type InsertMessageQueue, type InsertUserState
 } from '@shared/schema';
 import { log } from './vite';
 
@@ -22,6 +23,7 @@ export interface IStorage {
 
   // User operations
   getUser(id: number): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;  // Get all users
   getUserByTelegramId(telegramId: string): Promise<User | undefined>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -118,6 +120,11 @@ export interface IStorage {
   getNonClosedTicketByUserId(userId: number): Promise<Ticket | undefined>;
   // Method for getting tickets by user ID
   getTicketsByUserId(userId: number): Promise<Ticket[]>;
+  
+  // User state persistence
+  saveUserState(userId: number, telegramId: string, state: string): Promise<void>;
+  getUserStateByTelegramId(telegramId: string): Promise<string | undefined>;
+  deactivateUserState(telegramId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -177,6 +184,10 @@ export class DatabaseStorage implements IStorage {
   async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
+  }
+
+  async getUsers(): Promise<User[]> {
+    return db.select().from(users);
   }
 
   async getUserByTelegramId(telegramId: string): Promise<User | undefined> {
@@ -796,6 +807,76 @@ export class DatabaseStorage implements IStorage {
         lastAttempt: new Date()
       })
       .where(eq(messageQueue.id, id));
+  }
+
+  // User state persistence methods
+  async saveUserState(userId: number, telegramId: string, state: string): Promise<void> {
+    try {
+      // First, deactivate any existing states for this telegram ID
+      await db
+        .update(userStates)
+        .set({ isActive: false })
+        .where(and(
+          eq(userStates.telegramId, telegramId),
+          eq(userStates.isActive, true)
+        ));
+      
+      // Then create a new active state
+      await db.insert(userStates).values({
+        userId,
+        telegramId,
+        state,
+        timestamp: new Date(),
+        isActive: true
+      });
+      
+      console.log(`[DB] Saved user state for telegramId: ${telegramId}`);
+    } catch (error) {
+      console.error(`[DB] Error saving user state for telegramId: ${telegramId}`, error);
+      throw error;
+    }
+  }
+
+  async getUserStateByTelegramId(telegramId: string): Promise<string | undefined> {
+    try {
+      const [userState] = await db
+        .select()
+        .from(userStates)
+        .where(and(
+          eq(userStates.telegramId, telegramId),
+          eq(userStates.isActive, true)
+        ))
+        .orderBy(desc(userStates.timestamp))
+        .limit(1);
+      
+      if (userState) {
+        console.log(`[DB] Found active user state for telegramId: ${telegramId}`);
+        return userState.state;
+      }
+      
+      console.log(`[DB] No active user state found for telegramId: ${telegramId}`);
+      return undefined;
+    } catch (error) {
+      console.error(`[DB] Error retrieving user state for telegramId: ${telegramId}`, error);
+      return undefined;
+    }
+  }
+
+  async deactivateUserState(telegramId: string): Promise<void> {
+    try {
+      await db
+        .update(userStates)
+        .set({ isActive: false })
+        .where(and(
+          eq(userStates.telegramId, telegramId),
+          eq(userStates.isActive, true)
+        ));
+      
+      console.log(`[DB] Deactivated all user states for telegramId: ${telegramId}`);
+    } catch (error) {
+      console.error(`[DB] Error deactivating user states for telegramId: ${telegramId}`, error);
+      throw error;
+    }
   }
 }
 
