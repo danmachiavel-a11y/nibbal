@@ -1358,7 +1358,40 @@ export class TelegramBot {
           log(`Created new user with telegramId ${userId}`);
         }
         
-        // Display category menu
+        // Check if the user already has an active ticket
+        if (existingUser) {
+          // First check if there's an active state
+          const userState = this.userStates.get(userId);
+          if (userState?.activeTicketId) {
+            log(`User ${userId} attempted to start but already has active ticket ${userState.activeTicketId}`);
+            await ctx.reply("❗ You already have an active ticket. Please use /close to close your current ticket before starting a new one.");
+            return;
+          }
+          
+          // Double-check in the database in case the user state wasn't loaded
+          const activeTicket = await storage.getActiveTicketByUserId(existingUser.id);
+          if (activeTicket) {
+            log(`User ${userId} attempted to start but has active ticket ${activeTicket.id} in database`);
+            
+            // Reconstruct state since it wasn't found in memory
+            const state: UserState = {
+              activeTicketId: activeTicket.id,
+              categoryId: activeTicket.categoryId!,
+              currentQuestion: 0,
+              answers: [],
+              inQuestionnaire: false,
+              lastUpdated: Date.now()
+            };
+            
+            // Store the state
+            await this.setState(userId, state);
+            
+            await ctx.reply(`❗ You already have an active ticket (#${activeTicket.id}). Please use /close to close your current ticket before starting a new one.`);
+            return;
+          }
+        }
+        
+        // If we got here, no active tickets, so display category menu
         await this.handleCategoryMenu(ctx);
       } catch (error) {
         log(`Error in start command: ${error}`, "error");
