@@ -58,7 +58,7 @@ import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 
 export class DiscordBot {
-  private client: Client;
+  public client: Client;
   private bridge: BridgeManager;
   private webhooks: Map<string, WebhookPool[]> = new Map();
   private webhookCreationLock: Set<string> = new Set();
@@ -1870,7 +1870,7 @@ export class DiscordBot {
     });
   }
 
-  private async sendTicketMessage(channelId: string, embed: any): Promise<void> {
+  public async sendTicketMessage(channelId: string, embed: any): Promise<void> {
     try {
       log(`Attempting to send and pin ticket message in channel ${channelId}`);
 

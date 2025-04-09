@@ -1199,8 +1199,27 @@ export class TelegramBot {
             
             // Only restore state if it has a valid activeTicketId or is in questionnaire mode
             if (state.activeTicketId || state.inQuestionnaire) {
-              const telegramUserId = parseInt(user.telegramId);
-              if (!isNaN(telegramUserId)) {
+              try {
+                // Use BigInt to safely handle large Telegram IDs
+                const telegramUserIdBig = BigInt(user.telegramId);
+                // Convert to number for internal use, but safely handle large numbers
+                let telegramUserId: number;
+                
+                // If the ID is too large for a safe integer, use a hash of the original string
+                if (telegramUserIdBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+                  // Create a stable number representation of large IDs using hash
+                  const hash = require('crypto')
+                    .createHash('md5')
+                    .update(user.telegramId)
+                    .digest('hex');
+                  // Use first 8 chars of hash converted to an integer
+                  telegramUserId = parseInt(hash.substring(0, 8), 16);
+                  log(`Using hash representation for large Telegram ID ${user.telegramId}: ${telegramUserId}`, "debug");
+                } else {
+                  telegramUserId = Number(telegramUserIdBig);
+                }
+                
+                // Store both the actual state and map the string ID to the numeric ID for lookups
                 this.userStates.set(telegramUserId, state);
                 
                 // Also setup cleanup for this state
@@ -1208,7 +1227,7 @@ export class TelegramBot {
                   this.userStates.delete(telegramUserId);
                   this.stateCleanups.delete(telegramUserId);
                   this.activeUsers.delete(telegramUserId);
-                  log(`Auto-cleared state for inactive user ${telegramUserId}`, "debug");
+                  log(`Auto-cleared state for inactive user ${telegramUserId} (Telegram ID: ${user.telegramId})`, "debug");
                 }, this.STATE_TIMEOUT);
                 
                 this.stateCleanups.set(telegramUserId, {
@@ -1220,6 +1239,9 @@ export class TelegramBot {
                 restoredCount++;
                 
                 log(`Restored state for user ${user.id} (Telegram ID: ${user.telegramId}): ${JSON.stringify(state)}`, "info");
+              } catch (parseError) {
+                failedCount++;
+                log(`Error parsing Telegram ID ${user.telegramId}: ${parseError}`, "error");
               }
             }
           }

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, bigint } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { relations } from "drizzle-orm";
 import { z } from "zod";
@@ -94,7 +94,7 @@ export const messageQueue = pgTable("message_queue", {
 export const userStates = pgTable("user_states", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id),
-  telegramId: text("telegram_id").notNull(), 
+  telegramId: text("telegram_id").notNull(), // Keep as text for compatibility
   state: text("state").notNull(), // JSON serialized state
   timestamp: timestamp("timestamp").defaultNow().notNull(),
   isActive: boolean("is_active").default(true).notNull(),

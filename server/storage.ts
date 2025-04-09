@@ -811,7 +811,7 @@ export class DatabaseStorage implements IStorage {
 
   // User state persistence methods
   async saveUserState(userId: number, telegramId: string, state: string): Promise<void> {
-    try {
+    try {      
       // First, deactivate any existing states for this telegram ID
       await db
         .update(userStates)
@@ -838,7 +838,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserStateByTelegramId(telegramId: string): Promise<string | undefined> {
-    try {
+    try {      
       const [userState] = await db
         .select()
         .from(userStates)
@@ -863,7 +863,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deactivateUserState(telegramId: string): Promise<void> {
-    try {
+    try {      
       await db
         .update(userStates)
         .set({ isActive: false })

@@ -4,7 +4,7 @@ import { TelegramBot } from "./telegram";
 import { DiscordBot } from "./discord";
 import type { Ticket, Message } from "@shared/schema";
 import { log } from "../vite";
-import fetch from 'node-fetch';
+import fetch, { RequestInit } from 'node-fetch';
 import { TextChannel } from 'discord.js';
 import crypto from 'crypto';
 
