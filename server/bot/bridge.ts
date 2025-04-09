@@ -1269,7 +1269,8 @@ export class BridgeManager {
       
       // Prepare base message data regardless of upload method
       const baseMessageData = {
-        content: content ? content.toString().trim() : "\u200B",
+        // Use empty string instead of invisible character to prevent extra newlines
+        content: content ? content.toString().trim() : "",
         username,
         avatarURL: avatarUrl
       };
@@ -1310,12 +1311,14 @@ export class BridgeManager {
           // ImgBB upload succeeded - send message with the URL
           log(`[${transferId}] ImgBB upload successful in ${uploadTime}ms, sending as URL`);
           
-          // Create message with the URL at the end
+          // Create message with the URL (no extra newlines)
           const messageData = {
             ...baseMessageData,
-            content: baseMessageData.content ? 
-              `${baseMessageData.content}\n${imageUrl}`.trim() : 
-              imageUrl
+            // If there's content, add the URL without any extra newlines
+            // If no content, just use the URL directly
+            content: baseMessageData.content && baseMessageData.content.trim() 
+              ? `${baseMessageData.content.trim()} ${imageUrl}` 
+              : imageUrl
           };
           
           // Send via Discord webhook
