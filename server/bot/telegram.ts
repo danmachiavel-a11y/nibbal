@@ -1081,15 +1081,27 @@ export class TelegramBot {
         return;
       }
       
-      // Check for existing active tickets
+      // Check for existing active tickets (open, in-progress, pending, etc.)
       const existingTicket = await storage.getActiveTicketByUserId(user.id);
       if (existingTicket) {
+        console.log(`User ${user.id} has existing active ticket ${existingTicket.id} with status '${existingTicket.status}'`);
+        
         // Update state to reference the existing ticket
         state.inQuestionnaire = false;
         state.activeTicketId = existingTicket.id;
         this.setState(userId, state);
         
-        await ctx.reply("ℹ️ You already have an active ticket. Your messages will be sent to that ticket.");
+        // Provide more context about the ticket status
+        if (existingTicket.status === 'pending') {
+          await ctx.reply("ℹ️ You already have a pending ticket waiting to be processed. Your messages will be sent to that ticket.");
+        } else if (existingTicket.status === 'in-progress') {
+          await ctx.reply("ℹ️ You already have a ticket in progress. Your messages will be sent to that ticket.");
+        } else {
+          await ctx.reply("ℹ️ You already have an active ticket. Your messages will be sent to that ticket.");
+        }
+        
+        // Ask if the user wants to check status or close the existing ticket
+        await ctx.reply("If you'd like to close this ticket instead, please send the /close command.");
         return;
       }
       
@@ -1234,6 +1246,7 @@ export class TelegramBot {
       }
       
       const userId = ctx.from.id;
+      console.log(`Processing /close command for user ${userId}`);
       
       if (!this.checkRateLimit(userId, 'command', 'close')) {
         await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
@@ -1244,36 +1257,152 @@ export class TelegramBot {
         // Find the user
         const user = await storage.getUserByTelegramId(userId.toString());
         if (!user) {
+          console.log(`User with telegram ID ${userId} not found in database`);
           await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
           return;
         }
+        console.log(`Found user in database: ${JSON.stringify(user)}`);
         
-        // Find active ticket
+        // Try to find an active ticket first
         const activeTicket = await storage.getActiveTicketByUserId(user.id);
         if (!activeTicket) {
+          console.log(`No active ticket found for user ${user.id}`);
+          
+          // Check if there are any tickets with Discord channels that might be miscategorized
+          console.log(`Checking for any tickets with Discord channels for user ${user.id}`);
+          const allUserTickets = await storage.getTicketsByUserId(user.id);
+          const ticketsWithDiscordChannels = allUserTickets.filter(t => 
+            t.discordChannelId && 
+            ['closed', 'deleted', 'transcript', 'completed'].indexOf(t.status) === -1
+          );
+          
+          if (ticketsWithDiscordChannels.length > 0) {
+            console.log(`Found ${ticketsWithDiscordChannels.length} tickets with Discord channels: ${JSON.stringify(ticketsWithDiscordChannels)}`);
+            const mostRecentTicket = ticketsWithDiscordChannels[0]; // Already sorted by ID desc
+            
+            await ctx.reply(`🔎 No active tickets found in the database, but I found a Discord channel that may be associated with your account. Attempting to close ticket #${mostRecentTicket.id}...`);
+            
+            // Update the ticket status to closed
+            await storage.updateTicketStatus(mostRecentTicket.id, "closed");
+            console.log(`Updated ticket ${mostRecentTicket.id} status to closed`);
+            
+            // Try to move to transcripts if applicable
+            if (mostRecentTicket.discordChannelId) {
+              try {
+                await this.bridge.moveToTranscripts(mostRecentTicket.id);
+                await ctx.reply("✅ The Discord channel has been moved to transcripts. Use /start to create a new ticket if needed.");
+              } catch (error) {
+                console.error(`Error moving channel to transcripts: ${error}`);
+                await ctx.reply("✅ The ticket has been marked as closed, but there was an error moving the Discord channel. Use /start to create a new ticket if needed.");
+              }
+            } else {
+              await ctx.reply("✅ The ticket has been marked as closed. Use /start to create a new ticket if needed.");
+            }
+            return;
+          }
+          
+          // If no tickets with Discord channels found, show the standard message
           await ctx.reply("❌ You don't have any active tickets. Use /start to create one.");
           return;
         }
+        console.log(`Found active ticket: ${JSON.stringify(activeTicket)}`);
         
         // Close the ticket
+        console.log(`Attempting to update ticket status to 'closed' for ticket ID ${activeTicket.id}`);
         await storage.updateTicketStatus(activeTicket.id, "closed");
-        console.log(`Closed ticket ${activeTicket.id} for user ${user.id}`);
+        console.log(`Database update completed for ticket ${activeTicket.id}`);
+        
+        // Verify the ticket was actually closed
+        const verifyTicket = await storage.getTicket(activeTicket.id);
+        console.log(`Verification after update: Ticket ${activeTicket.id} status is now ${verifyTicket?.status}`);
         
         // Move to transcripts if possible
         if (activeTicket.discordChannelId) {
           try {
-            await this.bridge.moveToTranscripts(activeTicket.id);
-            console.log(`Moved ticket ${activeTicket.id} to transcripts`);
+            console.log(`Ticket has Discord channel ID: ${activeTicket.discordChannelId}, attempting to move to transcripts`);
+            
+            // Get category for transcript category ID
+            const category = await storage.getCategory(activeTicket.categoryId!);
+            console.log(`Category for ticket: ${JSON.stringify(category)}`);
+            
+            if (category && category.transcriptCategoryId) {
+              await this.bridge.moveToTranscripts(activeTicket.id);
+              console.log(`Successfully moved ticket ${activeTicket.id} to transcripts category ${category.transcriptCategoryId}`);
+              await ctx.reply("✅ Your ticket has been closed and moved to Discord transcripts! Use /start when you're ready to begin again.");
+            } else {
+              console.warn(`No transcript category found for category ${activeTicket.categoryId}`);
+              await ctx.reply("✅ Your ticket has been closed! (No Discord transcript category available) Use /start when you're ready to begin again.");
+            }
           } catch (moveError) {
             console.error(`Error moving ticket to transcripts: ${moveError}`);
+            await ctx.reply("✅ Your ticket has been closed! (There was an error moving to Discord transcripts) Use /start when you're ready to begin again.");
           }
+        } else {
+          console.log(`Ticket ${activeTicket.id} has no Discord channel associated, skipping transcript move`);
+          await ctx.reply("✅ Your ticket has been closed! Use /start when you're ready to begin again.");
         }
-        
-        // Send confirmation - THIS IS DIFFERENT FROM /CANCEL!
-        await ctx.reply("✅ Your ticket has been closed! Use /start when you're ready to begin again.");
       } catch (error) {
         console.error(`Error in close command: ${error}`);
         await ctx.reply("❌ There was an error closing your ticket. Please try again later.");
+      }
+    });
+    
+    // Emergency close command for admins
+    this.bot.command('emergency_close', async (ctx) => {
+      if (!ctx.from?.id) return;
+      
+      try {
+        // Check if user is admin
+        const isAdmin = await storage.isAdmin(ctx.from.id.toString());
+        if (!isAdmin) {
+          await ctx.reply("⛔ You don't have permission to use this command.");
+          return;
+        }
+        
+        const args = ctx.message.text.split(' ').slice(1);
+        if (args.length === 0) {
+          await ctx.reply("Usage: /emergency_close [discord_channel_id]");
+          return;
+        }
+        
+        const channelId = args[0];
+        
+        await ctx.reply(`🔄 Attempting emergency close for Discord channel ID: ${channelId}...`);
+        
+        // Get the ticket with this Discord channel ID
+        const ticket = await storage.getTicketByDiscordChannel(channelId);
+        
+        if (!ticket) {
+          await ctx.reply(`❌ No ticket found with Discord channel ID: ${channelId}`);
+          return;
+        }
+        
+        await ctx.reply(`🔍 Found ticket #${ticket.id} with status '${ticket.status}' for user ID: ${ticket.userId}`);
+        
+        // Close the ticket
+        await storage.updateTicketStatus(ticket.id, "closed");
+        
+        await ctx.reply(`✅ Successfully closed ticket #${ticket.id}`);
+        
+        // Try to move to transcripts
+        if (ticket.categoryId) {
+          try {
+            // Get category for transcript category ID
+            const category = await storage.getCategory(ticket.categoryId);
+            
+            if (category && category.transcriptCategoryId) {
+              await this.bridge.moveToTranscripts(ticket.id);
+              await ctx.reply(`✅ Successfully moved ticket to transcripts category: ${category.transcriptCategoryId}`);
+            } else {
+              await ctx.reply("⚠️ No transcript category found for this ticket's category.");
+            }
+          } catch (error) {
+            await ctx.reply(`⚠️ Error moving ticket to transcripts: ${error}`);
+          }
+        }
+      } catch (error) {
+        log(`Error in emergency_close command: ${error}`, "error");
+        await ctx.reply(`❌ Error processing emergency close command: ${error}`);
       }
     });
     

@@ -409,52 +409,76 @@ export class BridgeManager {
 
   async moveToTranscripts(ticketId: number): Promise<void> {
     try {
+      // First verify the ticket still exists and has the expected status
       const ticket = await storage.getTicket(ticketId);
-      log(`Moving ticket to transcripts. Ticket data:`, JSON.stringify(ticket, null, 2));
+      log(`[BRIDGE] Moving ticket to transcripts. Ticket data:`, JSON.stringify(ticket, null, 2));
 
-      if (!ticket || !ticket.discordChannelId) {
-        throw new BridgeError(`Invalid ticket or missing Discord channel: ${ticketId}`, { context: "moveToTranscripts" });
+      if (!ticket) {
+        throw new BridgeError(`Ticket not found: ${ticketId}`, { context: "moveToTranscripts" });
+      }
+      
+      // Check if the ticket has a Discord channel ID
+      if (!ticket.discordChannelId) {
+        log(`[BRIDGE] Ticket ${ticketId} has no Discord channel ID, cannot move to transcripts`);
+        throw new BridgeError(`Ticket ${ticketId} has no Discord channel ID`, { context: "moveToTranscripts" });
       }
 
-      // Get category for transcript category ID
+      // Get the category for the transcript category ID
       const category = await storage.getCategory(ticket.categoryId!);
-      log(`Category data for ticket:`, JSON.stringify(category, null, 2));
+      log(`[BRIDGE] Category data for ticket:`, JSON.stringify(category, null, 2));
 
-      // More strict checking for transcriptCategoryId
+      // Validate that the category exists
       if (!category) {
-        throw new BridgeError("Category not found", { context: "moveToTranscripts" });
+        throw new BridgeError(`Category not found for ticket: ${ticketId}`, { context: "moveToTranscripts" });
       }
 
-      // Get all available Discord categories for debugging
-      const availableCategories = await this.discordBot.getCategories();
-      log(`Available Discord categories:`, JSON.stringify(availableCategories, null, 2));
+      // Get available Discord categories for debugging
+      try {
+        const availableCategories = await this.discordBot.getCategories();
+        log(`[BRIDGE] Available Discord categories:`, JSON.stringify(availableCategories, null, 2));
+      } catch (categoriesError) {
+        log(`[BRIDGE] Error getting available Discord categories: ${categoriesError}`, "warn");
+        // Continue execution, this is just for debugging
+      }
 
-      // More strict checking for transcriptCategoryId
+      // Validate that the category has a transcript category ID
       if (!category.transcriptCategoryId) {
-        log(`No transcript category ID found for category ${category.id}`);
+        log(`[BRIDGE] No transcript category ID found for category ${category.id}`);
         throw new BridgeError(`No transcript category set for service: ${category.name}. Please set it in the dashboard.`, { context: "moveToTranscripts" });
       }
 
       if (category.transcriptCategoryId.trim() === '') {
-        log(`Empty transcript category ID for category ${category.id}`);
+        log(`[BRIDGE] Empty transcript category ID for category ${category.id}`);
         throw new BridgeError(`No transcript category set for service: ${category.name}. Please set it in the dashboard.`, { context: "moveToTranscripts" });
       }
 
-      log(`Moving channel ${ticket.discordChannelId} to transcript category ${category.transcriptCategoryId}`);
+      log(`[BRIDGE] Moving channel ${ticket.discordChannelId} to transcript category ${category.transcriptCategoryId}`);
 
-      // Move channel to transcripts category with isTranscriptCategory=true
+      // Try to move the channel to the transcripts category
       await this.discordBot.moveChannelToCategory(
         ticket.discordChannelId,
         category.transcriptCategoryId,
         true // Specify this is a transcript category for proper permissions
       );
 
-      // Update ticket status
+      // Update the ticket status to "closed" (even though it might already be closed)
       await storage.updateTicketStatus(ticket.id, "closed");
 
-      log(`Successfully moved ticket ${ticketId} to transcripts category ${category.transcriptCategoryId}`);
+      log(`[BRIDGE] Successfully moved ticket ${ticketId} to transcripts category ${category.transcriptCategoryId}`);
     } catch (error) {
       handleBridgeError(error as BridgeError, "moveToTranscripts");
+      
+      // Check if this is due to Discord channel no longer existing
+      if (error instanceof Error && error.message.includes('Unknown Channel')) {
+        log(`[BRIDGE] Discord channel for ticket ${ticketId} no longer exists, just updating status`);
+        try {
+          await storage.updateTicketStatus(ticketId, "closed");
+          log(`[BRIDGE] Successfully updated ticket ${ticketId} status to closed`);
+        } catch (statusUpdateError) {
+          log(`[BRIDGE] Error updating ticket status: ${statusUpdateError}`, "error");
+        }
+      }
+      
       throw error;
     }
   }

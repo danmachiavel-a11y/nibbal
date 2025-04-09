@@ -6,13 +6,60 @@
 
 import { Context } from "telegraf";
 import { log } from "../vite";
-import { pool } from "../db";
 import { BridgeManager } from "./bridge";
+import { storage } from "../storage";
 
 /**
  * High priority implementation of the close command handler
- * Uses direct database access for maximum reliability
+ * Now using the storage interface instead of raw database access
  */
+/**
+ * Close a ticket by Discord channel ID
+ * This is used when there's a mismatch between Discord and the database
+ */
+export async function closeTicketByDiscordChannel(discordChannelId: string, bridge?: BridgeManager | null): Promise<boolean> {
+  try {
+    console.log(`[EMERGENCY CLOSE] Attempting to close ticket with Discord channel ID: ${discordChannelId}`);
+    
+    // Find the ticket with this Discord channel ID
+    const ticket = await storage.getTicketByDiscordChannel(discordChannelId);
+    if (!ticket) {
+      console.error(`[EMERGENCY CLOSE] No ticket found with Discord channel ID: ${discordChannelId}`);
+      return false;
+    }
+    
+    console.log(`[EMERGENCY CLOSE] Found ticket ID ${ticket.id} with status '${ticket.status}' for Discord channel ${discordChannelId}`);
+    
+    // Mark as closed
+    await storage.updateTicketStatus(ticket.id, "closed");
+    console.log(`[EMERGENCY CLOSE] Successfully marked ticket ${ticket.id} as closed`);
+    
+    // Try to move to transcripts if possible
+    if (bridge && ticket.categoryId) {
+      try {
+        // Get category for transcript category ID
+        const category = await storage.getCategory(ticket.categoryId);
+        console.log(`[EMERGENCY CLOSE] Category for ticket: ${JSON.stringify(category)}`);
+        
+        // Verify the category has a transcript category ID
+        if (category && category.transcriptCategoryId) {
+          await bridge.moveToTranscripts(ticket.id);
+          console.log(`[EMERGENCY CLOSE] Successfully moved ticket ${ticket.id} to transcripts category ${category.transcriptCategoryId}`);
+        } else {
+          console.warn(`[EMERGENCY CLOSE] No transcript category found for category ${ticket.categoryId}`);
+        }
+      } catch (error) {
+        console.error(`[EMERGENCY CLOSE] Error moving ticket to transcripts:`, error);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`[EMERGENCY CLOSE] Error in emergency close:`, error);
+    return false;
+  }
+}
+
 export async function directCloseTicket(telegramId: number | string, ctx?: Context | null, bridge?: BridgeManager | null): Promise<boolean> {
   console.log(`[DIRECT CLOSE] Starting direct close for user ${telegramId}`);
   log(`[DIRECT CLOSE] Starting direct close for user ${telegramId}`, "info");
@@ -27,14 +74,11 @@ export async function directCloseTicket(telegramId: number | string, ctx?: Conte
   }
   
   try {
-    // 1. Find the user in the database
+    // 1. Find the user in the database using the storage interface
     console.log('[DIRECT CLOSE] Finding user in database...');
-    const userQueryResult = await pool.query(
-      `SELECT * FROM users WHERE telegram_id = $1`,
-      [telegramId.toString()]
-    );
+    const user = await storage.getUserByTelegramId(telegramId.toString());
     
-    if (!userQueryResult.rows || userQueryResult.rows.length === 0) {
+    if (!user) {
       console.error(`[DIRECT CLOSE] User with Telegram ID ${telegramId} not found in database`);
       if (ctx) {
         try {
@@ -46,7 +90,6 @@ export async function directCloseTicket(telegramId: number | string, ctx?: Conte
       return false;
     }
     
-    const user = userQueryResult.rows[0];
     console.log(`[DIRECT CLOSE] Found user ${user.id} with Telegram ID ${telegramId}`);
     
     // Progress update
@@ -58,17 +101,11 @@ export async function directCloseTicket(telegramId: number | string, ctx?: Conte
       }
     }
     
-    // 2. Find active tickets
+    // 2. Find active tickets using the storage interface
     console.log('[DIRECT CLOSE] Finding active tickets...');
-    const ticketsQueryResult = await pool.query(
-      `SELECT * FROM tickets 
-       WHERE user_id = $1 
-       AND status NOT IN ('closed', 'completed', 'transcript')
-       ORDER BY id DESC`,
-      [user.id]
-    );
+    const ticket = await storage.getActiveTicketByUserId(user.id);
     
-    if (!ticketsQueryResult.rows || ticketsQueryResult.rows.length === 0) {
+    if (!ticket) {
       console.error(`[DIRECT CLOSE] No active tickets found for user ${user.id}`);
       if (ctx) {
         try {
@@ -80,8 +117,6 @@ export async function directCloseTicket(telegramId: number | string, ctx?: Conte
       return false;
     }
     
-    // 3. Get the most recent active ticket
-    const ticket = ticketsQueryResult.rows[0];
     console.log(`[DIRECT CLOSE] Found active ticket ${ticket.id} with status ${ticket.status}`);
     
     // Progress update
@@ -93,23 +128,52 @@ export async function directCloseTicket(telegramId: number | string, ctx?: Conte
       }
     }
     
-    // 4. Close the ticket
+    // 4. Close the ticket using the storage interface
     console.log('[DIRECT CLOSE] Closing ticket...');
-    await pool.query(
-      `UPDATE tickets SET status = $1 WHERE id = $2`,
-      ['closed', ticket.id]
-    );
+    await storage.updateTicketStatus(ticket.id, "closed");
+    
+    // Verify the update worked
+    const verifiedTicket = await storage.getTicket(ticket.id);
+    console.log(`[DIRECT CLOSE] Verification: Ticket status is now '${verifiedTicket?.status}'`);
+    
+    if (verifiedTicket?.status !== "closed") {
+      console.error(`[DIRECT CLOSE] Failed to close ticket ${ticket.id} - status is still ${verifiedTicket?.status}`);
+      if (ctx) {
+        try {
+          await ctx.reply("❌ There was an error closing your ticket. Please try again.");
+        } catch (err) {
+          console.error("[DIRECT CLOSE] Error sending ticket update failure message:", err);
+        }
+      }
+      return false;
+    }
     
     console.log(`[DIRECT CLOSE] Successfully closed ticket ${ticket.id} for user ${user.id} (${telegramId})`);
     
     // 5. Handle Discord channel if applicable and if bridge is available
-    if (ticket.discord_channel_id && bridge) {
-      console.log(`[DIRECT CLOSE] Ticket has Discord channel: ${ticket.discord_channel_id}`);
+    if (ticket.discordChannelId && bridge) {
+      console.log(`[DIRECT CLOSE] Ticket has Discord channel: ${ticket.discordChannelId}`);
       try {
-        // Convert to number to ensure type safety
-        const ticketId = parseInt(ticket.id.toString(), 10);
-        console.log(`[DIRECT CLOSE] Moving to transcripts with ticket ID ${ticketId}`);
-        await bridge.moveToTranscripts(ticketId);
+        // Get category for transcript category ID
+        const category = await storage.getCategory(ticket.categoryId!);
+        console.log(`[DIRECT CLOSE] Category for ticket: ${JSON.stringify(category)}`);
+        
+        // Verify the category has a transcript category ID
+        if (!category || !category.transcriptCategoryId) {
+          console.warn(`[DIRECT CLOSE] No transcript category found for category ${ticket.categoryId}`);
+          if (ctx) {
+            try {
+              await ctx.reply("✅ Your ticket has been closed! (No Discord transcript category available) Use /start to create a new ticket if needed.");
+            } catch (err) {
+              console.error("[DIRECT CLOSE] Error sending category missing message:", err);
+            }
+          }
+          return true;
+        }
+        
+        // Move to transcripts
+        console.log(`[DIRECT CLOSE] Moving to transcripts with ticket ID ${ticket.id} to category ${category.transcriptCategoryId}`);
+        await bridge.moveToTranscripts(ticket.id);
         console.log('[DIRECT CLOSE] Successfully moved ticket to transcripts');
         
         if (ctx) {

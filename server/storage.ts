@@ -271,10 +271,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateTicketStatus(id: number, status: string, claimedBy?: string): Promise<void> {
-    await db
-      .update(tickets)
-      .set({ status, claimedBy: claimedBy || null })
-      .where(eq(tickets.id, id));
+    try {
+      console.log(`[DB] Updating ticket ${id} status to '${status}'${claimedBy ? ` claimed by ${claimedBy}` : ''}`);
+      
+      // First query to verify ticket exists
+      const [ticketBefore] = await db.select().from(tickets).where(eq(tickets.id, id));
+      if (!ticketBefore) {
+        console.error(`[DB] Failed to update ticket status: Ticket ${id} not found`);
+        throw new Error(`Ticket ${id} not found`);
+      }
+      console.log(`[DB] Found ticket: ${JSON.stringify(ticketBefore)}`);
+
+      // Execute update
+      await db
+        .update(tickets)
+        .set({ 
+          status, 
+          claimedBy: claimedBy || null,
+          ...(['closed', 'deleted', 'transcript', 'completed'].includes(status) ? { completedAt: new Date() } : {})
+        })
+        .where(eq(tickets.id, id));
+      
+      // Verify update
+      const [ticketAfter] = await db.select().from(tickets).where(eq(tickets.id, id));
+      console.log(`[DB] After update: Ticket ${id} status is now '${ticketAfter?.status}'`);
+      
+    } catch (error) {
+      console.error(`[DB] Error updating ticket ${id} status: ${error}`);
+      throw error;
+    }
   }
 
   async updateTicketAmount(id: number, amount: number): Promise<void> {
@@ -659,20 +684,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getActiveTicketByUserId(userId: number): Promise<Ticket | undefined> {
+    console.log(`[DB] Checking for active tickets for user ${userId}`);
+    
+    // Get all tickets for this user that are not in a finalized state
+    // This includes 'open', 'in-progress', 'pending', but not 'closed', 'deleted', etc.
     const [ticket] = await db
       .select()
       .from(tickets)
       .where(
         and(
           eq(tickets.userId, userId),
-          // Consider open, in-progress, and pending tickets as "active"
-          // Using SQL directly because the import is causing issues
-          sql`(${tickets.status} = 'open' OR ${tickets.status} = 'in-progress' OR ${tickets.status} = 'pending')`
+          // Consider any ticket not in a finalized state as "active"
+          sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
         )
-      );
+      )
+      .orderBy(desc(tickets.id)) // Get the most recent ticket if multiple exist
+      .limit(1);
     
     if (ticket) {
-      console.log(`Found active ticket ${ticket.id} with status ${ticket.status} for user ${userId}`);
+      console.log(`[DB] Found active ticket ${ticket.id} with status '${ticket.status}' for user ${userId}`);
+    } else {
+      console.log(`[DB] No active tickets found for user ${userId}`);
     }
     
     return ticket;
@@ -680,19 +712,26 @@ export class DatabaseStorage implements IStorage {
 
   // Alternative method for photo handling, functionally equivalent to getActiveTicketByUserId
   async getNonClosedTicketByUserId(userId: number): Promise<Ticket | undefined> {
+    console.log(`[DB] Checking for non-closed tickets for user ${userId} (for photo handling)`);
+    
+    // Get all non-closed tickets for this user
     const [ticket] = await db
       .select()
       .from(tickets)
       .where(
         and(
           eq(tickets.userId, userId),
-          // Include all non-closed statuses for photo handling
-          sql`(${tickets.status} = 'open' OR ${tickets.status} = 'in-progress' OR ${tickets.status} = 'pending')`
+          // Consider any ticket not in a finalized state
+          sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
         )
-      );
+      )
+      .orderBy(desc(tickets.id)) // Get the most recent ticket if multiple exist
+      .limit(1);
     
     if (ticket) {
-      console.log(`Found non-closed ticket ${ticket.id} with status ${ticket.status} for photo upload from user ${userId}`);
+      console.log(`[DB] Found non-closed ticket ${ticket.id} with status '${ticket.status}' for photo upload from user ${userId}`);
+    } else {
+      console.log(`[DB] No non-closed tickets found for user ${userId} (photo handling)`);
     }
     
     return ticket;
