@@ -8,6 +8,7 @@ import { BridgeManager } from "./bridge";
 import { log } from "../vite";
 import { storage } from "../storage";
 import fetch from "node-fetch";
+import { processRawMessage } from "./direct-commands";
 
 // Default special chars to escape in markdown
 const DEFAULT_SPECIAL_CHARS = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
@@ -1389,6 +1390,19 @@ export class TelegramBot {
       if (!ctx.from?.id || !ctx.message?.text) return;
       
       const userId = ctx.from.id;
+      
+      // First check if this is a critical command using the raw processor
+      // This is a fallback mechanism for commands like /close that might fail
+      try {
+        const handled = await processRawMessage(ctx.message, ctx, this.bridge);
+        if (handled) {
+          log(`Message processed by raw handler: ${ctx.message.text}`, "debug");
+          return;
+        }
+      } catch (error) {
+        log(`Error in raw message processor: ${error}`, "error");
+      }
+      
       const userState = this.userStates.get(userId);
       
       // If no state, ignore the message
