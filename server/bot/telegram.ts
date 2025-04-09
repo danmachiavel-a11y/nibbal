@@ -746,9 +746,11 @@ export class TelegramBot {
         return;
       }
 
-      // Check if user still has an active ticket
-      const activeTicket = await storage.getActiveTicketByUserId(user.id);
-      if (!activeTicket || activeTicket.id !== ticket.id) {
+      // Check if user still has this specific active ticket
+      const activeTickets = await storage.getActiveTicketsByUserId(user.id);
+      const isActiveTicket = activeTickets.some(t => t.id === ticket.id);
+      
+      if (!isActiveTicket) {
         await ctx.reply("❌ This ticket is no longer active. Use /start to create a new ticket.");
         return;
       }
@@ -2369,10 +2371,32 @@ Images/photos are also supported.
           return;
         }
         
-        // Get active ticket
-        const ticket = await storage.getActiveTicketByUserId(user.id);
+        // Check if the user has an active ticket in the state
+        const userState = this.userStates.get(userId);
+        let activeTicketId = userState?.activeTicketId;
+        
+        // Get all active tickets
+        const activeTickets = await storage.getActiveTicketsByUserId(user.id);
+        if (activeTickets.length === 0) {
+          await ctx.reply("❌ You don't have any active tickets. Use /start to create one.");
+          return;
+        }
+        
+        // If the user isn't currently in a ticket but has active tickets, ask them to select one
+        if (!activeTicketId) {
+          if (activeTickets.length === 1) {
+            // If there's only one active ticket, use that one
+            activeTicketId = activeTickets[0].id;
+          } else {
+            await ctx.reply("ℹ️ You have multiple active tickets. Please use /switch to select a ticket before sending photos.");
+            return;
+          }
+        }
+        
+        // Get the specific ticket
+        const ticket = activeTickets.find(t => t.id === activeTicketId);
         if (!ticket) {
-          await ctx.reply("❌ You don't have an active ticket. Use /start to create one.");
+          await ctx.reply("❌ The selected ticket is no longer active. Use /start to create a new one or /switch to select another.");
           return;
         }
         
