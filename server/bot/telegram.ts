@@ -863,6 +863,7 @@ export class TelegramBot {
 
       // Use our new preserveMarkdown function to keep markdown formatting while escaping special chars
       const welcomeMessage = preserveMarkdown(botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:");
+      const welcomeImageUrl = botConfig?.welcomeImageUrl;
 
       try {
         // Try to edit existing message if this was triggered by a callback
@@ -875,25 +876,64 @@ export class TelegramBot {
           } catch (error) {
             // If we can't edit the message (e.g., too old or not sent by bot), send a new one
             log(`Error editing welcome message: ${error}`, "warn");
+            if (welcomeImageUrl) {
+              // Send with image if URL is provided
+              await ctx.replyWithPhoto(welcomeImageUrl, {
+                caption: welcomeMessage,
+                parse_mode: "MarkdownV2",
+                reply_markup: { inline_keyboard: keyboard }
+              });
+            } else {
+              // Send text only
+              await ctx.reply(welcomeMessage, {
+                parse_mode: "MarkdownV2",
+                reply_markup: { inline_keyboard: keyboard }
+              });
+            }
+          }
+        } else {
+          // Otherwise send a new message
+          if (welcomeImageUrl) {
+            // Send with image if URL is provided
+            await ctx.replyWithPhoto(welcomeImageUrl, {
+              caption: welcomeMessage,
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            });
+          } else {
+            // Send text only
             await ctx.reply(welcomeMessage, {
               parse_mode: "MarkdownV2",
               reply_markup: { inline_keyboard: keyboard }
             });
           }
-        } else {
-          // Otherwise send a new message
-          await ctx.reply(welcomeMessage, {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
         }
       } catch (error: any) {
         // If editing fails, send a new message
         if (error?.message?.includes("message can't be edited")) {
-          await ctx.reply(welcomeMessage, {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
+          if (welcomeImageUrl) {
+            try {
+              // Send with image if URL is provided
+              await ctx.replyWithPhoto(welcomeImageUrl, {
+                caption: welcomeMessage,
+                parse_mode: "MarkdownV2",
+                reply_markup: { inline_keyboard: keyboard }
+              });
+            } catch (photoError) {
+              log(`Error sending welcome image: ${photoError}`, "warn");
+              // Fall back to text only if image fails
+              await ctx.reply(welcomeMessage, {
+                parse_mode: "MarkdownV2",
+                reply_markup: { inline_keyboard: keyboard }
+              });
+            }
+          } else {
+            // Send text only
+            await ctx.reply(welcomeMessage, {
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            });
+          }
         } else {
           throw error; // Re-throw other errors
         }
@@ -1492,7 +1532,7 @@ export class TelegramBot {
 /switch - Switch between active tickets or create a new one
 /close - Close your current ticket
 /cancel - Cancel the current questionnaire without creating a ticket
-/ping - Check if bot is online
+/ping - Notify staff in your active ticket
 
 To message support staff, simply send a message after creating a ticket.
 Images/photos are also supported.
