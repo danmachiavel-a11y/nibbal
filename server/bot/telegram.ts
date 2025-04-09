@@ -914,6 +914,12 @@ export class TelegramBot {
         return;
       }
       
+      // Check if the service is closed
+      if (category.isClosed) {
+        await ctx.reply("⛔ This service is currently closed. Please try another service or contact an administrator.");
+        return;
+      }
+      
       // Get the user record
       const user = await storage.getUserByTelegramId(userId.toString());
       if (!user) {
@@ -1091,6 +1097,18 @@ export class TelegramBot {
         return;
       }
       
+      // Check if the service is closed
+      if (category.isClosed) {
+        await ctx.reply("⛔ This service is currently closed. Please try another service or contact an administrator.");
+        // Clear the questionnaire state
+        this.userStates.delete(userId);
+        if (this.stateCleanups.has(userId)) {
+          clearTimeout(this.stateCleanups.get(userId)!.timeout);
+          this.stateCleanups.delete(userId);
+        }
+        return;
+      }
+      
       // Get the questions for this category
       const questions = category.questions || [];
       if (questions.length === 0) {
@@ -1252,11 +1270,21 @@ export class TelegramBot {
               // Parse the state
               state = JSON.parse(stateString) as UserState;
               
-              // Only restore state if it has a valid activeTicketId or is in questionnaire mode
-              if (state.activeTicketId || state.inQuestionnaire) {
+              // Check if the state has lastUpdated timestamp
+              const lastUpdateTime = state.lastUpdated || 0;
+              const stateAgeMinutes = (Date.now() - lastUpdateTime) / (1000 * 60);
+              
+              // Only restore state if either:
+              // 1. It has a valid activeTicketId
+              // 2. It's in questionnaire mode AND was updated within the last 30 minutes
+              if (state.activeTicketId || (state.inQuestionnaire && stateAgeMinutes < 30)) {
+                log(`State age: ${stateAgeMinutes.toFixed(2)} minutes (max 30 minutes)`, "debug");
                 hasRestoredFromState = true;
+              } else if (state.inQuestionnaire && stateAgeMinutes >= 30) {
+                log(`[DB] Found expired questionnaire state for telegramId: ${user.telegramId} (${stateAgeMinutes.toFixed(2)} minutes old)`, "debug");
+                state = null;
               } else {
-                log(`[DB] Found user state for telegramId: ${user.telegramId} but it has no active ticket`, "debug");
+                log(`[DB] Found user state for telegramId: ${user.telegramId} but it has no active ticket or questionnaire`, "debug");
                 state = null;
               }
             } catch (parseError) {
@@ -2209,6 +2237,16 @@ Images/photos are also supported.
         
         // If in questionnaire, handle that
         if (userState.inQuestionnaire) {
+          // Check if category is closed
+          const category = await storage.getCategory(userState.categoryId);
+          if (category && category.isClosed) {
+            await ctx.reply("⛔ This service is currently closed. Please try another service or contact an administrator.");
+            // Clear the questionnaire state
+            userState.inQuestionnaire = false;
+            this.setState(userId, userState);
+            return;
+          }
+          
           await this.handleQuestionnaireResponse(ctx, userState);
           return;
         }
