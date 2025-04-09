@@ -265,7 +265,18 @@ export class DiscordBot {
 
       // Commands to register
       const commands = [
-        // Prioritize the ban and unban commands
+        // Prioritize the claim and unclaim commands
+        {
+          name: 'claim',
+          description: 'Claim exclusive handling of this ticket',
+          type: ApplicationCommandType.ChatInput
+        },
+        {
+          name: 'unclaim',
+          description: 'Release a claimed ticket back to the staff pool',
+          type: ApplicationCommandType.ChatInput
+        },
+        // Ban and unban commands
         {
           name: 'ban',
           description: 'Ban a user from creating tickets',
@@ -1804,6 +1815,252 @@ export class DiscordBot {
           await interaction.reply({
             content: "Failed to unban user. Please try again.",
             ephemeral: true
+          });
+        }
+      }
+
+      // Handle claim command
+      if (interaction.commandName === 'claim') {
+        // First, immediately defer the reply to prevent "Unknown Interaction" errors
+        await interaction.deferReply({ ephemeral: false });
+        
+        try {
+          // Validate channel has a ticket
+          const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+          if (!ticket) {
+            await interaction.editReply({
+              content: "This command can only be used in ticket channels!"
+            });
+            return;
+          }
+
+          // Check if ticket is already claimed
+          if (ticket.claimedBy) {
+            // If it's already claimed by the current user
+            if (ticket.claimedBy === interaction.user.id) {
+              await interaction.editReply({
+                content: "You have already claimed this ticket. Use `/unclaim` to release it."
+              });
+              return;
+            }
+            
+            // If it's claimed by someone else
+            await interaction.editReply({
+              content: `This ticket is already claimed by <@${ticket.claimedBy}>. They need to use \`/unclaim\` first.`
+            });
+            return;
+          }
+
+          // Get the channel to modify permissions
+          const channel = interaction.channel as TextChannel;
+          if (!channel) {
+            await interaction.editReply({
+              content: "Failed to get channel information."
+            });
+            return;
+          }
+
+          // Get the guild (server)
+          const guild = interaction.guild;
+          if (!guild) {
+            await interaction.editReply({
+              content: "This command can only be used in a server!"
+            });
+            return;
+          }
+          
+          // Update ticket in database as claimed
+          await storage.updateTicketStatus(ticket.id, ticket.status, interaction.user.id);
+          
+          // Get the category for this ticket to find roles with access
+          const category = await this.client.channels.fetch(channel.parentId as string) as CategoryChannel;
+          if (!category) {
+            await interaction.editReply({
+              content: "Failed to get category information."
+            });
+            return;
+          }
+          
+          // Find all roles that have ViewChannel permission in the category
+          const staffRoles: string[] = [];
+          category.permissionOverwrites.cache.forEach((permission, id) => {
+            // Skip @everyone role
+            if (id === guild.roles.everyone.id) return;
+            
+            // Check if this role has view permissions
+            if (permission.allow.has(PermissionFlagsBits.ViewChannel)) {
+              staffRoles.push(id);
+            }
+          });
+          
+          // Now update channel permissions
+          // First, make sure the bot still has access
+          const botMember = guild.members.me;
+          if (botMember) {
+            await channel.permissionOverwrites.edit(botMember, {
+              ViewChannel: true,
+              SendMessages: true,
+              ReadMessageHistory: true
+            });
+          }
+          
+          // Set permissions for the claiming user
+          await channel.permissionOverwrites.edit(interaction.user.id, {
+            ViewChannel: true,
+            SendMessages: true, 
+            ReadMessageHistory: true
+          });
+          
+          // Remove permissions for all staff roles (but ensure admins still have access)
+          for (const roleId of staffRoles) {
+            // Get the role to check if it's an admin role
+            const role = await guild.roles.fetch(roleId);
+            if (!role) continue;
+            
+            // Skip admin roles 
+            if (role.permissions.has(PermissionFlagsBits.Administrator)) {
+              continue;
+            }
+            
+            // Deny access for non-admin staff roles
+            await channel.permissionOverwrites.edit(roleId, {
+              ViewChannel: false
+            });
+          }
+          
+          // Notify the channel
+          await interaction.editReply({
+            content: `✅ This ticket has been claimed by ${interaction.user}. Only they can view and respond to this ticket now.`
+          });
+          
+          // Also send a message to Telegram user
+          const user = await storage.getUser(ticket.userId!);
+          if (user && user.telegramId) {
+            await this.bridge.sendMessageToTelegram(
+              user.telegramId,
+              `📢 *Staff Update:* Your ticket is now being handled exclusively by a dedicated staff member.`
+            );
+          }
+        } catch (error) {
+          log(`Error handling claim command: ${error}`, "error");
+          await interaction.editReply({
+            content: `Error: Failed to claim the ticket. ${error}`
+          });
+        }
+      }
+
+      // Handle unclaim command
+      if (interaction.commandName === 'unclaim') {
+        // First, immediately defer the reply to prevent "Unknown Interaction" errors
+        await interaction.deferReply({ ephemeral: false });
+        
+        try {
+          // Validate channel has a ticket
+          const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+          if (!ticket) {
+            await interaction.editReply({
+              content: "This command can only be used in ticket channels!"
+            });
+            return;
+          }
+
+          // Check if ticket is claimed
+          if (!ticket.claimedBy) {
+            await interaction.editReply({
+              content: "This ticket is not currently claimed by anyone."
+            });
+            return;
+          }
+          
+          // Check if the user is the one who claimed it or an admin
+          const guild = interaction.guild;
+          if (!guild) {
+            await interaction.editReply({
+              content: "This command can only be used in a server!"
+            });
+            return;
+          }
+          
+          const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+          if (ticket.claimedBy !== interaction.user.id && !isAdmin) {
+            await interaction.editReply({
+              content: `Only <@${ticket.claimedBy}> or an administrator can unclaim this ticket.`
+            });
+            return;
+          }
+          
+          // Get the channel to reset permissions
+          const channel = interaction.channel as TextChannel;
+          if (!channel) {
+            await interaction.editReply({
+              content: "Failed to get channel information."
+            });
+            return;
+          }
+          
+          // Update ticket in database as unclaimed
+          await storage.updateTicketStatus(ticket.id, ticket.status, null);
+          
+          // Get the category for this ticket
+          const category = await this.client.channels.fetch(channel.parentId as string) as CategoryChannel;
+          if (!category) {
+            await interaction.editReply({
+              content: "Failed to get category information."
+            });
+            return;
+          }
+          
+          // Restore permissions for staff roles
+          category.permissionOverwrites.cache.forEach(async (permission, id) => {
+            // Skip @everyone role
+            if (id === guild.roles.everyone.id) return;
+            
+            // Check if this is a role that should have access
+            if (permission.allow.has(PermissionFlagsBits.ViewChannel)) {
+              // Restore access for this role
+              await channel.permissionOverwrites.edit(id, {
+                ViewChannel: true,
+                SendMessages: permission.allow.has(PermissionFlagsBits.SendMessages),
+                ReadMessageHistory: permission.allow.has(PermissionFlagsBits.ReadMessageHistory)
+              });
+            }
+          });
+          
+          // Remove the claiming user's specific permissions if they're not an admin
+          if (!isAdmin) {
+            await channel.permissionOverwrites.delete(interaction.user.id)
+              .catch(() => log(`Failed to remove permission overwrite for ${interaction.user.id}`, "warn"));
+          }
+          
+          // Get the staff role to ping
+          let staffRoleId: string | null = null;
+          const category_config = await storage.getCategory(ticket.categoryId!);
+          if (category_config && category_config.discordRoleId) {
+            staffRoleId = category_config.discordRoleId;
+          }
+          
+          // Notify the channel with a ping to the staff role
+          let notificationMessage = `✅ This ticket has been released by ${interaction.user} and is now available for any staff member to handle.`;
+          if (staffRoleId) {
+            notificationMessage = `<@&${staffRoleId}> ${notificationMessage}`;
+          }
+          
+          await interaction.editReply({
+            content: notificationMessage
+          });
+          
+          // Also send a message to Telegram user
+          const user = await storage.getUser(ticket.userId!);
+          if (user && user.telegramId) {
+            await this.bridge.sendMessageToTelegram(
+              user.telegramId,
+              `📢 *Staff Update:* Your ticket is now open to all staff members again.`
+            );
+          }
+        } catch (error) {
+          log(`Error handling unclaim command: ${error}`, "error");
+          await interaction.editReply({
+            content: `Error: Failed to unclaim the ticket. ${error}`
           });
         }
       }
