@@ -1487,36 +1487,55 @@ Images/photos are also supported.
           return;
         }
         
-        // Format ticket list
-        let ticketList = "🎫 *Your active tickets:*\n\n";
+        // Create buttons for each ticket
+        const buttons = [];
+        const currentTicketId = userState?.activeTicketId;
         
+        // Get the categories for all tickets upfront to avoid multiple DB calls
+        const categoryIds = [...new Set(userTickets.map(t => t.categoryId).filter(id => id !== null))];
+        const categoriesMap = new Map();
+        
+        for (const categoryId of categoryIds) {
+          const category = await storage.getCategory(categoryId!);
+          if (category) {
+            categoriesMap.set(categoryId, category);
+          }
+        }
+        
+        // Create a button for each ticket
         for (const ticket of userTickets) {
-          // Get category name
-          const category = await storage.getCategory(ticket.categoryId!);
+          const category = categoriesMap.get(ticket.categoryId);
           const categoryName = category ? category.name : "Unknown category";
           
           // Mark currently active ticket
-          const isActive = userState?.activeTicketId === ticket.id;
-          const activeMarker = isActive ? " ✅ (current)" : "";
+          const isActive = currentTicketId === ticket.id;
+          const buttonLabel = isActive 
+            ? `✅ #${ticket.id}: ${categoryName} (current)` 
+            : `#${ticket.id}: ${categoryName}`;
           
-          // Add to list
-          ticketList += `ID #${ticket.id}: ${categoryName}${activeMarker}\n`;
-          
-          // Add first answer as preview if available
-          if (ticket.answers && ticket.answers.length > 0 && ticket.answers[0]) {
-            const preview = ticket.answers[0].substring(0, 30);
-            ticketList += `   _${preview}${preview.length >= 30 ? '...' : ''}_\n`;
-          }
-          
-          ticketList += "\n";
+          buttons.push([{
+            text: buttonLabel,
+            callback_data: `switch_${ticket.id}`
+          }]);
         }
         
-        // Add option to create a new ticket
-        ticketList += "To switch to a ticket, reply with its ID number (e.g. '42').\n";
-        ticketList += "Or type 'new' to create a new ticket.";
+        // Add button for creating a new ticket
+        buttons.push([{
+          text: "➕ Create New Ticket",
+          callback_data: "switch_new"
+        }]);
         
-        // Send list and wait for response
-        await ctx.reply(ticketList, { parse_mode: 'Markdown' });
+        // Format ticket list
+        let ticketList = "🎫 *Your active tickets:*\n\n";
+        ticketList += "Please select a ticket to switch to, or create a new one:";
+        
+        // Send list with inline keyboard buttons
+        await ctx.reply(ticketList, { 
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: buttons
+          }
+        });
         
         // Store expectation of ticket selection in user state
         if (userState) {
@@ -1686,16 +1705,18 @@ Images/photos are also supported.
         // If the user who created this ticket has an active state with this ticket,
         // clear it from their state 
         try {
-          // Get the user who created this ticket
-          const ticketUser = await storage.getUser(ticket.userId);
-          if (ticketUser && ticketUser.telegramId) {
-            const telegramId = parseInt(ticketUser.telegramId);
-            const userState = this.userStates.get(telegramId);
-            
-            if (userState && userState.activeTicketId === ticket.id) {
-              console.log(`Clearing active ticket ${ticket.id} from user ${telegramId} memory state during emergency close`);
-              userState.activeTicketId = undefined;
-              await this.setState(telegramId, userState);
+          if (ticket.userId) { // Make sure we have a valid userId
+            // Get the user who created this ticket
+            const ticketUser = await storage.getUser(ticket.userId);
+            if (ticketUser && ticketUser.telegramId) {
+              const telegramId = parseInt(ticketUser.telegramId);
+              const userState = this.userStates.get(telegramId);
+              
+              if (userState && userState.activeTicketId === ticket.id) {
+                console.log(`Clearing active ticket ${ticket.id} from user ${telegramId} memory state during emergency close`);
+                userState.activeTicketId = undefined;
+                await this.setState(telegramId, userState);
+              }
             }
           }
         } catch (stateError) {
@@ -1850,6 +1871,72 @@ Images/photos are also supported.
         } else if (data.startsWith('category_')) {
           const categoryId = parseInt(data.substring(9));
           await this.handleCategorySelection(ctx, categoryId);
+        } else if (data.startsWith('switch_')) {
+          // Handle ticket switching buttons
+          const switchOption = data.substring(7);
+          const userId = ctx.from.id;
+          
+          // Get user from database
+          const user = await storage.getUserByTelegramId(userId.toString());
+          if (!user) {
+            await ctx.answerCbQuery("Error: User not found");
+            return;
+          }
+          
+          // Get current user state
+          const userState = this.userStates.get(userId);
+          if (!userState) {
+            await ctx.answerCbQuery("Error: User state not found");
+            return;
+          }
+          
+          if (switchOption === 'new') {
+            // User wants to create a new ticket
+            await ctx.answerCbQuery("Creating a new ticket");
+            await ctx.reply("✅ Starting a new ticket. Please select a category:");
+            await this.handleCategoryMenu(ctx);
+          } else {
+            // User wants to switch to an existing ticket
+            const ticketId = parseInt(switchOption);
+            
+            try {
+              // Check if the ticket exists and belongs to this user
+              const ticket = await storage.getTicket(ticketId);
+              
+              if (!ticket) {
+                await ctx.answerCbQuery(`Ticket #${ticketId} not found`);
+                return;
+              }
+              
+              // Check if the ticket belongs to this user
+              if (ticket.userId !== user.id) {
+                await ctx.answerCbQuery(`Ticket #${ticketId} does not belong to you`);
+                return;
+              }
+              
+              // Check if the ticket is active
+              if (ticket.status !== "pending") {
+                await ctx.answerCbQuery(`Ticket #${ticketId} is not active (status: ${ticket.status})`);
+                return;
+              }
+              
+              // Switch to this ticket
+              userState.activeTicketId = ticketId;
+              userState.categoryId = ticket.categoryId || 0;
+              await this.setState(userId, userState);
+              
+              // Get category name for confirmation message
+              const category = await storage.getCategory(ticket.categoryId || 0);
+              const categoryName = category ? category.name : "Unknown category";
+              
+              await ctx.answerCbQuery(`Switched to ticket #${ticketId}`);
+              await ctx.reply(`✅ Switched to ticket #${ticketId} (${categoryName}). You can now continue your conversation here.`);
+            } catch (error) {
+              log(`Error switching tickets: ${error}`, "error");
+              await ctx.answerCbQuery("Error switching tickets");
+              await ctx.reply("❌ Error switching tickets. Please try again later.");
+            }
+          }
         } else {
           await ctx.answerCbQuery("Unknown button action");
         }
