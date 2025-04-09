@@ -32,6 +32,8 @@ class RateLimitManager {
     'start': 5,     // Increased from 3 to 5
     'cancel': 5,    // Increased from 3 to 5
     'close': 5,     // Added specific limit for close
+    'switch': 5,    // Limit for switch command
+    'help': 10,     // High limit for help command
     'category': 8,  // Increased from 5 to 8
     'ban': 10,
     'unban': 10,
@@ -1322,6 +1324,33 @@ export class TelegramBot {
       }
     });
     
+    this.bot.command('help', async (ctx) => {
+      if (!ctx.from?.id) return;
+      
+      if (!this.checkRateLimit(ctx.from.id, 'command', 'help')) {
+        await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
+        return;
+      }
+      
+      try {
+        const helpMessage = `
+*Available Commands:*
+
+/start - Start a new ticket
+/switch - Switch between active tickets or create a new one
+/close - Close your current ticket
+/cancel - Cancel the current questionnaire without creating a ticket
+/ping - Check if bot is online
+
+To message support staff, simply send a message after creating a ticket.
+Images/photos are also supported.
+`;
+        await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
+      } catch (error) {
+        log(`Error in help command: ${error}`, "error");
+      }
+    });
+    
     this.bot.command('start', async (ctx) => {
       if (!ctx.from?.id) return;
       
@@ -1420,6 +1449,83 @@ export class TelegramBot {
         await ctx.reply("✅ Current action canceled. Use /start to create a new ticket.");
       } catch (error) {
         log(`Error in cancel command: ${error}`, "error");
+      }
+    });
+    
+    // Switch command to change between tickets
+    this.bot.command('switch', async (ctx) => {
+      if (!ctx.from?.id) return;
+      const userId = ctx.from.id;
+      
+      if (!this.checkRateLimit(userId, 'command', 'switch')) {
+        await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
+        return;
+      }
+      
+      try {
+        const userState = this.userStates.get(userId);
+        
+        // Check if user is in a questionnaire
+        if (userState?.inQuestionnaire) {
+          await ctx.reply("❌ You are currently filling out a questionnaire. Please cancel it first by typing 'cancel' before switching tickets.");
+          return;
+        }
+        
+        // Get user from database
+        const user = await storage.getUserByTelegramId(userId.toString());
+        if (!user) {
+          await ctx.reply("❌ Error: User not found. Please use /start to begin again.");
+          return;
+        }
+        
+        // Get all active tickets for this user
+        const userTickets = await storage.getActiveTicketsByUserId(user.id);
+        
+        if (!userTickets || userTickets.length === 0) {
+          // No active tickets, inform user
+          await ctx.reply("❌ You don't have any active tickets. Use /start to create a new ticket.");
+          return;
+        }
+        
+        // Format ticket list
+        let ticketList = "🎫 *Your active tickets:*\n\n";
+        
+        for (const ticket of userTickets) {
+          // Get category name
+          const category = await storage.getCategory(ticket.categoryId!);
+          const categoryName = category ? category.name : "Unknown category";
+          
+          // Mark currently active ticket
+          const isActive = userState?.activeTicketId === ticket.id;
+          const activeMarker = isActive ? " ✅ (current)" : "";
+          
+          // Add to list
+          ticketList += `ID #${ticket.id}: ${categoryName}${activeMarker}\n`;
+          
+          // Add first answer as preview if available
+          if (ticket.answers && ticket.answers.length > 0 && ticket.answers[0]) {
+            const preview = ticket.answers[0].substring(0, 30);
+            ticketList += `   _${preview}${preview.length >= 30 ? '...' : ''}_\n`;
+          }
+          
+          ticketList += "\n";
+        }
+        
+        // Add option to create a new ticket
+        ticketList += "To switch to a ticket, reply with its ID number (e.g. '42').\n";
+        ticketList += "Or type 'new' to create a new ticket.";
+        
+        // Send list and wait for response
+        await ctx.reply(ticketList, { parse_mode: 'Markdown' });
+        
+        // Store expectation of ticket selection in user state
+        if (userState) {
+          userState.inQuestionnaire = false;  // Make sure not in questionnaire mode
+          await this.setState(userId, userState);
+        }
+      } catch (error) {
+        log(`Error in /switch command: ${error}`, "error");
+        await ctx.reply("❌ An error occurred while retrieving your tickets. Please try again later.");
       }
     });
     
@@ -1794,6 +1900,59 @@ export class TelegramBot {
         if (userState.inQuestionnaire) {
           await this.handleQuestionnaireResponse(ctx, userState);
           return;
+        }
+        
+        // Handle ticket switching after /switch command
+        // Check if user has just requested the switch command and is now selecting a ticket
+        const lastCommand = ctx.message.text.trim().toLowerCase();
+        
+        // Check if the input is a ticket ID number or "new"
+        if (lastCommand === "new") {
+          // User wants to create a new ticket, reset state and redirect to /start
+          await ctx.reply("✅ Starting a new ticket. Please select a category:");
+          await this.handleCategoryMenu(ctx);
+          return;
+        } else if (/^\d+$/.test(lastCommand)) {
+          // User is trying to switch to a specific ticket ID
+          const ticketId = parseInt(lastCommand);
+          
+          try {
+            // Check if the ticket belongs to this user
+            const ticket = await storage.getTicket(ticketId);
+            
+            if (!ticket) {
+              await ctx.reply(`❌ Ticket #${ticketId} not found.`);
+              return;
+            }
+            
+            // Check if the ticket belongs to this user
+            if (ticket.userId !== user.id) {
+              await ctx.reply(`❌ Ticket #${ticketId} does not belong to you.`);
+              return;
+            }
+            
+            // Check if the ticket is active
+            if (ticket.status !== "pending") {
+              await ctx.reply(`❌ Ticket #${ticketId} is not active (status: ${ticket.status}).`);
+              return;
+            }
+            
+            // Switch to this ticket
+            userState.activeTicketId = ticketId;
+            userState.categoryId = ticket.categoryId!;
+            await this.setState(userId, userState);
+            
+            // Get category name for confirmation message
+            const category = await storage.getCategory(ticket.categoryId!);
+            const categoryName = category ? category.name : "Unknown category";
+            
+            await ctx.reply(`✅ Switched to ticket #${ticketId} (${categoryName}). You can now continue your conversation here.`);
+            return;
+          } catch (error) {
+            log(`Error switching tickets: ${error}`, "error");
+            await ctx.reply("❌ Error switching tickets. Please try again later.");
+            return;
+          }
         }
         
         // If active ticket, handle that

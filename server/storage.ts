@@ -116,6 +116,8 @@ export interface IStorage {
   }>>;
   // Method for getting active tickets (open or in-progress)
   getActiveTicketByUserId(userId: number): Promise<Ticket | undefined>;
+  // Method for getting all active tickets for a user
+  getActiveTicketsByUserId(userId: number): Promise<Ticket[]>;
   // Method for getting any non-closed ticket (including pending) - used for photo handling
   getNonClosedTicketByUserId(userId: number): Promise<Ticket | undefined>;
   // Method for getting tickets by user ID
@@ -730,6 +732,27 @@ export class DatabaseStorage implements IStorage {
     }
     
     return ticket;
+  }
+  
+  // Get all active tickets for a user
+  async getActiveTicketsByUserId(userId: number): Promise<Ticket[]> {
+    console.log(`[DB] Retrieving all active tickets for user ${userId}`);
+    
+    // Get all tickets for this user that are not in a finalized state
+    const activeTickets = await db
+      .select()
+      .from(tickets)
+      .where(
+        and(
+          eq(tickets.userId, userId),
+          // Consider any ticket not in a finalized state as "active"
+          sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
+        )
+      )
+      .orderBy(desc(tickets.id)); // Most recent first
+    
+    console.log(`[DB] Found ${activeTickets.length} active tickets for user ${userId}`);
+    return activeTickets;
   }
 
   // Alternative method for photo handling, functionally equivalent to getActiveTicketByUserId
