@@ -2234,38 +2234,50 @@ Images/photos are also supported.
               
               // Send notification to Discord
               try {
-                // Get the current active ticket ID (before the switch)
-                const previousTicketId = userState.activeTicketId;
-                log(`Switch notification - Previous ticket: ${previousTicketId}, New ticket: ${ticketId}`, "debug");
+                // Check if we have all the data needed for this ticket
+                if (!ticket.discordChannelId) {
+                  log(`Cannot send Discord notification: ticket #${ticketId} has no Discord channel ID`, "warn");
+                  return;
+                }
+
+                // Get user display name
+                const firstName = ctx.from?.first_name || "";
+                const lastName = ctx.from?.last_name || "";
+                const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
                 
-                if (previousTicketId && previousTicketId !== ticketId) {
-                  // Get the previous ticket details
-                  const previousTicket = await storage.getTicket(previousTicketId);
-                  if (previousTicket && previousTicket.discordChannelId) {
-                    // Notify the Discord channel that the user has switched
-                    const firstName = ctx.from?.first_name || "";
-                    const lastName = ctx.from?.last_name || "";
-                    const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
-                    
-                    log(`Sending Discord notification that user ${displayName} switched from ticket #${previousTicketId} to #${ticketId}`, "debug");
-                    
-                    // Send a system message to the previous Discord channel
+                // Get all active tickets for this user
+                const userTickets = await storage.getActiveTicketsByUserId(user.id);
+                log(`User has ${userTickets.length} active tickets for Discord notification`, "debug");
+                
+                // Get the ticket we're switching FROM if available
+                // Get it from state first, then try to find other active tickets if none is in state
+                let previousTicketId = userState.activeTicketId;
+                const isPreviousSameAsCurrent = previousTicketId === ticketId;
+                
+                // Get all OTHER active tickets (that are not the current one)
+                const otherTickets = userTickets.filter(t => t.id !== ticketId);
+                log(`Found ${otherTickets.length} other active tickets`, "debug");
+                
+                // Always send a notification to the current channel
+                const message = isPreviousSameAsCurrent
+                  ? `**Note:** ${displayName} is actively viewing this ticket (#${ticketId}).`
+                  : `**Note:** ${displayName} has switched to viewing this ticket (#${ticketId}).`;
+                
+                log(`Sending Discord notification to current channel: ${ticket.discordChannelId}`, "debug");
+                await this.bridge.sendSystemMessageToDiscord(
+                  ticket.discordChannelId,
+                  message
+                );
+                
+                // Now notify all OTHER tickets that the user is no longer viewing them
+                for (const otherTicket of otherTickets) {
+                  if (otherTicket.discordChannelId) {
+                    log(`Sending Discord notification to other channel: ${otherTicket.discordChannelId}`, "debug");
                     await this.bridge.sendSystemMessageToDiscord(
-                      previousTicket.discordChannelId,
+                      otherTicket.discordChannelId,
                       `**Note:** ${displayName} has switched to ticket #${ticketId} (${categoryName}). They may not see messages in this channel anymore.`
                     );
-                    
-                    // Also send a system message to the new channel if it has a Discord channel ID
-                    if (ticket.discordChannelId) {
-                      await this.bridge.sendSystemMessageToDiscord(
-                        ticket.discordChannelId,
-                        `**Note:** ${displayName} has switched from ticket #${previousTicketId} to this ticket.`
-                      );
-                    }
                   }
-                } else {
-                  // Either no previous ticket or same ticket (shouldn't happen)
-                  log(`No previous ticket or same ticket (${previousTicketId} → ${ticketId})`, "debug");
                 }
               } catch (error) {
                 log(`Error sending Discord notification for ticket switch: ${error}`, "warn");
