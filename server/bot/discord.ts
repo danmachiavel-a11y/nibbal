@@ -2178,7 +2178,8 @@ export class DiscordBot {
       // Prepare webhook message
       const messageOptions: any = {
         username: username,
-        avatarURL: message.avatarURL // This is case sensitive for Discord webhooks
+        avatarURL: message.avatarURL, // This is case sensitive for Discord webhooks
+        components: message.components // Add support for buttons and other components
       };
 
       // Handle different types of content
@@ -2206,7 +2207,8 @@ export class DiscordBot {
         avatarURL: messageOptions.avatarURL,
         content: messageOptions.content.substring(0, 100) + (messageOptions.content.length > 100 ? '...' : ''),
         files: messageOptions.files ? `${messageOptions.files.length} files` : 'no files',
-        embeds: messageOptions.embeds ? `${messageOptions.embeds.length} embeds` : 'no embeds'
+        embeds: messageOptions.embeds ? `${messageOptions.embeds.length} embeds` : 'no embeds',
+        components: messageOptions.components ? "has components" : "no components"
       })}`);
 
       // Send message with retries
