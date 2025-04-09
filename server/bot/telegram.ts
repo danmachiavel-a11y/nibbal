@@ -2273,13 +2273,30 @@ Images/photos are also supported.
                   if (otherTicket.discordChannelId) {
                     log(`Sending Discord notification to other channel: ${otherTicket.discordChannelId}`, "debug");
                     
-                    // Create a command to force the user back to this ticket
-                    // We'll make this a command that Discord staff can run
-                    const forceSwitchCommand = `!forceswitch ${user.telegramId} ${otherTicket.id}`;
+                    // Create a button to force the user back to this ticket
+                    const buttonId = `force_ticket:${user.telegramId}:${otherTicket.id}:${displayName}`;
                     
-                    await this.bridge.sendSystemMessageToDiscord(
+                    // Create message content without the command instruction
+                    const messageContent = `**Note:** ${displayName} has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.`;
+                    
+                    // Use specialized method to send message with button
+                    await this.bridge.getDiscordBot().sendMessage(
                       otherTicket.discordChannelId,
-                      `**Note:** ${displayName} has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.\n\nStaff can use \`${forceSwitchCommand}\` to force the user back to this ticket.`
+                      {
+                        content: messageContent,
+                        username: "System",
+                        avatarURL: "https://cdn.discordapp.com/embed/avatars/0.png",
+                        components: [{
+                          type: 1, // Action row type
+                          components: [{
+                            type: 2, // Button type
+                            style: 1, // Primary button style
+                            label: "Force Back", // Shortened label as requested
+                            custom_id: buttonId
+                          }]
+                        }]
+                      },
+                      "System"
                     );
                   }
                 }
