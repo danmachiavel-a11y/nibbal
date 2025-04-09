@@ -426,12 +426,20 @@ export class TelegramBot {
     
     // Persist to database for recovery after restart
     try {
-      const user = await storage.getUser(userId);
+      // Try first with the userId from memory
+      let user = await storage.getUser(userId);
+      
+      // If not found, try to look up by telegramId as string
+      if (!user || !user.telegramId) {
+        log(`User not found by ID ${userId}, trying to look up by Telegram ID`, "debug");
+        user = await storage.getUserByTelegramId(userId.toString());
+      }
+      
       if (user && user.telegramId) {
         // Convert state to JSON string
         const stateStr = JSON.stringify(state);
-        await storage.saveUserState(userId, user.telegramId, stateStr);
-        log(`Persisted state for user ${userId} to database`, "debug");
+        await storage.saveUserState(user.id, user.telegramId, stateStr);
+        log(`Persisted state for user ${userId} (telegramId: ${user.telegramId}) to database`, "debug");
       } else {
         log(`Could not persist state: User ${userId} not found in database or missing telegramId`, "warn");
       }
@@ -2098,15 +2106,25 @@ Images/photos are also supported.
           // Get user from database
           const user = await storage.getUserByTelegramId(userId.toString());
           if (!user) {
+            log(`User with telegram ID ${userId} not found in database for switch operation`, "error");
             await ctx.answerCbQuery("Error: User not found");
             return;
           }
           
           // Get current user state
-          const userState = this.userStates.get(userId);
+          let userState = this.userStates.get(userId);
           if (!userState) {
-            await ctx.answerCbQuery("Error: User state not found");
-            return;
+            // If no state in memory, create a basic one
+            log(`Creating new user state for user ${userId} as none was found`, "debug");
+            userState = {
+              activeTicketId: undefined, // Use undefined instead of null
+              categoryId: 0,
+              currentQuestion: 0,
+              answers: [],
+              inQuestionnaire: false,
+              lastUpdated: Date.now()
+            };
+            this.userStates.set(userId, userState);
           }
           
           if (switchOption === 'new') {
@@ -2114,10 +2132,9 @@ Images/photos are also supported.
             await ctx.answerCbQuery("Creating a new ticket");
             
             // Set fromSwitchCommand flag to true to bypass the "already has ticket" check
-            if (userState) {
-              userState.fromSwitchCommand = true;
-              await this.setState(userId, userState);
-            }
+            // userState is guaranteed to be defined here since we initialized it above
+            userState.fromSwitchCommand = true;
+            await this.setState(userId, userState);
             
             await ctx.reply("✅ Let's create your new support ticket. Please select a category from the options displayed.");
             await this.handleCategoryMenu(ctx);
@@ -2214,6 +2231,46 @@ Images/photos are also supported.
               
               // Send confirmation message
               await ctx.reply(`✅ Switched to ticket #${ticketId} (${categoryName}). You can now continue your conversation here.`);
+              
+              // Send notification to Discord
+              try {
+                // Get the current active ticket ID (before the switch)
+                const previousTicketId = userState.activeTicketId;
+                log(`Switch notification - Previous ticket: ${previousTicketId}, New ticket: ${ticketId}`, "debug");
+                
+                if (previousTicketId && previousTicketId !== ticketId) {
+                  // Get the previous ticket details
+                  const previousTicket = await storage.getTicket(previousTicketId);
+                  if (previousTicket && previousTicket.discordChannelId) {
+                    // Notify the Discord channel that the user has switched
+                    const firstName = ctx.from?.first_name || "";
+                    const lastName = ctx.from?.last_name || "";
+                    const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
+                    
+                    log(`Sending Discord notification that user ${displayName} switched from ticket #${previousTicketId} to #${ticketId}`, "debug");
+                    
+                    // Send a system message to the previous Discord channel
+                    await this.bridge.sendSystemMessageToDiscord(
+                      previousTicket.discordChannelId,
+                      `**Note:** ${displayName} has switched to ticket #${ticketId} (${categoryName}). They may not see messages in this channel anymore.`
+                    );
+                    
+                    // Also send a system message to the new channel if it has a Discord channel ID
+                    if (ticket.discordChannelId) {
+                      await this.bridge.sendSystemMessageToDiscord(
+                        ticket.discordChannelId,
+                        `**Note:** ${displayName} has switched from ticket #${previousTicketId} to this ticket.`
+                      );
+                    }
+                  }
+                } else {
+                  // Either no previous ticket or same ticket (shouldn't happen)
+                  log(`No previous ticket or same ticket (${previousTicketId} → ${ticketId})`, "debug");
+                }
+              } catch (error) {
+                log(`Error sending Discord notification for ticket switch: ${error}`, "warn");
+                // Don't block the main flow if Discord notification fails
+              }
             } catch (error) {
               log(`Error switching tickets: ${error}`, "error");
               await ctx.answerCbQuery("Error switching tickets");

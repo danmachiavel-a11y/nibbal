@@ -288,6 +288,46 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  // Add new route to fetch Discord text channels
+  app.get("/api/discord/text-channels", async (req, res) => {
+    try {
+      if (!bridge) {
+        return res.status(503).json({ 
+          message: "Bot bridge not initialized",
+          error: "BOT_BRIDGE_UNAVAILABLE" 
+        });
+      }
+      const discordBot = bridge.getDiscordBot();
+      if (!discordBot) {
+        return res.status(503).json({ 
+          message: "Discord bot not initialized",
+          error: "DISCORD_BOT_UNAVAILABLE"
+        });
+      }
+
+      try {
+        const channels = await discordBot.getTextChannels();
+        res.json(channels);
+      } catch (error: any) {
+        if (error.message?.includes("No guild found")) {
+          return res.status(503).json({
+            message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
+            error: "NO_SERVER_CONNECTED",
+            details: "The Discord bot token is valid but the bot hasn't been invited to any servers. Use the Discord Developer Portal to generate an invite link."
+          });
+        }
+        throw error; // Re-throw to be caught by the outer catch
+      }
+    } catch (error: any) {
+      log(`Error fetching Discord text channels: ${error}`, "error");
+      res.status(500).json({ 
+        message: "Failed to fetch Discord text channels", 
+        error: "DISCORD_CHANNELS_ERROR",
+        details: error.message
+      });
+    }
+  });
+
   // Category Routes
   app.get("/api/categories", async (req, res) => {
     const categories = await storage.getCategories();
@@ -934,6 +974,48 @@ export async function registerRoutes(app: Express) {
     } catch (error) {
       log(`Error in emergency close API: ${error}`, "error");
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Test route for system messages in Discord channels
+  app.post("/api/discord/send-system-message", async (req, res) => {
+    try {
+      const { message, channelId } = req.body;
+      
+      if (!bridge) {
+        return res.status(500).json({ success: false, error: "Bridge not initialized" });
+      }
+      
+      if (!channelId || !message) {
+        return res.status(400).json({ 
+          success: false, 
+          error: "Both channelId and message are required"
+        });
+      }
+      
+      // First verify the channel exists
+      const discordBot = bridge.getDiscordBot();
+      const channel = await discordBot.getChannelById(channelId);
+      
+      if (!channel) {
+        return res.status(404).json({
+          success: false,
+          error: `Discord channel not found: ${channelId}`
+        });
+      }
+      
+      await bridge.sendSystemMessageToDiscord(channelId, message);
+      
+      return res.status(200).json({ 
+        success: true, 
+        message: `System message sent to channel ${channelId}` 
+      });
+    } catch (error) {
+      log(`Error sending system message to Discord: ${error}`, "error");
+      res.status(500).json({ 
+        success: false, 
+        error: String(error) 
+      });
     }
   });
 

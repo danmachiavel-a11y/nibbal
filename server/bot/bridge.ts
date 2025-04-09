@@ -578,6 +578,42 @@ export class BridgeManager {
     }
   }
 
+  /**
+   * Send a system message to a Discord channel
+   * Used for notifications about user actions that don't come from direct messages
+   * @param channelId The Discord channel ID to send the message to
+   * @param content The message content
+   */
+  async sendSystemMessageToDiscord(channelId: string, content: string): Promise<void> {
+    try {
+      if (!channelId) {
+        throw new BridgeError("Missing Discord channel ID", { context: "sendSystemMessageToDiscord" });
+      }
+
+      if (!this.discordBot.isReady()) {
+        throw new BridgeError("Discord bot is not ready", { context: "sendSystemMessageToDiscord" });
+      }
+
+      // Get the channel
+      const channel = await this.discordBot.getChannelById(channelId);
+      if (!channel || !(channel instanceof TextChannel)) {
+        throw new BridgeError(`Invalid Discord channel: ${channelId}`, { context: "sendSystemMessageToDiscord" });
+      }
+
+      // Send the message using discord bot's sendMessage method with system webhook appearance
+      await this.discordBot.sendMessage(channelId, {
+        content: content,
+        username: "System",
+        avatarURL: "https://cdn.discordapp.com/embed/avatars/0.png" // Default system avatar
+      } as any, "System");
+
+      log(`System message sent to Discord channel ${channelId}`);
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "sendSystemMessageToDiscord");
+      // Don't throw the error to avoid disrupting the main flow
+    }
+  }
+
   async moveToTranscripts(ticketId: number): Promise<void> {
     try {
       // First verify the ticket still exists and has the expected status

@@ -2308,6 +2308,71 @@ export class DiscordBot {
   }
   
   /**
+   * Get a Discord channel by its ID
+   * @param channelId The Discord channel ID to fetch
+   * @returns The TextChannel object or null if not found
+   */
+  async getChannelById(channelId: string): Promise<TextChannel | null> {
+    try {
+      if (!this.isReady()) {
+        throw new Error("Discord bot is not ready");
+      }
+      
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !(channel instanceof TextChannel)) {
+        log(`Channel ${channelId} is not a text channel or not found`, "warn");
+        return null;
+      }
+      
+      return channel;
+    } catch (error) {
+      this.lastError = error instanceof Error ? error : new Error(String(error));
+      log(`Error getting Discord channel ${channelId}: ${error}`, "error");
+      return null;
+    }
+  }
+  
+  /**
+   * Get all text channels from the Discord guild
+   * @returns Array of channel objects with id and name
+   */
+  async getTextChannels(): Promise<Array<{id: string, name: string, type: string}>> {
+    try {
+      if (!this.isReady()) {
+        log("Discord client not ready when fetching text channels", "warn");
+        return [];
+      }
+      
+      const guild = this.client.guilds.cache.first();
+      if (!guild) {
+        log("No Discord guild available", "warn");
+        return [];
+      }
+      
+      // Fetch all channels in the guild
+      await guild.channels.fetch();
+      
+      // Filter to only get text channels
+      const textChannels = guild.channels.cache
+        .filter(channel => 
+          channel.type === ChannelType.GuildText || 
+          channel.type === ChannelType.GuildAnnouncement
+        )
+        .map(channel => ({
+          id: channel.id,
+          name: channel.name,
+          type: channel.type === ChannelType.GuildText ? 'text' : 'announcement'
+        }));
+      
+      return textChannels;
+    } catch (error) {
+      this.lastError = error instanceof Error ? error : new Error(String(error));
+      log(`Error getting Discord text channels: ${error}`, "error");
+      return [];
+    }
+  }
+  
+  /**
    * Set up permissions for a category with a specific role
    * @param categoryId Discord category ID
    * @param roleId Discord role ID
