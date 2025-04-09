@@ -22,16 +22,17 @@ interface RateLimit {
 }
 
 class RateLimitManager {
-  private userRateLimits = new Map<number, RateLimit>();
+  private userRateLimits = new Map<number, Map<string, RateLimit>>();
   private readonly cleanupInterval: NodeJS.Timeout;
   private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute
   private readonly MAX_REQUESTS_PER_WINDOW = 30;
-  private readonly COMMAND_MAX_REQUESTS = 10;
+  private readonly COMMAND_MAX_REQUESTS = 15;  // Increased from 10 to 15
   private readonly COMMAND_SPECIFIC_LIMITS: { [key: string]: number } = {
-    'ping': 3,
-    'start': 3,
-    'cancel': 3,
-    'category': 5,
+    'ping': 5,      // Increased from 3 to 5
+    'start': 5,     // Increased from 3 to 5
+    'cancel': 5,    // Increased from 3 to 5
+    'close': 5,     // Added specific limit for close
+    'category': 8,  // Increased from 5 to 8
     'ban': 10,
     'unban': 10,
     'info': 10
@@ -43,11 +44,20 @@ class RateLimitManager {
 
   isRateLimited(userId: number, type: 'command' | 'message' = 'message', command?: string): boolean {
     const now = Date.now();
-    let limit = this.userRateLimits.get(userId);
+    const key = type === 'command' && command ? `cmd:${command}` : type;
+    
+    // Initialize user's rate limit map if it doesn't exist
+    if (!this.userRateLimits.has(userId)) {
+      this.userRateLimits.set(userId, new Map());
+    }
+    
+    const userLimits = this.userRateLimits.get(userId)!;
+    let limit = userLimits.get(key);
 
+    // If no limit exists for this specific command/type, create one
     if (!limit) {
       limit = { lastRequest: now, count: 1 };
-      this.userRateLimits.set(userId, limit);
+      userLimits.set(key, limit);
       return false;
     }
 
@@ -79,8 +89,22 @@ class RateLimitManager {
 
   private cleanup(): void {
     const now = Date.now();
-    for (const [userId, limit] of this.userRateLimits.entries()) {
-      if (now - limit.lastRequest > this.RATE_LIMIT_WINDOW) {
+    // Clean up expired rate limits for all users
+    for (const [userId, limitMap] of this.userRateLimits.entries()) {
+      let allExpired = true;
+      
+      // Check each command/type limit
+      for (const [key, limit] of limitMap.entries()) {
+        if (now - limit.lastRequest > this.RATE_LIMIT_WINDOW) {
+          // Remove expired limits
+          limitMap.delete(key);
+        } else {
+          allExpired = false;
+        }
+      }
+      
+      // If all entries for this user are expired, remove the user entirely
+      if (allExpired || limitMap.size === 0) {
         this.userRateLimits.delete(userId);
       }
     }
