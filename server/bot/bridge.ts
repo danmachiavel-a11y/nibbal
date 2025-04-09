@@ -1073,7 +1073,8 @@ export class BridgeManager {
             throw new BridgeError("Failed to process image", { context: "forwardToDiscord" });
           }
 
-          // If we have text content, send it first
+          // Only send a separate text message if we have actual content
+          // This prevents sending "Image sent" placeholder text
           if (content?.trim()) {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,

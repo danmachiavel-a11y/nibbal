@@ -1873,10 +1873,15 @@ export class TelegramBot {
         if (!photo) return;
         
         // Process caption as a message
-        const caption = ctx.message.caption || "Image sent";
+        // Only use "Image sent" as a database placeholder, not as the actual caption for Discord
+        const databaseCaption = ctx.message.caption || "Image sent";
+        // For Discord, either use the actual caption or an empty string (not "Image sent")
+        const discordCaption = ctx.message.caption || "";
+        
+        // Store the message in the database
         await storage.createMessage({
           ticketId: ticket.id,
-          content: caption,
+          content: databaseCaption,
           authorId: user.id,
           platform: "telegram",
           timestamp: new Date()
@@ -1912,8 +1917,9 @@ export class TelegramBot {
           log(`Error getting avatar: ${error}`, "error");
         }
         
+        // Use the variable we defined earlier for Discord caption
         await this.bridge.forwardToDiscord(
-          caption,
+          discordCaption, // Use empty string instead of "Image sent" when there's no caption
           ticket.id,
           displayName,
           avatarUrl,
