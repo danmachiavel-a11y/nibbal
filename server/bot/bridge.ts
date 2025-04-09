@@ -1258,13 +1258,23 @@ export class BridgeManager {
       if (!user?.telegramId) {
         throw new BridgeError("Could not find Telegram information for ticket creator", { code: "USER_NOT_FOUND", context: "forwardPingToTelegram" });
       }
+      
+      // Get category info for the message
+      let categoryInfo = "";
+      if (ticket.categoryId) {
+        const category = await storage.getCategory(ticket.categoryId);
+        if (category) {
+          categoryInfo = ` in the *${category.name}* category`;
+        }
+      }
 
+      // Send message without showing the username
       await this.telegramBot.sendMessage(
         parseInt(user.telegramId),
-        `🔔 @${user.username} You've been pinged by ${discordUsername} in ticket #${ticketId}`
+        `🔔 *Important:* A staff member has requested your attention in ticket #${ticketId}${categoryInfo}.`
       );
 
-      log(`Successfully sent ping to Telegram user ${user.telegramId}`);
+      log(`Successfully sent ping to Telegram user ${user.telegramId} for ticket #${ticketId}`);
     } catch (error) {
       handleBridgeError(error as BridgeError, "forwardPingToTelegram");
       throw error;
@@ -1399,26 +1409,55 @@ export class BridgeManager {
         throw new BridgeError("Invalid ticket or missing category", { code: "INVALID_TICKET", context: "forwardPingToDiscord" });
       }
 
-      const category = await storage.getCategory(ticket.categoryId);
-      if (!category?.discordRoleId) {
-        throw new BridgeError("No role ID found for category", { code: "MISSING_ROLE", context: "forwardPingToDiscord" });
-      }
-
       if (!ticket.discordChannelId) {
         throw new BridgeError("No Discord channel found for ticket", { code: "MISSING_CHANNEL", context: "forwardPingToDiscord" });
       }
+      
+      // Check if the ticket is claimed by a staff member
+      if (ticket.claimedBy) {
+        // Send notification to the staff member who claimed the ticket
+        await this.discordBot.sendMessage(
+          ticket.discordChannelId,
+          {
+            content: `🔔 <@${ticket.claimedBy}> The user has requested your assistance in this ticket.`,
+            allowedMentions: { users: [ticket.claimedBy] },
+            username: "Ticket Bot"
+          },
+          "Ticket Bot"
+        );
+        
+        log(`Successfully sent ping to staff member ${ticket.claimedBy} for ticket #${ticketId}`);
+        return;
+      }
+      
+      // No staff has claimed the ticket, ping the role
+      const category = await storage.getCategory(ticket.categoryId);
+      
+      if (!category?.discordRoleId) {
+        // No role ID set, just send a general message
+        await this.discordBot.sendMessage(
+          ticket.discordChannelId,
+          {
+            content: `🔔 **Attention:** The user has requested assistance in ticket #${ticketId}`,
+            username: "Ticket Bot"
+          },
+          "Ticket Bot"
+        );
+        return;
+      }
 
+      // Send ping to the appropriate role
       await this.discordBot.sendMessage(
         ticket.discordChannelId,
         {
-          content: `🔔 <@&${category.discordRoleId}> You've been pinged by @${telegramUsername} in ticket #${ticketId}`,
+          content: `🔔 <@&${category.discordRoleId}> The user has requested assistance in ticket #${ticketId}`,
           allowedMentions: { roles: [category.discordRoleId] },
           username: "Ticket Bot"
         },
         "Ticket Bot"
       );
 
-      log(`Successfully sent ping to Discord role ${category.discordRoleId}`);
+      log(`Successfully sent ping to Discord role ${category.discordRoleId} for ticket #${ticketId}`);
     } catch (error) {
       handleBridgeError(error as BridgeError, "forwardPingToDiscord");
       throw error;
@@ -1447,9 +1486,38 @@ export class BridgeManager {
 
   async pingRoleForCategory(categoryId: number, channelId: string): Promise<void> {
     try {
+      const ticket = await storage.getTicketByDiscordChannel(channelId);
+      if (!ticket) {
+        log(`No ticket found for Discord channel ${channelId}`);
+        return;
+      }
+      
       const category = await storage.getCategory(categoryId);
+      
+      // Check if ticket is claimed by someone
+      if (ticket.claimedBy) {
+        // Send a direct message to the person who claimed it
+        const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
+        if (channel?.isTextBased()) {
+          await channel.send({
+            content: `<@${ticket.claimedBy}> The user has pinged for assistance in this ticket.`,
+            allowedMentions: { users: [ticket.claimedBy] }
+          });
+          log(`Successfully pinged staff ${ticket.claimedBy} for ticket #${ticket.id}`);
+        }
+        return;
+      }
+      
+      // Not claimed, ping role if available
       if (!category?.discordRoleId) {
         log(`No role ID found for category ${categoryId}`);
+        // Still send a message to the channel
+        const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
+        if (channel?.isTextBased()) {
+          await channel.send({
+            content: `**Attention:** The user has requested assistance in this ticket.`
+          });
+        }
         return;
       }
 
@@ -1460,12 +1528,12 @@ export class BridgeManager {
       // Get channel from Discord client's cache
       const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
       if (channel?.isTextBased()) {
-        // Send message as bot directly
+        // Send message as bot directly with role ping
         await channel.send({
-          content: `<@&${cleanRoleId}>`,
+          content: `<@&${cleanRoleId}> The user has requested assistance in this ticket.`,
           allowedMentions: { roles: [cleanRoleId] }
         });
-        log(`Successfully pinged role ${cleanRoleId} for category ${categoryId}`);
+        log(`Successfully pinged role ${cleanRoleId} for category ${categoryId} in ticket #${ticket.id}`);
       }
     } catch (error) {
       handleBridgeError(error as BridgeError, "pingRoleForCategory");

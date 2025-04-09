@@ -1398,9 +1398,81 @@ export class TelegramBot {
       
       try {
         log(`Received ping command from user ${ctx.from.id}`);
-        await ctx.reply("🏓 Pong! Bot is online and working.");
+        
+        // Get user and check active ticket
+        const user = await storage.getUserByTelegramId(ctx.from.id.toString());
+        if (!user) {
+          await ctx.reply("❌ You need to use /start first to create a user account.");
+          return;
+        }
+        
+        // Check if user has an active ticket
+        const userState = this.userStates.get(ctx.from.id);
+        
+        if (!userState?.activeTicketId) {
+          // Check if we can find their active ticket in the database
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          if (!activeTicket) {
+            await ctx.reply("❌ You don't have an active ticket. Use /start to create one first.");
+            return;
+          }
+          
+          // Use the active ticket from database
+          await ctx.reply("🔔 Pinging staff in your active ticket...");
+          await this.bridge.pingRoleForCategory(activeTicket.categoryId!, activeTicket.discordChannelId!);
+          return;
+        }
+        
+        // Get the ticket
+        const ticket = await storage.getTicket(userState.activeTicketId);
+        if (!ticket || ticket.status !== 'pending') {
+          await ctx.reply("❌ Your active ticket was not found or is closed. Use /start to create a new one.");
+          return;
+        }
+        
+        // Check if the ticket has a Discord channel
+        if (!ticket.discordChannelId) {
+          await ctx.reply("❌ This ticket doesn't have a Discord channel yet. Please wait a moment and try again.");
+          return;
+        }
+        
+        // Get category for role pinging
+        if (!ticket.categoryId) {
+          await ctx.reply("❌ This ticket doesn't have a valid category. Please contact support.");
+          return;
+        }
+        
+        const category = await storage.getCategory(ticket.categoryId);
+        if (!category) {
+          await ctx.reply("❌ Service category not found. Please contact support.");
+          return;
+        }
+        
+        // Ping the Discord role or staff
+        if (ticket.claimedBy) {
+          // If ticket is claimed, notify the user
+          await ctx.reply("🔔 This ticket is being handled by a dedicated staff member. They have been notified of your request.");
+          
+          // Send a message in the Discord channel to notify the staff member
+          await this.bridge.sendSystemMessageToDiscord(
+            ticket.discordChannelId,
+            `🔔 **Attention:** The user has pinged staff for assistance in this ticket.`
+          );
+        } else if (category.discordRoleId) {
+          // If not claimed but has a role ID, ping the role
+          await ctx.reply("🔔 Pinging staff in your ticket... Someone will respond shortly.");
+          await this.bridge.pingRoleForCategory(ticket.categoryId, ticket.discordChannelId);
+        } else {
+          // Fallback message if no role ID is set
+          await ctx.reply("🔔 Staff has been notified. Someone will respond shortly.");
+          await this.bridge.sendSystemMessageToDiscord(
+            ticket.discordChannelId,
+            `🔔 **Attention:** The user has requested assistance in this ticket.`
+          );
+        }
       } catch (error) {
         log(`Error in ping command: ${error}`, "error");
+        await ctx.reply("❌ An error occurred while trying to ping staff. Please try again later.");
       }
     });
     

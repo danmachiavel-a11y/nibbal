@@ -656,50 +656,60 @@ export class DiscordBot {
       }
 
       if (interaction.commandName === 'ping') {
-        const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
-
-        if (!ticket) {
-          await interaction.reply({
-            content: "This command can only be used in ticket channels!",
-            ephemeral: true
-          });
-          return;
-        }
-
+        // Reply immediately to avoid timeout errors
+        await interaction.reply({
+          content: "🔄 Sending ping to the user...",
+          ephemeral: true
+        });
+        
         try {
-          // Get ticket creator's info
-          const user = await storage.getUser(ticket.userId!);
-          if (!user || !user.telegramId) {
-            await interaction.reply({
-              content: "Could not find Telegram information for this ticket's creator.",
-              ephemeral: true
+          const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
+
+          if (!ticket) {
+            await interaction.editReply({
+              content: "❌ This command can only be used in ticket channels!"
             });
             return;
           }
 
-          // Use member's display name if available, fallback to username
-          // Get display name with fallbacks
-          let displayName = "Discord User";
-          if (interaction.member && 'displayName' in interaction.member) {
-            displayName = interaction.member.displayName;
-          } else if (interaction.user && 'username' in interaction.user) {
-            displayName = interaction.user.username;
+          // Get ticket creator's info
+          const user = await storage.getUser(ticket.userId!);
+          if (!user || !user.telegramId) {
+            await interaction.editReply({
+              content: "❌ Could not find Telegram information for this ticket's creator."
+            });
+            return;
           }
 
-          // Forward ping through bridge
-          await this.bridge.forwardPingToTelegram(ticket.id, displayName);
-
-          // Send confirmation
-          await interaction.reply({
-            content: "✅ The ticket creator has been successfully notified.",
-            ephemeral: true
+          // Send notification to Telegram user
+          await this.bridge.sendMessageToTelegram(
+            parseInt(user.telegramId),
+            `🔔 *Important:* A staff member is requesting your attention in ticket #${ticket.id}`
+          );
+          
+          // Update the response
+          await interaction.editReply({
+            content: "✅ The user has been notified and will respond when available."
           });
+          
+          // Also send a system message to the channel so other staff can see
+          await this.bridge.sendSystemMessageToDiscord(
+            interaction.channelId,
+            `**System:** ${interaction.user.username} has pinged the user for a response.`
+          );
+          
+          log(`Successfully sent ping to Telegram user ${user.telegramId}`);
         } catch (error) {
           log(`Error sending ping: ${error}`, "error");
-          await interaction.reply({
-            content: "Failed to send ping. Please try again.",
-            ephemeral: true
-          });
+          
+          // Make sure we update the reply
+          try {
+            await interaction.editReply({
+              content: `❌ Failed to send ping: ${error}`
+            });
+          } catch (replyError) {
+            log(`Failed to update ping error response: ${replyError}`, "error");
+          }
         }
       }
 
