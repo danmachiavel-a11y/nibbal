@@ -1605,6 +1605,14 @@ Images/photos are also supported.
         await storage.updateTicketStatus(activeTicket.id, "closed");
         console.log(`Database update completed for ticket ${activeTicket.id}`);
         
+        // Clear the user's active ticket from memory state
+        const userState = this.userStates.get(userId);
+        if (userState && userState.activeTicketId === activeTicket.id) {
+          console.log(`Clearing active ticket ${activeTicket.id} from user ${userId} memory state`);
+          userState.activeTicketId = undefined;
+          await this.setState(userId, userState);
+        }
+        
         // Verify the ticket was actually closed
         const verifyTicket = await storage.getTicket(activeTicket.id);
         console.log(`Verification after update: Ticket ${activeTicket.id} status is now ${verifyTicket?.status}`);
@@ -1674,6 +1682,26 @@ Images/photos are also supported.
         
         // Close the ticket
         await storage.updateTicketStatus(ticket.id, "closed");
+        
+        // If the user who created this ticket has an active state with this ticket,
+        // clear it from their state 
+        try {
+          // Get the user who created this ticket
+          const ticketUser = await storage.getUser(ticket.userId);
+          if (ticketUser && ticketUser.telegramId) {
+            const telegramId = parseInt(ticketUser.telegramId);
+            const userState = this.userStates.get(telegramId);
+            
+            if (userState && userState.activeTicketId === ticket.id) {
+              console.log(`Clearing active ticket ${ticket.id} from user ${telegramId} memory state during emergency close`);
+              userState.activeTicketId = undefined;
+              await this.setState(telegramId, userState);
+            }
+          }
+        } catch (stateError) {
+          console.error(`Error clearing user state during emergency close: ${stateError}`);
+          // Don't interrupt the main command flow for state cleanup errors
+        }
         
         await ctx.reply(`✅ Successfully closed ticket #${ticket.id}`);
         
