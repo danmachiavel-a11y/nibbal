@@ -2156,6 +2156,63 @@ Images/photos are also supported.
               const categoryName = category ? category.name : "Unknown category";
               
               await ctx.answerCbQuery(`Switched to ticket #${ticketId}`);
+              
+              // Get all active tickets again to display the updated menu
+              const userTickets = await storage.getActiveTicketsByUserId(user.id);
+              
+              // Create updated buttons list with the new selected ticket
+              const updatedButtons = [];
+              
+              // Get categories info for updating the menu
+              const categoryIds = [...new Set(userTickets.map(t => t.categoryId).filter(id => id !== null))];
+              const categoriesMap = new Map();
+              
+              for (const catId of categoryIds) {
+                const cat = await storage.getCategory(catId!);
+                if (cat) {
+                  categoriesMap.set(catId, cat);
+                }
+              }
+              
+              // Create a button for each ticket with updated status
+              for (const t of userTickets) {
+                const cat = categoriesMap.get(t.categoryId);
+                const catName = cat ? cat.name : "Unknown category";
+                
+                // Mark currently active ticket
+                const isActive = ticketId === t.id;
+                const buttonLabel = isActive 
+                  ? `✅ #${t.id}: ${catName} (current)` 
+                  : `#${t.id}: ${catName}`;
+                
+                updatedButtons.push([{
+                  text: buttonLabel,
+                  callback_data: `switch_${t.id}`
+                }]);
+              }
+              
+              // Add button for creating a new ticket
+              updatedButtons.push([{
+                text: "➕ Create New Ticket",
+                callback_data: "switch_new"
+              }]);
+              
+              // Try to edit the original message with updated buttons
+              // First need to check if we can get the original message ID
+              const messageId = ctx.callbackQuery?.message?.message_id;
+              if (messageId) {
+                try {
+                  // Update the inline keyboard with the new active ticket
+                  await ctx.editMessageReplyMarkup({
+                    inline_keyboard: updatedButtons
+                  });
+                } catch (editError) {
+                  log(`Could not update switch menu: ${editError}`, "warn");
+                  // Continue even if we couldn't update the menu
+                }
+              }
+              
+              // Send confirmation message
               await ctx.reply(`✅ Switched to ticket #${ticketId} (${categoryName}). You can now continue your conversation here.`);
             } catch (error) {
               log(`Error switching tickets: ${error}`, "error");
@@ -2191,7 +2248,8 @@ Images/photos are also supported.
       }
       
       // Get current state if it exists
-      let userState = this.userStates.get(userId);
+      const initialState = this.userStates.get(userId);
+      let userState = initialState ? { ...initialState } : undefined;
       log(`Initial user state check: ${JSON.stringify(userState)}`);
       
       try {
@@ -2213,7 +2271,7 @@ Images/photos are also supported.
             log(`Found active ticket ${activeTicket.id} for user ${userId} without loaded state, reconstructing state`);
             
             // Recreate state
-            userState = {
+            const newState = {
               activeTicketId: activeTicket.id,
               categoryId: activeTicket.categoryId!,
               currentQuestion: 0,
@@ -2222,8 +2280,9 @@ Images/photos are also supported.
               lastUpdated: Date.now()
             };
             
-            // Store this state
-            await this.setState(userId, userState);
+            // Update our local copy and store in the global state
+            userState = newState;
+            await this.setState(userId, newState);
           } else {
             log(`No active tickets found for user ${userId}, ignoring message`, "info");
             await ctx.reply("You don't have an active ticket. Use /start to create a new one.");
@@ -2325,7 +2384,8 @@ Images/photos are also supported.
       
       const userId = ctx.from.id;
       // Get current state if it exists
-      let userState = this.userStates.get(userId);
+      const originalState = this.userStates.get(userId);
+      let userState = originalState ? { ...originalState } : undefined;
       log(`Photo received - Initial user state check: ${JSON.stringify(userState)}`);
       
       try {
@@ -2347,7 +2407,7 @@ Images/photos are also supported.
             log(`Found active ticket ${activeTicket.id} for user ${userId} without loaded state, reconstructing state`);
             
             // Recreate state
-            userState = {
+            const newState = {
               activeTicketId: activeTicket.id,
               categoryId: activeTicket.categoryId!,
               currentQuestion: 0,
@@ -2356,8 +2416,9 @@ Images/photos are also supported.
               lastUpdated: Date.now()
             };
             
-            // Store this state
-            await this.setState(userId, userState);
+            // Update our local copy and store in the global state
+            userState = newState;
+            await this.setState(userId, newState);
           } else {
             log(`No active tickets found for user ${userId}, ignoring photo`, "info");
             await ctx.reply("You don't have an active ticket. Use /start to create a new one.");
@@ -2371,8 +2432,7 @@ Images/photos are also supported.
           return;
         }
         
-        // Check if the user has an active ticket in the state
-        const userState = this.userStates.get(userId);
+        // Use the already defined userState
         let activeTicketId = userState?.activeTicketId;
         
         // Get all active tickets
