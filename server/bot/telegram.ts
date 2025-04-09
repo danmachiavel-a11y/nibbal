@@ -398,7 +398,7 @@ export class TelegramBot {
     return true;
   }
 
-  private async setState(userId: number, state: UserState) {
+  async setState(userId: number, state: UserState) {
     // Clear existing timeout if any
     if (this.stateCleanups.has(userId)) {
       clearTimeout(this.stateCleanups.get(userId)!.timeout);
@@ -799,7 +799,8 @@ export class TelegramBot {
         avatarUrl,
         undefined,
         firstName,
-        lastName
+        lastName,
+        userId
       );
 
       log(`Message processed successfully for ticket ${ticket.id}`);
@@ -2259,9 +2260,7 @@ Images/photos are also supported.
                 log(`Found ${otherTickets.length} other active tickets`, "debug");
                 
                 // Always send a notification to the current channel
-                const message = isPreviousSameAsCurrent
-                  ? `**Note:** ${displayName} is actively viewing this ticket (#${ticketId}).`
-                  : `**Note:** ${displayName} has switched to viewing this ticket (#${ticketId}).`;
+                const message = `**Note:** ${displayName} switched to this ticket`;
                 
                 log(`Sending Discord notification to current channel: ${ticket.discordChannelId}`, "debug");
                 await this.bridge.sendSystemMessageToDiscord(
@@ -2273,9 +2272,14 @@ Images/photos are also supported.
                 for (const otherTicket of otherTickets) {
                   if (otherTicket.discordChannelId) {
                     log(`Sending Discord notification to other channel: ${otherTicket.discordChannelId}`, "debug");
+                    
+                    // Create a command to force the user back to this ticket
+                    // We'll make this a command that Discord staff can run
+                    const forceSwitchCommand = `!forceswitch ${user.telegramId} ${otherTicket.id}`;
+                    
                     await this.bridge.sendSystemMessageToDiscord(
                       otherTicket.discordChannelId,
-                      `**Note:** ${displayName} has switched to ticket #${ticketId} (${categoryName}). They may not see messages in this channel anymore.`
+                      `**Note:** ${displayName} has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.\n\nStaff can use \`${forceSwitchCommand}\` to force the user back to this ticket.`
                     );
                   }
                 }
@@ -2586,7 +2590,8 @@ Images/photos are also supported.
           avatarUrl,
           fileUrl,
           firstName,
-          lastName
+          lastName,
+          ctx.from.id
         );
         
         log(`Photo forwarded from Telegram to Discord for ticket ${ticket.id}`);

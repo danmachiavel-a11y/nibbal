@@ -3,6 +3,7 @@ interface WebhookMessage {
   username: string;
   avatarURL?: string;
   embeds?: any[];
+  components?: any[]; // Add support for buttons and other components
   files?: Array<{
     attachment: Buffer | string;
     name: string;
@@ -51,7 +52,10 @@ import {
   Guild,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
-  ActionRowBuilder
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ButtonInteraction
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -504,6 +508,67 @@ export class DiscordBot {
             log(`Error handling autocomplete for ${commandName}: ${error}`, "error");
             // Return empty array on error
             await interaction.respond([]);
+          }
+        }
+        return;
+      }
+      
+      // Handle button interactions
+      if (interaction.isButton()) {
+        try {
+          // Extract data from the button custom ID
+          // Format: force_ticket:telegramId:ticketId:username
+          if (interaction.customId.startsWith('force_ticket:')) {
+            const params = interaction.customId.split(':');
+            if (params.length >= 3) {
+              const telegramId = params[1];
+              const ticketId = parseInt(params[2]);
+              const username = params.length > 3 ? params[3] : 'User';
+              
+              if (!telegramId || !ticketId) {
+                await interaction.reply('❌ Invalid button data. Missing required information.');
+                return;
+              }
+              
+              await interaction.deferReply();
+              
+              log(`Force switch requested for telegramId ${telegramId} to ticket ${ticketId}`);
+              
+              try {
+                // Call bridge to handle the force switch
+                await this.bridge.forceUserTicketSwitch(telegramId, ticketId);
+                
+                await interaction.editReply(`✅ Successfully forced ${username} back to ticket #${ticketId}`);
+                
+                // Send confirmation message to the channel visible to everyone
+                if (interaction.channel) {
+                  try {
+                    const channel = interaction.channel as TextChannel;
+                    await channel.send(`✅ ${interaction.user.username} has forced ${username} back to this ticket.`);
+                  } catch (error) {
+                    log(`Error sending channel message: ${error}`, "error");
+                  }
+                }
+              } catch (error) {
+                log(`Error forcing ticket switch: ${error}`, "error");
+                await interaction.editReply(`❌ Failed to force ticket switch: ${error}`);
+              }
+            } else {
+              await interaction.reply('❌ Invalid button format.');
+            }
+            return;
+          }
+        } catch (error) {
+          log(`Error handling button interaction: ${error}`, "error");
+          try {
+            // Try to respond to the interaction if we haven't already
+            if (!interaction.replied && !interaction.deferred) {
+              await interaction.reply('An error occurred while processing this button.');
+            } else if (!interaction.replied) {
+              await interaction.editReply('An error occurred while processing this button.');
+            }
+          } catch (replyError) {
+            log(`Error responding to button interaction: ${replyError}`, "error");
           }
         }
         return;
@@ -1754,6 +1819,119 @@ export class DiscordBot {
       // Ignore bot messages to prevent loops
       if (message.author.bot) return;
       if (message.content.startsWith('.')) return;
+      
+      // Handle force switch command from staff
+      if (message.content.startsWith('!forceswitch')) {
+        try {
+          // Check if the user has permission to use this command
+          const member = message.member;
+          if (!member || !member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+            await message.reply('You do not have permission to use this command.');
+            return;
+          }
+          
+          // Parse the command: !forceswitch <telegramId> <ticketId>
+          const parts = message.content.trim().split(' ');
+          if (parts.length !== 3) {
+            await message.reply('Invalid command format. Usage: !forceswitch <telegramId> <ticketId>');
+            return;
+          }
+          
+          const telegramId = parts[1];
+          const ticketId = parseInt(parts[2]);
+          
+          if (isNaN(ticketId)) {
+            await message.reply('Invalid ticket ID. Please provide a valid number.');
+            return;
+          }
+          
+          // Get the user from database
+          const user = await storage.getUserByTelegramId(telegramId);
+          if (!user) {
+            await message.reply(`User with Telegram ID ${telegramId} not found.`);
+            return;
+          }
+          
+          // Get the ticket
+          const ticket = await storage.getTicket(ticketId);
+          if (!ticket) {
+            await message.reply(`Ticket #${ticketId} not found.`);
+            return;
+          }
+          
+          // Verify the ticket belongs to this user
+          if (ticket.userId !== user.id) {
+            await message.reply(`Ticket #${ticketId} does not belong to user with Telegram ID ${telegramId}.`);
+            return;
+          }
+          
+          // Verify the ticket is active
+          if (ticket.status !== 'pending') {
+            await message.reply(`Ticket #${ticketId} is not active (status: ${ticket.status}).`);
+            return;
+          }
+          
+          // Get the user's ID
+          const userId = user.id;
+          
+          // Create the new state
+          const newState = JSON.stringify({
+            activeTicketId: ticketId,
+            categoryId: ticket.categoryId || 0,
+            currentQuestion: 0,
+            answers: [],
+            inQuestionnaire: false,
+            lastUpdated: Date.now()
+          });
+          
+          // Save the state
+          await storage.saveUserState(userId, telegramId, newState);
+          
+          // Get category name for message
+          let categoryName = "Unknown category";
+          if (ticket.categoryId) {
+            const category = await storage.getCategory(ticket.categoryId);
+            if (category) {
+              categoryName = category.name;
+            }
+          }
+          
+          // Notify the user via Telegram
+          try {
+            await this.bridge.sendMessageToTelegram(
+              parseInt(telegramId),
+              `⚠️ *A support agent has redirected you to ticket #${ticketId} (${categoryName}).*\n\nPlease continue your conversation in this ticket.`
+            );
+            
+            // Send a confirmation message to Discord
+            await message.reply(`✅ Successfully forced user with Telegram ID ${telegramId} to switch to ticket #${ticketId}.`);
+            
+            // Log the forced switch
+            log(`Staff member ${message.author.tag} forced user ${telegramId} to switch to ticket #${ticketId}`, "info");
+            
+            // Send a system message to the ticket channel
+            try {
+              if (ticket.discordChannelId) {
+                await this.bridge.sendSystemMessageToDiscord(
+                  ticket.discordChannelId,
+                  `**System:** ${message.author.username} has redirected the user back to this ticket.`
+                );
+              }
+            } catch (notifyError) {
+              log(`Error sending system message to Discord: ${notifyError}`, "warn");
+            }
+          } catch (error) {
+            log(`Error notifying user about forced switch: ${error}`, "error");
+            await message.reply(`Failed to notify user about the forced switch: ${error}`);
+          }
+        } catch (error) {
+          log(`Error processing forceswitch command: ${error}`, "error");
+          await message.reply(`Error processing command: ${error}`);
+        }
+        
+        // Don't process this message further
+        return;
+      }
 
       // Deduplicate messages by checking against recently processed messages
       const messageKey = `${message.id}-${message.channelId}`;
@@ -2318,6 +2496,8 @@ export class DiscordBot {
         throw new Error("Discord bot is not ready");
       }
       
+      await this.globalCheck();
+      
       const channel = await this.client.channels.fetch(channelId);
       if (!channel || !(channel instanceof TextChannel)) {
         log(`Channel ${channelId} is not a text channel or not found`, "warn");
@@ -2342,6 +2522,8 @@ export class DiscordBot {
         log("Discord client not ready when fetching text channels", "warn");
         return [];
       }
+      
+      await this.globalCheck();
       
       const guild = this.client.guilds.cache.first();
       if (!guild) {

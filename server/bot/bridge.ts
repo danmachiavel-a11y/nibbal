@@ -824,6 +824,31 @@ export class BridgeManager {
     }
   }
 
+  /**
+   * Send a direct message to a Telegram user by their Telegram ID
+   * Used for system notifications, ticket updates, etc.
+   */
+  async sendMessageToTelegram(telegramId: number, message: string): Promise<void> {
+    try {
+      if (!this.telegramBot) {
+        throw new BridgeError("Telegram bot is not ready", { context: "sendMessageToTelegram" });
+      }
+
+      // Check if the telegramId is valid
+      if (!telegramId || isNaN(telegramId) || telegramId <= 0) {
+        throw new BridgeError(`Invalid Telegram user ID: ${telegramId}`, { context: "sendMessageToTelegram" });
+      }
+
+      // Send message to Telegram user directly
+      log(`Sending direct message to Telegram user ${telegramId}`, "debug");
+      await this.telegramBot.sendMessage(telegramId, message);
+    } catch (error) {
+      log(`Error sending message to Telegram: ${error}`, "error");
+      handleBridgeError(error as BridgeError, "sendMessageToTelegram");
+      throw error; // Re-throw the error so it can be handled by the caller
+    }
+  }
+
   async forwardToTelegram(content: string, ticketId: number, username: string, attachments?: any[]) {
     try {
       // Create a more robust deduplication key using content hash and context
@@ -1020,7 +1045,7 @@ export class BridgeManager {
     }
   }
 
-  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string, firstName?: string, lastName?: string) {
+  async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string, firstName?: string, lastName?: string, telegramId?: number) {
     try {
       // Create a more robust deduplication key using content hash and context
       // For short content, use the full content, otherwise use a limited substring to avoid key size issues
@@ -1174,12 +1199,42 @@ export class BridgeManager {
         }
       } else {
         // Regular text message (no photo)
+        // Get the ticket user info to add Force Switch button
+        const user = await storage.getUser(ticket.userId!);
+        
+        // Get all user's tickets to check for multi-ticket scenario
+        let allTickets: Ticket[] = [];
+        if (user) {
+          allTickets = await storage.getTicketsByUserId(user.id);
+        }
+        
+        // Only add the button if user has more than one ticket and we have the telegramId
+        const showForceButton = allTickets.length > 1 && (telegramId || user?.telegramId);
+        
+        // Prepare components array if we need to add the button
+        const components = showForceButton 
+          ? [
+              {
+                type: 1, // Action Row
+                components: [
+                  {
+                    type: 2, // Button
+                    style: 1, // Primary
+                    label: "Force Back to This Ticket",
+                    custom_id: `force_ticket:${telegramId || user?.telegramId}:${ticketId}:${displayName}`
+                  }
+                ]
+              }
+            ]
+          : undefined;
+          
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
           {
             content: content ? content.toString().trim() : "\u200B",
             username: displayName,
-            avatarURL: avatarUrl
+            avatarURL: avatarUrl,
+            components
           },
           displayName
         );
@@ -1212,6 +1267,127 @@ export class BridgeManager {
       log(`Successfully sent ping to Telegram user ${user.telegramId}`);
     } catch (error) {
       handleBridgeError(error as BridgeError, "forwardPingToTelegram");
+      throw error;
+    }
+  }
+
+  /**
+   * Force a user to switch back to a specific ticket
+   * Used via Discord button or !forceswitch command
+   * @param telegramId The Telegram ID of the user to force switch
+   * @param ticketId The ticket ID to switch to
+   */
+  async forceUserTicketSwitch(telegramId: string, ticketId: number): Promise<void> {
+    try {
+      log(`Force switching user ${telegramId} to ticket ${ticketId}`, "info");
+      
+      // Validate inputs
+      if (!telegramId || !ticketId) {
+        throw new BridgeError("Missing required parameters", { 
+          context: "forceUserTicketSwitch", 
+          details: { telegramId, ticketId }
+        });
+      }
+      
+      // Get user by telegramId
+      const user = await storage.getUserByTelegramId(telegramId);
+      if (!user) {
+        throw new BridgeError(`User not found with telegramId: ${telegramId}`, { 
+          context: "forceUserTicketSwitch", 
+          code: "USER_NOT_FOUND"
+        });
+      }
+      
+      // Get the ticket
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket) {
+        throw new BridgeError(`Ticket not found with id: ${ticketId}`, { 
+          context: "forceUserTicketSwitch", 
+          code: "TICKET_NOT_FOUND"
+        });
+      }
+      
+      // Check that ticket belongs to this user
+      if (ticket.userId !== user.id) {
+        throw new BridgeError(`Ticket ${ticketId} does not belong to user ${telegramId}`, { 
+          context: "forceUserTicketSwitch", 
+          code: "INVALID_TICKET_USER"
+        });
+      }
+      
+      // Fetch ticket category
+      const category = await storage.getCategory(ticket.categoryId!);
+      if (!category) {
+        throw new BridgeError(`Category not found for ticket ${ticketId}`, { 
+          context: "forceUserTicketSwitch", 
+          code: "CATEGORY_NOT_FOUND"
+        });
+      }
+      
+      // Create the user state for the switch
+      const state = {
+        activeTicketId: ticketId,
+        categoryId: ticket.categoryId || 1,
+        currentQuestion: 0,
+        answers: [],
+        inQuestionnaire: false,
+        lastUpdated: Date.now(),
+        fromSwitchCommand: true
+      };
+      
+      // Get the Telegram Bot instance
+      const telegramBot = this.getTelegramBot();
+      
+      // Update state in memory 
+      try {
+        const telegramIdNum = parseInt(telegramId);
+        if (isNaN(telegramIdNum)) {
+          throw new BridgeError(`Invalid Telegram ID format: ${telegramId}`, { 
+            context: "forceUserTicketSwitch" 
+          });
+        }
+        
+        // Set the state in Telegram bot memory
+        await telegramBot.setState(telegramIdNum, state);
+        
+        // Persist state to database
+        await storage.saveUserState(user.id, telegramId, JSON.stringify(state));
+        
+        // Send notification to the Telegram user
+        await this.sendMessageToTelegram(
+          telegramIdNum, 
+          `🔄 Staff has switched your active ticket to #${ticketId} (${category.name}).`
+        );
+        
+        // Send notification in both Discord channels
+        // First in the current channel
+        if (ticket.discordChannelId) {
+          await this.sendSystemMessageToDiscord(
+            ticket.discordChannelId,
+            `**Note:** ${user.username} has been forced back to this ticket by staff.`
+          );
+        }
+        
+        // Get all other active tickets for this user
+        const otherTickets = await storage.getActiveTicketsByUserId(user.id);
+        for (const otherTicket of otherTickets) {
+          if (otherTicket.id !== ticketId && otherTicket.discordChannelId) {
+            await this.sendSystemMessageToDiscord(
+              otherTicket.discordChannelId,
+              `**Note:** ${user.username} has been forced to switch to ticket #${ticketId} by staff.`
+            );
+          }
+        }
+        
+        log(`Successfully forced user ${telegramId} to switch to ticket ${ticketId}`, "info");
+      } catch (error) {
+        throw new BridgeError(`Failed to set user state: ${error}`, { 
+          context: "forceUserTicketSwitch",
+          details: error
+        });
+      }
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "forceUserTicketSwitch");
       throw error;
     }
   }
