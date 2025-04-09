@@ -72,6 +72,8 @@ export const messages = pgTable("messages", {
   authorId: integer("author_id").references(() => users.id),
   platform: text("platform").notNull(),
   timestamp: timestamp("timestamp").notNull(),
+  attachments: text("attachments").array(),
+  rawAttachmentData: text("raw_attachment_data"),
 });
 
 // Define message queue table for offline message processing

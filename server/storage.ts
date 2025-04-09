@@ -51,6 +51,7 @@ export interface IStorage {
   // Message operations
   createMessage(message: InsertMessage): Promise<Message>;
   getTicketMessages(ticketId: number): Promise<Message[]>;
+  getRecentMessages(limit?: number): Promise<Message[]>;
 
   // New methods for payment tracking
   updateTicketPayment(id: number, amount: number, claimedBy: string): Promise<void>;
@@ -363,6 +364,16 @@ export class DatabaseStorage implements IStorage {
       .from(messages)
       .where(eq(messages.ticketId, ticketId))
       .orderBy(messages.timestamp);
+  }
+  
+  // Get recent messages with attachments (for debugging and recovery)
+  async getRecentMessages(limit: number = 20): Promise<Message[]> {
+    return db
+      .select()
+      .from(messages)
+      .where(sql`${messages.attachments} is not null`)
+      .orderBy(desc(messages.timestamp))
+      .limit(limit);
   }
 
   // Stats operations
