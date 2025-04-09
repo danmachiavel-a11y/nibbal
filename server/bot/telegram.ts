@@ -1199,58 +1199,95 @@ export class TelegramBot {
         
         try {
           // Get the most recent active state from the database
-          const stateString = await storage.getUserStateByTelegramId(user.telegramId);
+          let stateString = await storage.getUserStateByTelegramId(user.telegramId);
+          let state: UserState | null = null;
+          let hasRestoredFromState = false;
           
+          // First try to restore from saved state
           if (stateString) {
-            // Parse the state and store it in memory
-            const state = JSON.parse(stateString) as UserState;
-            
-            // Only restore state if it has a valid activeTicketId or is in questionnaire mode
-            if (state.activeTicketId || state.inQuestionnaire) {
-              try {
-                // Use BigInt to safely handle large Telegram IDs
-                const telegramUserIdBig = BigInt(user.telegramId);
-                // Convert to number for internal use, but safely handle large numbers
-                let telegramUserId: number;
-                
-                // If the ID is too large for a safe integer, use a hash of the original string
-                if (telegramUserIdBig > BigInt(Number.MAX_SAFE_INTEGER)) {
-                  // Create a stable number representation of large IDs using hash
-                  const hash = require('crypto')
-                    .createHash('md5')
-                    .update(user.telegramId)
-                    .digest('hex');
-                  // Use first 8 chars of hash converted to an integer
-                  telegramUserId = parseInt(hash.substring(0, 8), 16);
-                  log(`Using hash representation for large Telegram ID ${user.telegramId}: ${telegramUserId}`, "debug");
-                } else {
-                  telegramUserId = Number(telegramUserIdBig);
-                }
-                
-                // Store both the actual state and map the string ID to the numeric ID for lookups
-                this.userStates.set(telegramUserId, state);
-                
-                // Also setup cleanup for this state
-                const timeout = setTimeout(() => {
-                  this.userStates.delete(telegramUserId);
-                  this.stateCleanups.delete(telegramUserId);
-                  this.activeUsers.delete(telegramUserId);
-                  log(`Auto-cleared state for inactive user ${telegramUserId} (Telegram ID: ${user.telegramId})`, "debug");
-                }, this.STATE_TIMEOUT);
-                
-                this.stateCleanups.set(telegramUserId, {
-                  timeout,
-                  createdAt: Date.now()
-                });
-                
-                this.activeUsers.add(telegramUserId);
-                restoredCount++;
-                
-                log(`Restored state for user ${user.id} (Telegram ID: ${user.telegramId}): ${JSON.stringify(state)}`, "info");
-              } catch (parseError) {
-                failedCount++;
-                log(`Error parsing Telegram ID ${user.telegramId}: ${parseError}`, "error");
+            try {
+              // Parse the state
+              state = JSON.parse(stateString) as UserState;
+              
+              // Only restore state if it has a valid activeTicketId or is in questionnaire mode
+              if (state.activeTicketId || state.inQuestionnaire) {
+                hasRestoredFromState = true;
+              } else {
+                log(`[DB] Found user state for telegramId: ${user.telegramId} but it has no active ticket`, "debug");
+                state = null;
               }
+            } catch (parseError) {
+              log(`Error parsing state for telegramId: ${user.telegramId}: ${parseError}`, "error");
+              state = null;
+            }
+          } else {
+            log(`[DB] No active user state found for telegramId: ${user.telegramId}`);
+          }
+          
+          // If we couldn't restore from saved state, check if the user has an active ticket in the database
+          if (!hasRestoredFromState) {
+            // Look for active tickets for this user
+            const activeTicket = await storage.getActiveTicketByUserId(user.id);
+            if (activeTicket) {
+              log(`Found active ticket ${activeTicket.id} for user ${user.id} with telegramId ${user.telegramId} but no saved state. Reconstructing state...`, "info");
+              
+              // Recreate state from the active ticket
+              state = {
+                activeTicketId: activeTicket.id,
+                categoryId: activeTicket.categoryId || 1, // Default to category 1 if not set
+                currentQuestion: 0,
+                answers: [],
+                inQuestionnaire: false,
+                lastUpdated: Date.now()
+              };
+            }
+          }
+          
+          // If we have a state to restore (either from saved state or active ticket)
+          if (state) {
+            try {
+              // Use BigInt to safely handle large Telegram IDs
+              const telegramUserIdBig = BigInt(user.telegramId);
+              // Convert to number for internal use, but safely handle large numbers
+              let telegramUserId: number;
+              
+              // If the ID is too large for a safe integer, use a hash of the original string
+              if (telegramUserIdBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+                // Create a stable number representation of large IDs using hash
+                const hash = require('crypto')
+                  .createHash('md5')
+                  .update(user.telegramId)
+                  .digest('hex');
+                // Use first 8 chars of hash converted to an integer
+                telegramUserId = parseInt(hash.substring(0, 8), 16);
+                log(`Using hash representation for large Telegram ID ${user.telegramId}: ${telegramUserId}`, "debug");
+              } else {
+                telegramUserId = Number(telegramUserIdBig);
+              }
+              
+              // Store the state in memory
+              this.userStates.set(telegramUserId, state);
+              
+              // Also setup cleanup for this state
+              const timeout = setTimeout(() => {
+                this.userStates.delete(telegramUserId);
+                this.stateCleanups.delete(telegramUserId);
+                this.activeUsers.delete(telegramUserId);
+                log(`Auto-cleared state for inactive user ${telegramUserId} (Telegram ID: ${user.telegramId})`, "debug");
+              }, this.STATE_TIMEOUT);
+              
+              this.stateCleanups.set(telegramUserId, {
+                timeout,
+                createdAt: Date.now()
+              });
+              
+              this.activeUsers.add(telegramUserId);
+              restoredCount++;
+              
+              log(`Restored state for user ${user.id} (Telegram ID: ${user.telegramId}): ${JSON.stringify(state)}`, "info");
+            } catch (idError) {
+              failedCount++;
+              log(`Error processing Telegram ID ${user.telegramId}: ${idError}`, "error");
             }
           }
         } catch (error) {
@@ -1673,15 +1710,46 @@ export class TelegramBot {
         log(`Error in raw message processor: ${error}`, "error");
       }
       
-      const userState = this.userStates.get(userId);
-      
-      // If no state, ignore the message
-      if (!userState) return;
+      // Get current state if it exists
+      let userState = this.userStates.get(userId);
+      log(`Initial user state check: ${JSON.stringify(userState)}`);
       
       try {
         // Get the user from DB
         const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) return;
+        if (!user) {
+          log(`No user found for telegramId: ${userId}, ignoring message`, "warn");
+          return;
+        }
+        
+        // If no state, check if the user has an active ticket in the database
+        // This handles cases after bot restart where states aren't fully loaded
+        if (!userState) {
+          log(`No user state found for ${userId}, but user exists in DB. Checking for active tickets...`);
+          
+          // Check if user has an active ticket
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          if (activeTicket) {
+            log(`Found active ticket ${activeTicket.id} for user ${userId} without loaded state, reconstructing state`);
+            
+            // Recreate state
+            userState = {
+              activeTicketId: activeTicket.id,
+              categoryId: activeTicket.categoryId!,
+              currentQuestion: 0,
+              answers: [],
+              inQuestionnaire: false,
+              lastUpdated: Date.now()
+            };
+            
+            // Store this state
+            await this.setState(userId, userState);
+          } else {
+            log(`No active tickets found for user ${userId}, ignoring message`, "info");
+            await ctx.reply("You don't have an active ticket. Use /start to create a new one.");
+            return;
+          }
+        }
         
         // Check if banned
         if (user.isBanned) {
@@ -1713,15 +1781,46 @@ export class TelegramBot {
       if (!ctx.from?.id || !ctx.message?.photo) return;
       
       const userId = ctx.from.id;
-      const userState = this.userStates.get(userId);
-      
-      // If no state, ignore the message
-      if (!userState || !userState.activeTicketId) return;
+      // Get current state if it exists
+      let userState = this.userStates.get(userId);
+      log(`Photo received - Initial user state check: ${JSON.stringify(userState)}`);
       
       try {
         // Get the user from DB
         const user = await storage.getUserByTelegramId(userId.toString());
-        if (!user) return;
+        if (!user) {
+          log(`No user found for telegramId: ${userId}, ignoring photo`, "warn");
+          return;
+        }
+        
+        // If no state, check if the user has an active ticket in the database
+        // This handles cases after bot restart where states aren't fully loaded
+        if (!userState || !userState.activeTicketId) {
+          log(`No valid user state found for ${userId}, but user exists in DB. Checking for active tickets...`);
+          
+          // Check if user has an active ticket
+          const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          if (activeTicket) {
+            log(`Found active ticket ${activeTicket.id} for user ${userId} without loaded state, reconstructing state`);
+            
+            // Recreate state
+            userState = {
+              activeTicketId: activeTicket.id,
+              categoryId: activeTicket.categoryId!,
+              currentQuestion: 0,
+              answers: [],
+              inQuestionnaire: false,
+              lastUpdated: Date.now()
+            };
+            
+            // Store this state
+            await this.setState(userId, userState);
+          } else {
+            log(`No active tickets found for user ${userId}, ignoring photo`, "info");
+            await ctx.reply("You don't have an active ticket. Use /start to create a new one.");
+            return;
+          }
+        }
         
         // Check if banned
         if (user.isBanned) {
