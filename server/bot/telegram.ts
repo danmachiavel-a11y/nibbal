@@ -125,6 +125,8 @@ interface UserState {
   activeTicketId?: number;
   // Record time of last state change to help with recovery logic
   lastUpdated?: number;
+  // Flag to indicate this ticket creation is coming from the /switch command
+  fromSwitchCommand?: boolean;
 }
 
 interface StateCleanup {
@@ -1115,8 +1117,13 @@ export class TelegramBot {
       }
       
       // Check for existing active tickets (open, in-progress, pending, etc.)
+      // Only prevent new tickets when NOT coming from the /switch command
       const existingTicket = await storage.getActiveTicketByUserId(user.id);
-      if (existingTicket) {
+      
+      // Get the command path used to create this ticket
+      const fromSwitchCommand = state.fromSwitchCommand === true;
+      
+      if (existingTicket && !fromSwitchCommand) {
         console.log(`User ${user.id} has existing active ticket ${existingTicket.id} with status '${existingTicket.status}'`);
         
         // Update state to reference the existing ticket
@@ -1157,7 +1164,7 @@ export class TelegramBot {
       try {
         await this.bridge.createTicketChannel(ticket);
         
-        await ctx.reply("✅ Your ticket has been created! You can now send messages and they will be forwarded to our support team.");
+        await ctx.reply("✅ Your ticket has been created! You're now connected with our staff. Your messages will be sent directly to our team, and they'll respond to you here.");
         
         // Send summary of the ticket
         const ticketSummary = [
@@ -1387,36 +1394,50 @@ Images/photos are also supported.
           log(`Created new user with telegramId ${userId}`);
         }
         
-        // Check if the user already has an active ticket
+        // Check if the user already has active tickets and is in one currently
         if (existingUser) {
-          // First check if there's an active state
-          const userState = this.userStates.get(userId);
-          if (userState?.activeTicketId) {
-            log(`User ${userId} attempted to start but already has active ticket ${userState.activeTicketId}`);
-            await ctx.reply("❗ You already have an active ticket. Please use /close to close your current ticket before starting a new one.");
-            return;
-          }
+          // Get all active tickets
+          const activeTickets = await storage.getActiveTicketsByUserId(existingUser.id);
           
-          // Double-check in the database in case the user state wasn't loaded
-          const activeTicket = await storage.getActiveTicketByUserId(existingUser.id);
-          if (activeTicket) {
-            log(`User ${userId} attempted to start but has active ticket ${activeTicket.id} in database`);
+          if (activeTickets.length > 0) {
+            log(`User ${userId} attempted to start and has ${activeTickets.length} active tickets`);
             
-            // Reconstruct state since it wasn't found in memory
-            const state: UserState = {
-              activeTicketId: activeTicket.id,
-              categoryId: activeTicket.categoryId!,
-              currentQuestion: 0,
-              answers: [],
-              inQuestionnaire: false,
-              lastUpdated: Date.now()
-            };
+            // Get current state to check if they're in an active ticket
+            const userState = this.userStates.get(userId);
             
-            // Store the state
-            await this.setState(userId, state);
+            // If they have an active ticket currently selected, ask them to close it first
+            if (userState?.activeTicketId) {
+              const currentTicket = activeTickets.find(t => t.id === userState.activeTicketId);
+              if (currentTicket) {
+                await ctx.reply(
+                  `❗ You're currently in an active ticket (#${currentTicket.id}). Please use /close to close this ticket before starting a new one, or use /switch to see all your active tickets.`
+                );
+                return;
+              }
+            }
             
-            await ctx.reply(`❗ You already have an active ticket (#${activeTicket.id}). Please use /close to close your current ticket before starting a new one.`);
-            return;
+            // If they have active tickets but none selected currently, show list and continue
+            const ticketList = activeTickets.map((ticket, i) => {
+              const categoryId = ticket.categoryId || 0;
+              return `${i + 1}. Ticket #${ticket.id} (Category #${categoryId})`;
+            }).join('\n');
+            
+            await ctx.reply(
+              `ℹ️ You have ${activeTickets.length} active ticket(s):\n\n${ticketList}\n\n` +
+              "You're now creating a new ticket. Once created, you can use /switch to change between your tickets."
+            );
+            
+            // If there's no active state or the active ticket isn't set, create a state with no active ticket yet
+            if (!this.userStates.has(userId)) {
+              await this.setState(userId, {
+                activeTicketId: undefined, // No active ticket selected yet
+                categoryId: 0,
+                currentQuestion: 0,
+                answers: [],
+                inQuestionnaire: false,
+                lastUpdated: Date.now()
+              });
+            }
           }
         }
         
@@ -1438,15 +1459,30 @@ Images/photos are also supported.
       
       try {
         const userId = ctx.from.id;
+        const userState = this.userStates.get(userId);
         
-        // Clear user state
-        this.userStates.delete(userId);
-        if (this.stateCleanups.has(userId)) {
-          clearTimeout(this.stateCleanups.get(userId)!.timeout);
-          this.stateCleanups.delete(userId);
+        // Case 1: If user has an active ticket and not in questionnaire
+        if (userState?.activeTicketId && !userState.inQuestionnaire) {
+          await ctx.reply("❌ You have an active ticket. The /cancel command is only for canceling ticket creation. Use /close to close your active ticket.");
+          return;
         }
         
-        await ctx.reply("✅ Current action canceled. Use /start to create a new ticket.");
+        // Case 2: If user is in a questionnaire (ticket creation process)
+        if (userState?.inQuestionnaire) {
+          // Clear user state
+          this.userStates.delete(userId);
+          if (this.stateCleanups.has(userId)) {
+            clearTimeout(this.stateCleanups.get(userId)!.timeout);
+            this.stateCleanups.delete(userId);
+          }
+          
+          await ctx.reply("✅ Ticket creation canceled. Use /start to create a new order.");
+          return;
+        }
+        
+        // Case 3: User is not in ticket creation or active ticket
+        await ctx.reply("ℹ️ You are not currently creating a ticket. Use /start to begin a new order.");
+        
       } catch (error) {
         log(`Error in cancel command: ${error}`, "error");
       }
@@ -1575,10 +1611,11 @@ Images/photos are also supported.
         }
         console.log(`Found user in database: ${JSON.stringify(user)}`);
         
-        // Try to find an active ticket first
-        const activeTicket = await storage.getActiveTicketByUserId(user.id);
-        if (!activeTicket) {
-          console.log(`No active ticket found for user ${user.id}`);
+        // Get all active tickets for this user
+        const activeTickets = await storage.getActiveTicketsByUserId(user.id);
+        
+        if (activeTickets.length === 0) {
+          console.log(`No active tickets found for user ${user.id}`);
           
           // Check if there are any tickets with Discord channels that might be miscategorized
           console.log(`Checking for any tickets with Discord channels for user ${user.id}`);
@@ -1617,49 +1654,107 @@ Images/photos are also supported.
           await ctx.reply("❌ You don't have any active tickets. Use /start to create one.");
           return;
         }
-        console.log(`Found active ticket: ${JSON.stringify(activeTicket)}`);
+        
+        // Get the user's current active ticket from memory state
+        const userState = this.userStates.get(userId);
+        const currentTicketId = userState?.activeTicketId;
+        
+        // If user has multiple active tickets and none is selected in state, ask them which one to close
+        if (activeTickets.length > 1 && !currentTicketId) {
+          // Create buttons for each ticket
+          const buttons = [];
+          
+          // Get the categories for all tickets upfront to avoid multiple DB calls
+          const categoryIds = [...new Set(activeTickets.map(t => t.categoryId).filter(id => id !== null))];
+          const categoriesMap = new Map();
+          
+          for (const categoryId of categoryIds) {
+            const category = await storage.getCategory(categoryId!);
+            if (category) {
+              categoriesMap.set(categoryId, category);
+            }
+          }
+          
+          // Create a button for each ticket
+          for (const ticket of activeTickets) {
+            const category = categoriesMap.get(ticket.categoryId);
+            const categoryName = category ? category.name : "Unknown category";
+            const buttonLabel = `#${ticket.id}: ${categoryName}`;
+            
+            buttons.push([{
+              text: buttonLabel,
+              callback_data: `close_${ticket.id}`
+            }]);
+          }
+          
+          // Format ticket list
+          let ticketList = "🎫 *You have multiple active tickets. Which one would you like to close?*\n\n";
+          ticketList += "Please select a ticket to close:";
+          
+          // Send list with inline keyboard buttons
+          await ctx.reply(ticketList, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: buttons
+            }
+          });
+          
+          return;
+        }
+        
+        // If user has a selected ticket in memory state or just one active ticket, close that one
+        const ticketToClose = currentTicketId 
+          ? activeTickets.find(t => t.id === currentTicketId) 
+          : activeTickets[0];
+        
+        if (!ticketToClose) {
+          console.log(`Current ticket ID ${currentTicketId} not found in active tickets`);
+          await ctx.reply("❌ Could not find your selected ticket. Use /switch to select an active ticket first.");
+          return;
+        }
+        
+        console.log(`Found active ticket to close: ${JSON.stringify(ticketToClose)}`);
         
         // Close the ticket
-        console.log(`Attempting to update ticket status to 'closed' for ticket ID ${activeTicket.id}`);
-        await storage.updateTicketStatus(activeTicket.id, "closed");
-        console.log(`Database update completed for ticket ${activeTicket.id}`);
+        console.log(`Attempting to update ticket status to 'closed' for ticket ID ${ticketToClose.id}`);
+        await storage.updateTicketStatus(ticketToClose.id, "closed");
+        console.log(`Database update completed for ticket ${ticketToClose.id}`);
         
-        // Clear the user's active ticket from memory state
-        const userState = this.userStates.get(userId);
-        if (userState && userState.activeTicketId === activeTicket.id) {
-          console.log(`Clearing active ticket ${activeTicket.id} from user ${userId} memory state`);
+        // Clear the user's active ticket from memory state if it matches
+        if (userState && userState.activeTicketId === ticketToClose.id) {
+          console.log(`Clearing active ticket ${ticketToClose.id} from user ${userId} memory state`);
           userState.activeTicketId = undefined;
           await this.setState(userId, userState);
         }
         
         // Verify the ticket was actually closed
-        const verifyTicket = await storage.getTicket(activeTicket.id);
-        console.log(`Verification after update: Ticket ${activeTicket.id} status is now ${verifyTicket?.status}`);
+        const verifyTicket = await storage.getTicket(ticketToClose.id);
+        console.log(`Verification after update: Ticket ${ticketToClose.id} status is now ${verifyTicket?.status}`);
         
         // Move to transcripts if possible
-        if (activeTicket.discordChannelId) {
+        if (ticketToClose.discordChannelId) {
           try {
-            console.log(`Ticket has Discord channel ID: ${activeTicket.discordChannelId}, attempting to move to transcripts`);
+            console.log(`Ticket has Discord channel ID: ${ticketToClose.discordChannelId}, attempting to move to transcripts`);
             
             // Get category for transcript category ID
-            const category = await storage.getCategory(activeTicket.categoryId!);
+            const category = await storage.getCategory(ticketToClose.categoryId!);
             console.log(`Category for ticket: ${JSON.stringify(category)}`);
             
             if (category && category.transcriptCategoryId) {
-              await this.bridge.moveToTranscripts(activeTicket.id);
-              console.log(`Successfully moved ticket ${activeTicket.id} to transcripts category ${category.transcriptCategoryId}`);
-              await ctx.reply("✅ Your ticket has been closed and moved to Discord transcripts! Use /start when you're ready to begin again.");
+              await this.bridge.moveToTranscripts(ticketToClose.id);
+              console.log(`Successfully moved ticket ${ticketToClose.id} to transcripts category ${category.transcriptCategoryId}`);
+              await ctx.reply("✅ Your ticket has been closed. Use /start when you're ready to create a new ticket.");
             } else {
-              console.warn(`No transcript category found for category ${activeTicket.categoryId}`);
-              await ctx.reply("✅ Your ticket has been closed! (No Discord transcript category available) Use /start when you're ready to begin again.");
+              console.warn(`No transcript category found for category ${ticketToClose.categoryId}`);
+              await ctx.reply("✅ Your ticket has been closed. Use /start when you're ready to create a new ticket.");
             }
           } catch (moveError) {
             console.error(`Error moving ticket to transcripts: ${moveError}`);
-            await ctx.reply("✅ Your ticket has been closed! (There was an error moving to Discord transcripts) Use /start when you're ready to begin again.");
+            await ctx.reply("✅ Your ticket has been closed. Use /start when you're ready to create a new ticket.");
           }
         } else {
-          console.log(`Ticket ${activeTicket.id} has no Discord channel associated, skipping transcript move`);
-          await ctx.reply("✅ Your ticket has been closed! Use /start when you're ready to begin again.");
+          console.log(`Ticket ${ticketToClose.id} has no Discord channel associated, skipping transcript move`);
+          await ctx.reply("✅ Your ticket has been closed. Use /start when you're ready to create a new ticket.");
         }
       } catch (error) {
         console.error(`Error in close command: ${error}`);
@@ -1871,6 +1966,66 @@ Images/photos are also supported.
         } else if (data.startsWith('category_')) {
           const categoryId = parseInt(data.substring(9));
           await this.handleCategorySelection(ctx, categoryId);
+        } else if (data.startsWith('close_')) {
+          // Handle ticket closing from buttons
+          const ticketId = parseInt(data.substring(6));
+          const userId = ctx.from.id;
+          
+          // Get user from database
+          const user = await storage.getUserByTelegramId(userId.toString());
+          if (!user) {
+            await ctx.answerCbQuery("Error: User not found");
+            return;
+          }
+          
+          try {
+            // Check if the ticket exists and belongs to this user
+            const ticket = await storage.getTicket(ticketId);
+            
+            if (!ticket) {
+              await ctx.answerCbQuery(`Ticket #${ticketId} not found`);
+              return;
+            }
+            
+            // Check if the ticket belongs to this user
+            if (ticket.userId !== user.id) {
+              await ctx.answerCbQuery(`Ticket #${ticketId} does not belong to you`);
+              return;
+            }
+            
+            // Close the ticket
+            await storage.updateTicketStatus(ticket.id, "closed");
+            await ctx.answerCbQuery(`Closed ticket #${ticketId}`);
+            
+            // Clear the user's active ticket from memory state if it matches
+            const userState = this.userStates.get(userId);
+            if (userState && userState.activeTicketId === ticket.id) {
+              userState.activeTicketId = undefined;
+              await this.setState(userId, userState);
+            }
+            
+            // Move to transcripts if possible
+            if (ticket.discordChannelId && ticket.categoryId) {
+              try {
+                const category = await storage.getCategory(ticket.categoryId);
+                
+                if (category && category.transcriptCategoryId) {
+                  await this.bridge.moveToTranscripts(ticket.id);
+                  await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one.`);
+                } else {
+                  await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one.`);
+                }
+              } catch (error) {
+                await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one.`);
+              }
+            } else {
+              await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one.`);
+            }
+          } catch (error) {
+            log(`Error closing ticket: ${error}`, "error");
+            await ctx.answerCbQuery("Error closing ticket");
+            await ctx.reply("❌ Error closing ticket. Please try again later.");
+          }
         } else if (data.startsWith('switch_')) {
           // Handle ticket switching buttons
           const switchOption = data.substring(7);
@@ -1893,7 +2048,14 @@ Images/photos are also supported.
           if (switchOption === 'new') {
             // User wants to create a new ticket
             await ctx.answerCbQuery("Creating a new ticket");
-            await ctx.reply("✅ Let's create your new support ticket. Please select the category that best matches your request below:");
+            
+            // Set fromSwitchCommand flag to true to bypass the "already has ticket" check
+            if (userState) {
+              userState.fromSwitchCommand = true;
+              await this.setState(userId, userState);
+            }
+            
+            await ctx.reply("✅ Let's create your new support ticket. Please select a category from the options displayed.");
             await this.handleCategoryMenu(ctx);
           } else {
             // User wants to switch to an existing ticket
@@ -2024,7 +2186,7 @@ Images/photos are also supported.
         // Check if the input is a ticket ID number or "new"
         if (lastCommand === "new") {
           // User wants to create a new ticket, reset state and redirect to /start
-          await ctx.reply("✅ Let's create your new support ticket. Please select the category that best matches your request below:");
+          await ctx.reply("✅ Let's create your new support ticket. Please select a category from the options displayed.");
           await this.handleCategoryMenu(ctx);
           return;
         } else if (/^\d+$/.test(lastCommand)) {
