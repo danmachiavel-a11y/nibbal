@@ -1893,7 +1893,7 @@ Images/photos are also supported.
           if (switchOption === 'new') {
             // User wants to create a new ticket
             await ctx.answerCbQuery("Creating a new ticket");
-            await ctx.reply("✅ Starting a new ticket. Please select a category:");
+            await ctx.reply("✅ Let's create your new support ticket. Please select the category that best matches your request below:");
             await this.handleCategoryMenu(ctx);
           } else {
             // User wants to switch to an existing ticket
@@ -2024,7 +2024,7 @@ Images/photos are also supported.
         // Check if the input is a ticket ID number or "new"
         if (lastCommand === "new") {
           // User wants to create a new ticket, reset state and redirect to /start
-          await ctx.reply("✅ Starting a new ticket. Please select a category:");
+          await ctx.reply("✅ Let's create your new support ticket. Please select the category that best matches your request below:");
           await this.handleCategoryMenu(ctx);
           return;
         } else if (/^\d+$/.test(lastCommand)) {
