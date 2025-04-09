@@ -722,6 +722,14 @@ export class TelegramBot {
     const state = this.userStates.get(userId);
     log(`Received message from user ${userId}. Current state: ${JSON.stringify(state)}`);
 
+    // Log the telegramId as a string to help diagnose issues
+    const telegramIdStr = userId.toString();
+    log(`Telegram ID as string: ${telegramIdStr} for ticket ${ticket.id}`);
+
+    // Log the full ticket and user objects to help diagnose issues
+    log(`Full ticket object: ${JSON.stringify(ticket)}`);
+    log(`Full user object: ${JSON.stringify(user)}`);
+
     if (!this.checkRateLimit(userId, 'message')) {
       await ctx.reply("⚠️ You are sending messages too fast. Please wait a moment.");
       return;

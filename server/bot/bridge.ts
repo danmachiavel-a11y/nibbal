@@ -1011,17 +1011,19 @@ export class BridgeManager {
         log(`[DEDUP] Generated key for Discord: ${dedupKey}`, "debug");
       }
       
-      // Check if this message was recently sent
-      if (this.messageDedupCache.has(dedupKey)) {
-        const lastSent = this.messageDedupCache.get(dedupKey);
-        if (now - lastSent! < this.messageDedupWindow) {
-          log(`Skipping duplicate message to Discord within ${this.messageDedupWindow}ms window: ${contentForKey.substring(0, 20)}...`, "warn");
-          return;
-        }
-      }
+      // Check if this message was recently sent - temporarily disabled for debugging
+      // if (this.messageDedupCache.has(dedupKey)) {
+      //   const lastSent = this.messageDedupCache.get(dedupKey);
+      //   if (now - lastSent! < this.messageDedupWindow) {
+      //     log(`Skipping duplicate message to Discord within ${this.messageDedupWindow}ms window: ${contentForKey.substring(0, 20)}...`, "warn");
+      //     return;
+      //   }
+      // }
       
-      // Update deduplication cache
-      this.messageDedupCache.set(dedupKey, now);
+      log(`DEBUG: Processing message to Discord, bypassing dedup. Key was: ${dedupKey}`, "warn");
+      
+      // Update deduplication cache - temporarily disabled
+      // this.messageDedupCache.set(dedupKey, now);
       
       // Clean old entries from dedup cache if it gets too large
       if (this.messageDedupCache.size > this.MAX_DEDUP_CACHE_SIZE) {
