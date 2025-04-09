@@ -913,6 +913,43 @@ export class TelegramBot {
         await ctx.reply("❌ Category not found.");
         return;
       }
+      
+      // Get the user record
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.reply("❌ Error: User record not found. Please use /start to begin again.");
+        return;
+      }
+      
+      // Get all active tickets for this user
+      const activeTickets = await storage.getActiveTicketsByUserId(user.id);
+      
+      // Check if there's already a ticket in the same category
+      const existingTicketInCategory = activeTickets.find(ticket => ticket.categoryId === categoryId);
+      
+      if (existingTicketInCategory) {
+        log(`User ${user.id} already has ticket ${existingTicketInCategory.id} in category ${categoryId}`);
+        
+        // Create a state pointing to the existing ticket
+        const state: UserState = {
+          categoryId,
+          currentQuestion: 0,
+          answers: [],
+          inQuestionnaire: false,
+          activeTicketId: existingTicketInCategory.id,
+          lastUpdated: Date.now()
+        };
+        
+        await this.setState(userId, state);
+        
+        // Notify the user they already have a ticket in this category
+        await ctx.reply(`ℹ️ You already have an active ticket in this category. Only one ticket per category is allowed.`);
+        
+        // Provide context about using /switch
+        await ctx.reply("You can use /switch to select this ticket or create a ticket in a different category.");
+        
+        return;
+      }
 
       // Display service image and summary if available
       if (category.serviceImageUrl) {
@@ -1117,33 +1154,30 @@ export class TelegramBot {
       }
       
       // Check for existing active tickets (open, in-progress, pending, etc.)
-      // Only prevent new tickets when NOT coming from the /switch command
-      const existingTicket = await storage.getActiveTicketByUserId(user.id);
+      // Get all active tickets for this user
+      const activeTickets = await storage.getActiveTicketsByUserId(user.id);
       
-      // Get the command path used to create this ticket
-      const fromSwitchCommand = state.fromSwitchCommand === true;
+      // Check if there's already a ticket in the same category
+      const existingTicketInCategory = activeTickets.find(ticket => ticket.categoryId === state.categoryId);
       
-      if (existingTicket && !fromSwitchCommand) {
-        console.log(`User ${user.id} has existing active ticket ${existingTicket.id} with status '${existingTicket.status}'`);
+      if (existingTicketInCategory) {
+        console.log(`User ${user.id} already has ticket ${existingTicketInCategory.id} in category ${state.categoryId}`);
         
-        // Update state to reference the existing ticket
+        // Update state to reference this existing ticket
         state.inQuestionnaire = false;
-        state.activeTicketId = existingTicket.id;
+        state.activeTicketId = existingTicketInCategory.id;
         this.setState(userId, state);
         
-        // Provide more context about the ticket status
-        if (existingTicket.status === 'pending') {
-          await ctx.reply("ℹ️ You already have a pending ticket waiting to be processed. Your messages will be sent to that ticket.");
-        } else if (existingTicket.status === 'in-progress') {
-          await ctx.reply("ℹ️ You already have a ticket in progress. Your messages will be sent to that ticket.");
-        } else {
-          await ctx.reply("ℹ️ You already have an active ticket. Your messages will be sent to that ticket.");
-        }
+        // Notify the user they already have a ticket in this category
+        await ctx.reply(`ℹ️ You already have an active ticket in this category. Only one ticket per category is allowed.`);
         
-        // Ask if the user wants to check status or close the existing ticket
-        await ctx.reply("If you'd like to close this ticket instead, please send the /close command.");
+        // Provide context about using /switch
+        await ctx.reply("You can use /switch to select this ticket or create a ticket in a different category.");
+        
         return;
       }
+      
+      // If we're here, there's no ticket in this category (though the user may have tickets in other categories)
       
       // Create the ticket
       const ticket = await storage.createTicket({
