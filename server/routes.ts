@@ -281,15 +281,16 @@ export async function registerRoutes(app: Express) {
                 hint: "Connection to Discord API was reset. This may be due to network issues or rate limiting."
               };
             }
-          } else if (typeof lastError === 'object') {
+          } else if (typeof lastError === 'object' && lastError !== null) {
             // Handle object error, preserving the existing properties
             errorDetails = {
               ...errorDetails,
-              ...lastError
+              // Safely spread non-null object properties
+              ...(lastError || {})
             };
             
-            // Add hints for specific error codes
-            if (lastError.code === "TOKEN_INVALID") {
+            // Add hints for specific error codes - safely check for code property
+            if (lastError && typeof lastError === 'object' && 'code' in lastError && lastError.code === "TOKEN_INVALID") {
               errorDetails = {
                 ...errorDetails,
                 hint: "The Discord bot token appears to be invalid. Please check your token and try again."

@@ -1462,15 +1462,29 @@ export class BridgeManager {
       // Check if the ticket is claimed by a staff member
       if (ticket.claimedBy) {
         // Send notification to the staff member who claimed the ticket
-        await this.discordBot.sendMessage(
-          ticket.discordChannelId,
-          {
-            content: `🔔 <@${ticket.claimedBy}> The user has requested your assistance in this ticket.`,
-            allowedMentions: { users: [ticket.claimedBy] },
-            username: "Ticket Bot"
-          },
-          "Ticket Bot"
-        );
+        try {
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              content: `🔔 <@${ticket.claimedBy}> The user has requested your assistance in this ticket.`,
+              // Fix the allowedMentions property type to match Discord.js expectations
+              allowedMentions: { roles: [], parse: ['users'] },
+              username: "Ticket Bot"
+            },
+            "Ticket Bot"
+          );
+        } catch (error) {
+          log(`Error sending ping to staff member: ${error}`, "error");
+          // Fallback with a simpler message that should work even if there's a property issue
+          await this.discordBot.sendMessage(
+            ticket.discordChannelId,
+            {
+              content: `🔔 <@${ticket.claimedBy}> The user has requested your assistance in this ticket.`,
+              username: "Ticket Bot"
+            },
+            "Ticket Bot"
+          );
+        }
         
         log(`Successfully sent ping to staff member ${ticket.claimedBy} for ticket #${ticketId}`);
         return;
@@ -1547,7 +1561,7 @@ export class BridgeManager {
         if (channel?.isTextBased()) {
           await channel.send({
             content: `<@${ticket.claimedBy}> The user has pinged for assistance in this ticket.`,
-            allowedMentions: { users: [ticket.claimedBy] }
+            allowedMentions: { parse: ['users'] }
           });
           log(`Successfully pinged staff ${ticket.claimedBy} for ticket #${ticket.id}`);
         }
