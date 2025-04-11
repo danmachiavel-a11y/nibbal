@@ -1114,7 +1114,7 @@ export async function registerRoutes(app: Express) {
       for (const category of categories) {
         const categoryTickets = await storage.getTicketsByCategory(category.id);
         const closedTickets = categoryTickets.filter(t =>
-          t.status === "closed" || t.status === "deleted"
+          t.status === "closed" || t.status === "deleted" || t.status === "transcript"
         );
 
         // Get messages for each ticket
@@ -1271,9 +1271,10 @@ export async function registerRoutes(app: Express) {
         return res.status(404).json({ message: "Transcript not found" });
       }
 
-      if (ticket.status !== "closed") {
+      // Allow deleting tickets with status "closed" or "transcript"
+      if (ticket.status !== "closed" && ticket.status !== "transcript") {
         return res.status(400).json({ 
-          message: "Cannot delete an active ticket. Only transcripts (closed tickets) can be deleted." 
+          message: "Cannot delete an active ticket. Only transcripts (closed or transcript status) can be deleted." 
         });
       }
 
