@@ -196,15 +196,133 @@ export async function registerRoutes(app: Express) {
   app.get("/api/bot/discord/status", async (req, res) => {
     try {
       if (!bridge) {
-        return res.json({ connected: false });
+        return res.json({ 
+          connected: false,
+          error: "Bot bridge not initialized",
+          environment: {
+            token_set: Boolean(process.env.DISCORD_BOT_TOKEN),
+            using_env_file: fs.existsSync(path.resolve(process.cwd(), '.env'))
+          }
+        });
       }
+      
       const discordBot = bridge.getDiscordBot();
+      const connected = !!discordBot?.isReady();
+      
+      // Include more detailed information if Discord is not connected
+      let errorDetails = null;
+      if (!connected && discordBot) {
+        errorDetails = discordBot.getLastError();
+      }
+      
       res.json({
-        connected: !!discordBot?.isReady(),
+        connected,
+        error: errorDetails,
+        environment: {
+          token_set: Boolean(process.env.DISCORD_BOT_TOKEN),
+          using_env_file: fs.existsSync(path.resolve(process.cwd(), '.env'))
+        }
       });
     } catch (error: any) {
       log(`Error checking Discord bot status: ${error}`, "error");
       res.status(500).json({ message: "Failed to check Discord bot status" });
+    }
+  });
+  
+  // API endpoint to update Discord bot token
+  app.post("/api/bot/discord/config", async (req, res) => {
+    try {
+      const { token } = req.body;
+      
+      if (!token) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Discord token is required"
+        });
+      }
+      
+      // Update process environment variables
+      process.env.DISCORD_BOT_TOKEN = token;
+      
+      // Try to update .env file
+      let fileUpdated = false;
+      try {
+        const envPath = path.resolve(process.cwd(), '.env');
+        let envContent = '';
+        
+        // Read existing .env if it exists
+        if (fs.existsSync(envPath)) {
+          const existingContent = fs.readFileSync(envPath, 'utf8');
+          const envLines = existingContent.split('\n');
+          let tokenLineExists = false;
+          
+          // Process each line
+          for (let i = 0; i < envLines.length; i++) {
+            const line = envLines[i];
+            if (line.trim() === '' || line.startsWith('#')) {
+              // Keep comments and empty lines unchanged
+              envContent += line + '\n';
+            } else {
+              // Check if this is a variable we're updating
+              const match = line.match(/^([^=]+)=/);
+              if (match) {
+                const key = match[1].trim();
+                if (key === 'DISCORD_BOT_TOKEN') {
+                  envContent += `${key}=${token}\n`;
+                  tokenLineExists = true;
+                } else {
+                  // Keep the line unchanged
+                  envContent += line + '\n';
+                }
+              } else {
+                // Keep the line unchanged
+                envContent += line + '\n';
+              }
+            }
+          }
+          
+          // Add token line if it doesn't exist
+          if (!tokenLineExists) {
+            envContent += `DISCORD_BOT_TOKEN=${token}\n`;
+          }
+        } else {
+          // Create new .env file with the provided token
+          envContent = `DISCORD_BOT_TOKEN=${token}\n`;
+        }
+        
+        // Write the updated .env file
+        fs.writeFileSync(envPath, envContent);
+        fileUpdated = true;
+        log("Updated .env file with new Discord token", "info");
+      } catch (error) {
+        log(`Error updating .env file: ${error}`, "error");
+      }
+      
+      // If the bridge is active, try to restart the Discord bot
+      let restartSuccess = false;
+      if (bridge) {
+        try {
+          await bridge.restartDiscordBot();
+          restartSuccess = true;
+          log("Discord bot restarted successfully", "info");
+        } catch (error) {
+          log(`Error restarting Discord bot: ${error}`, "error");
+        }
+      }
+      
+      return res.json({
+        success: true,
+        message: "Discord bot configuration updated",
+        env_file_updated: fileUpdated,
+        bot_restarted: restartSuccess
+      });
+    } catch (error) {
+      log(`Error updating Discord bot configuration: ${error}`, "error");
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update Discord bot configuration",
+        error: String(error)
+      });
     }
   });
 
