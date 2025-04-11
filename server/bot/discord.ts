@@ -475,58 +475,71 @@ export class DiscordBot {
     });
 
     // Handle autocomplete interactions
-    this.client.on('interactionCreate', async (interaction) => {
-      if (interaction.isAutocomplete()) {
-        const { commandName, options } = interaction;
+    // Setup error handler for process-level uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      log(`CRITICAL: Uncaught exception in Discord bot: ${error.stack || error.message || error}`, "error");
+      // Continue running despite the error
+      // This prevents the bot from crashing completely
+    });
 
-        if (commandName === 'closeservice' || commandName === 'openservice') {
-          try {
-            // Get all categories
-            const categories = await storage.getCategories();
-            const focusedOption = options.getFocused(true);
-            const focusedValue = focusedOption.value.toString().toLowerCase();
-            
-            // Filter categories based on command
-            let filteredCategories;
-            if (commandName === 'closeservice') {
-              // For closeservice, only show open categories
-              filteredCategories = categories.filter(c => !c.isClosed);
-            } else {
-              // For openservice, only show closed categories
-              filteredCategories = categories.filter(c => c.isClosed);
+    process.on('unhandledRejection', (reason, promise) => {
+      log(`CRITICAL: Unhandled promise rejection in Discord bot: ${reason}`, "error");
+      // Continue running despite the error
+    });
+
+    this.client.on('interactionCreate', async (interaction) => {
+      try {
+        if (interaction.isAutocomplete()) {
+          const { commandName, options } = interaction;
+
+          if (commandName === 'closeservice' || commandName === 'openservice') {
+            try {
+              // Get all categories
+              const categories = await storage.getCategories();
+              const focusedOption = options.getFocused(true);
+              const focusedValue = focusedOption.value.toString().toLowerCase();
+              
+              // Filter categories based on command
+              let filteredCategories;
+              if (commandName === 'closeservice') {
+                // For closeservice, only show open categories
+                filteredCategories = categories.filter(c => !c.isClosed);
+              } else {
+                // For openservice, only show closed categories
+                filteredCategories = categories.filter(c => c.isClosed);
+              }
+              
+              // Further filter by search term if provided
+              if (focusedValue) {
+                filteredCategories = filteredCategories.filter(c => 
+                  c.name.toLowerCase().includes(focusedValue) || 
+                  c.id.toString().includes(focusedValue)
+                );
+              }
+              
+              // Format results
+              const choices = filteredCategories.map(c => {
+                const prefix = c.isClosed ? "🔴 " : "";
+                return {
+                  name: `${prefix}${c.name} (ID: ${c.id})`,
+                  value: c.id.toString()
+                };
+              });
+              
+              // Return at most 25 choices (Discord's limit)
+              await interaction.respond(choices.slice(0, 25));
+            } catch (error) {
+              log(`Error handling autocomplete for ${commandName}: ${error}`, "error");
+              // Return empty array on error
+              await interaction.respond([]);
             }
-            
-            // Further filter by search term if provided
-            if (focusedValue) {
-              filteredCategories = filteredCategories.filter(c => 
-                c.name.toLowerCase().includes(focusedValue) || 
-                c.id.toString().includes(focusedValue)
-              );
-            }
-            
-            // Format results
-            const choices = filteredCategories.map(c => {
-              const prefix = c.isClosed ? "🔴 " : "";
-              return {
-                name: `${prefix}${c.name} (ID: ${c.id})`,
-                value: c.id.toString()
-              };
-            });
-            
-            // Return at most 25 choices (Discord's limit)
-            await interaction.respond(choices.slice(0, 25));
-          } catch (error) {
-            log(`Error handling autocomplete for ${commandName}: ${error}`, "error");
-            // Return empty array on error
-            await interaction.respond([]);
           }
+          return;
         }
-        return;
-      }
-      
-      // Handle button interactions
-      if (interaction.isButton()) {
-        try {
+        
+        // Handle button interactions
+        if (interaction.isButton()) {
+          try {
           // Extract data from the button custom ID
           // Format: force_ticket:telegramId:ticketId:username
           if (interaction.customId.startsWith('force_ticket:')) {
@@ -2075,6 +2088,29 @@ export class DiscordBot {
         }
       }
       } // Close the if (interaction.isChatInputCommand())
+      
+      } catch (error) {
+        // Global error handler for all interactions
+        const errorMessage = `CRITICAL ERROR handling interaction: ${error}`;
+        log(errorMessage, "error");
+        
+        // Try to give feedback to the user without crashing
+        try {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+              content: "An error occurred while processing your command. The error has been logged.",
+              ephemeral: true
+            });
+          } else if (interaction.deferred && !interaction.replied) {
+            await interaction.editReply({
+              content: "An error occurred while processing your command. The error has been logged."
+            });
+          }
+        } catch (replyError) {
+          // If we can't reply, just log and continue
+          log(`Failed to notify user of error: ${replyError}`, "error");
+        }
+      }
     });
 
     // Handle all text messages
