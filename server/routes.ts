@@ -5,6 +5,8 @@ import { BridgeManager } from "./bot/bridge";
 import { z } from "zod";
 import { log } from "./vite";
 import { pool } from "./db";
+import * as fs from 'fs';
+import * as path from 'path';
 
 let bridge: BridgeManager | null = null;
 

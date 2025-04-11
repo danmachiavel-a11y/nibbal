@@ -505,8 +505,54 @@ export class BridgeManager {
     }
   }
 
+  // Restart only the Discord bot
+  async restartDiscordBot() {
+    log("Restarting Discord bot with new configuration...");
+    try {
+      // Gracefully stop the Discord bot
+      await this.discordBot.stop();
+      
+      // Add a small delay before creating a new instance
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Create new instance with updated token
+      this.discordBot = new DiscordBot(this);
+      
+      // Start the Discord bot
+      await this.discordBot.start();
+      
+      log("Discord bot restarted successfully");
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "restartDiscordBot");
+      throw error;
+    }
+  }
+  
+  // Restart only the Telegram bot
+  async restartTelegramBot() {
+    log("Restarting Telegram bot with new configuration...");
+    try {
+      // Gracefully stop the Telegram bot
+      await this.telegramBot.stop();
+      
+      // Add a small delay before creating a new instance
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Create new instance with updated token
+      this.telegramBot = new TelegramBot(this);
+      
+      // Start the Telegram bot
+      await this.telegramBot.start();
+      
+      log("Telegram bot restarted successfully");
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "restartTelegramBot");
+      throw error;
+    }
+  }
+
   async restart() {
-    log("Restarting bots with new configuration...");
+    log("Restarting all bots with new configuration...");
     try {
       // Clear health check interval
       if (this.healthCheckInterval) {
@@ -533,7 +579,7 @@ export class BridgeManager {
       // Restart health check
       this.startHealthCheck();
 
-      log("Bots restarted successfully");
+      log("All bots restarted successfully");
     } catch (error) {
       handleBridgeError(error as BridgeError, "restart");
       throw error;
