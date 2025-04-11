@@ -278,8 +278,8 @@ export default function Transcripts() {
                                     <Badge variant={message.platform === "discord" ? "default" : "secondary"} className="text-xs">
                                       {message.platform === "discord" ? "Discord" : "Telegram"}
                                     </Badge>
-                                    {/* Use safer way to access username property */}
-                                    <span>{(message as any).username || "Unknown"}</span>
+                                    {/* Display sender name if available */}
+                                    <span>{message.senderName || "Unknown User"}</span>
                                   </div>
                                   <div className="text-xs text-muted-foreground">
                                     {new Date(message.timestamp).toLocaleString()}

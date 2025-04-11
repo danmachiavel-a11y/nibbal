@@ -981,7 +981,8 @@ export class BridgeManager {
           content: content || "Image sent",
           authorId: user.id,
           platform: "discord",
-          timestamp: new Date()
+          timestamp: new Date(),
+          senderName: username
         });
 
         // Send text content if any
@@ -1037,7 +1038,8 @@ export class BridgeManager {
           content: textContent || "Image sent",
           authorId: user.id,
           platform: "discord",
-          timestamp: new Date()
+          timestamp: new Date(),
+          senderName: username
         });
 
         // Send text if any
@@ -1080,7 +1082,8 @@ export class BridgeManager {
           content,
           authorId: user.id,
           platform: "discord",
-          timestamp: new Date()
+          timestamp: new Date(),
+          senderName: username
         });
         await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
       }
