@@ -343,7 +343,8 @@ export class DatabaseStorage implements IStorage {
       .where(
         or(
           eq(tickets.status, 'closed'),
-          eq(tickets.status, 'transcript')
+          eq(tickets.status, 'transcript'),
+          eq(tickets.status, 'deleted')
         )
       )
       .orderBy(desc(tickets.completedAt))

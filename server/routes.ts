@@ -1271,10 +1271,10 @@ export async function registerRoutes(app: Express) {
         return res.status(404).json({ message: "Transcript not found" });
       }
 
-      // Allow deleting tickets with status "closed" or "transcript"
-      if (ticket.status !== "closed" && ticket.status !== "transcript") {
+      // Allow deleting tickets with status "closed", "transcript", or "deleted"
+      if (ticket.status !== "closed" && ticket.status !== "transcript" && ticket.status !== "deleted") {
         return res.status(400).json({ 
-          message: "Cannot delete an active ticket. Only transcripts (closed or transcript status) can be deleted." 
+          message: "Cannot delete an active ticket. Only transcripts (closed, transcript, or deleted status) can be deleted." 
         });
       }
 
