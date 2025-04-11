@@ -1,73 +1,126 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import dotenv from 'dotenv';
+import { log } from '../server/vite';
 
-// Simple function to load environment variables from .env file
+/**
+ * Loads environment variables from .env file
+ * @returns True if .env file was loaded successfully, false otherwise
+ */
 export function loadEnv() {
   try {
     const envPath = path.resolve(process.cwd(), '.env');
     
     // Check if .env file exists
     if (fs.existsSync(envPath)) {
-      console.log('Loading environment variables from .env file');
+      log('Loading environment variables from .env file', 'info');
       
-      // Read the .env file
-      const envFile = fs.readFileSync(envPath, 'utf8');
+      // Load .env file using dotenv
+      const result = dotenv.config({ path: envPath });
       
-      // Parse each line and set environment variables
-      envFile.split('\n').forEach(line => {
-        // Skip empty lines and comments
-        if (!line || line.startsWith('#')) {
-          return;
-        }
-        
-        // Split by first equals sign
-        const equalSignPos = line.indexOf('=');
-        if (equalSignPos > 0) {
-          const key = line.substring(0, equalSignPos).trim();
-          let value = line.substring(equalSignPos + 1).trim();
-          
-          // Remove quotes if present
-          if ((value.startsWith('"') && value.endsWith('"')) || 
-              (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.substring(1, value.length - 1);
-          }
-          
-          // Only set if not already defined
-          if (!process.env[key]) {
-            process.env[key] = value;
-            console.log(`Set environment variable: ${key}`);
-          }
-        }
-      });
+      if (result.error) {
+        log(`Error parsing .env file: ${result.error}`, 'error');
+        return false;
+      }
       
-      console.log('Environment variables loaded successfully');
+      // Log the keys being set (but not the values for security)
+      const keys = Object.keys(result.parsed || {});
+      log(`Loaded ${keys.length} environment variables: ${keys.join(', ')}`, 'info');
+      
+      // Special diagnostics for common bot tokens
+      if (process.env.DISCORD_BOT_TOKEN) {
+        const tokenLength = process.env.DISCORD_BOT_TOKEN.length;
+        log(`Discord bot token is set (${tokenLength} characters)`, 'info');
+      } else {
+        log('Discord bot token is not set in .env file', 'warn');
+      }
+      
+      if (process.env.TELEGRAM_BOT_TOKEN) {
+        const tokenLength = process.env.TELEGRAM_BOT_TOKEN.length;
+        log(`Telegram bot token is set (${tokenLength} characters)`, 'info');
+      } else {
+        log('Telegram bot token is not set in .env file', 'warn');
+      }
+      
       return true;
     } else {
-      console.log('No .env file found, using existing environment variables');
+      log('No .env file found, using existing environment variables', 'info');
       return false;
     }
   } catch (error) {
-    console.error('Error loading .env file:', error);
+    log(`Error loading .env file: ${error}`, 'error');
     return false;
   }
 }
 
-// Export a function to create a new .env file with the provided variables
-export function createEnvFile(variables: Record<string, string>) {
+/**
+ * Create or update an .env file with the provided variables
+ * @param variables Record of environment variables to set
+ * @param mode 'create' to create a new file, 'update' to update existing variables
+ * @returns True if file was created/updated successfully, false otherwise
+ */
+export function updateEnvFile(variables: Record<string, string>, mode: 'create' | 'update' = 'update') {
   try {
     const envPath = path.resolve(process.cwd(), '.env');
+    let envContent = '';
     
-    // Generate the content
-    const content = Object.entries(variables)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('\n');
+    // If updating and file exists, read existing content
+    if (mode === 'update' && fs.existsSync(envPath)) {
+      const existingContent = fs.readFileSync(envPath, 'utf8');
+      const existingLines = existingContent.split('\n');
+      const updatedKeys = new Set(Object.keys(variables));
+      
+      // Process each line in the existing file
+      for (const line of existingLines) {
+        if (line.trim() === '' || line.startsWith('#')) {
+          // Keep comments and empty lines
+          envContent += line + '\n';
+        } else {
+          // Check if this is a variable we're updating
+          const match = line.match(/^([^=]+)=/);
+          if (match) {
+            const key = match[1].trim();
+            if (updatedKeys.has(key)) {
+              // Replace with new value
+              envContent += `${key}=${variables[key]}\n`;
+              updatedKeys.delete(key);
+            } else {
+              // Keep existing line
+              envContent += line + '\n';
+            }
+          } else {
+            // Not a variable assignment, keep as is
+            envContent += line + '\n';
+          }
+        }
+      }
+      
+      // Add any variables that weren't in the file
+      for (const key of updatedKeys) {
+        envContent += `${key}=${variables[key]}\n`;
+      }
+    } else {
+      // Creating new file or overwriting
+      envContent = Object.entries(variables)
+        .map(([key, value]) => `${key}=${value}`)
+        .join('\n') + '\n';
+    }
     
     // Write to the file
-    fs.writeFileSync(envPath, content);
-    console.log('.env file created successfully');
+    fs.writeFileSync(envPath, envContent);
+    log(`.env file ${mode === 'create' ? 'created' : 'updated'} successfully`, 'info');
     return true;
   } catch (error) {
-    console.error('Error creating .env file:', error);
+    log(`Error ${mode === 'create' ? 'creating' : 'updating'} .env file: ${error}`, 'error');
     return false;
   }
+}
+
+/**
+ * Create a new .env file with the provided variables
+ * @param variables Record of environment variables to set
+ * @returns True if file was created successfully, false otherwise
+ */
+export function createEnvFile(variables: Record<string, string>) {
+  return updateEnvFile(variables, 'create');
 }
