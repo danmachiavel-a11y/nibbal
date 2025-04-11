@@ -764,12 +764,16 @@ export class TelegramBot {
       }
 
       // Process message
+      // Get user display name for the transcript
+      const senderName = user.telegramName || user.telegramUsername || user.username || 'Telegram User';
+      
       await storage.createMessage({
         ticketId: ticket.id,
         content: ctx.message.text,
         authorId: user.id,
         platform: "telegram",
-        timestamp: new Date()
+        timestamp: new Date(),
+        senderName: senderName
       });
 
       let avatarUrl: string | undefined;
@@ -2727,12 +2731,16 @@ Images/photos are also supported.
         const discordCaption = ctx.message.caption || "";
         
         // Store the message in the database
+        // Get user display name for the transcript
+        const senderName = user.telegramName || user.telegramUsername || user.username || 'Telegram User';
+        
         await storage.createMessage({
           ticketId: ticket.id,
           content: databaseCaption,
           authorId: user.id,
           platform: "telegram",
-          timestamp: new Date()
+          timestamp: new Date(),
+          senderName: senderName
         });
         
         // Get photo file

@@ -2293,12 +2293,16 @@ export class DiscordBot {
         // Store message in database first to ensure it's recorded
         const discordUser = await storage.getUserByDiscordId(message.author.id);
         if (discordUser) {
+          // Get Discord user's display name
+          const senderName = message.member?.displayName || message.author.username || 'Discord User';
+          
           await storage.createMessage({
             ticketId: ticket.id,
             content: message.content || "Sent an attachment",
             authorId: discordUser.id,
             platform: "discord",
-            timestamp: new Date()
+            timestamp: new Date(),
+            senderName: senderName
           });
           log(`Stored Discord message in database for ticket ${ticket.id}`);
         }
