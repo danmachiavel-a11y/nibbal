@@ -1816,6 +1816,32 @@ Images/photos are also supported.
       }
       
       try {
+        // Check if the user is in a questionnaire
+        const userMemoryState = this.userStates.get(userId);
+        
+        // Handle /close as /cancel if user is in a questionnaire
+        if (userMemoryState?.inQuestionnaire) {
+          console.log(`User ${userId} is in a questionnaire, handling /close as /cancel`);
+          
+          // Clear user state, just like /cancel does
+          this.userStates.delete(userId);
+          if (this.stateCleanups.has(userId)) {
+            clearTimeout(this.stateCleanups.get(userId)!.timeout);
+            this.stateCleanups.delete(userId);
+          }
+          
+          // Delete state from database as well
+          try {
+            await storage.deactivateUserState(userId.toString());
+          } catch (stateError) {
+            console.log(`Error clearing persisted state: ${stateError}`);
+          }
+          
+          await ctx.reply("✅ Ticket creation canceled. Use /start to create a new order.");
+          return;
+        }
+        
+        // If not in questionnaire, process as normal close command
         // Find the user
         const user = await storage.getUserByTelegramId(userId.toString());
         if (!user) {
@@ -1869,9 +1895,8 @@ Images/photos are also supported.
           return;
         }
         
-        // Get the user's current active ticket from memory state
-        const userState = this.userStates.get(userId);
-        const currentTicketId = userState?.activeTicketId;
+        // Get the active ticket ID from user's memory state
+        const currentTicketId = userMemoryState?.activeTicketId;
         
         // If user has multiple active tickets and none is selected in state, ask them which one to close
         if (activeTickets.length > 1 && !currentTicketId) {
@@ -1935,10 +1960,10 @@ Images/photos are also supported.
         console.log(`Database update completed for ticket ${ticketToClose.id}`);
         
         // Clear the user's active ticket from memory state if it matches
-        if (userState && userState.activeTicketId === ticketToClose.id) {
+        if (userMemoryState && userMemoryState.activeTicketId === ticketToClose.id) {
           console.log(`Clearing active ticket ${ticketToClose.id} from user ${userId} memory state`);
-          userState.activeTicketId = undefined;
-          await this.setState(userId, userState);
+          userMemoryState.activeTicketId = undefined;
+          await this.setState(userId, userMemoryState);
         }
         
         // Verify the ticket was actually closed

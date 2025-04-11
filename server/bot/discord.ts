@@ -55,7 +55,9 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ButtonInteraction
+  ButtonInteraction,
+  ChatInputCommandInteraction,
+  AutocompleteInteraction
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
