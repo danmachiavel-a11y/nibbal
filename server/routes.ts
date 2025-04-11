@@ -183,15 +183,50 @@ export async function registerRoutes(app: Express) {
   app.get("/api/bot/telegram/status", async (req, res) => {
     try {
       if (!bridge) {
-        return res.json({ connected: false });
+        return res.json({ 
+          connected: false,
+          error: {
+            code: "BOT_BRIDGE_UNAVAILABLE",
+            message: "Bot bridge not initialized"
+          },
+          environment: {
+            token_set: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+            token_length: process.env.TELEGRAM_BOT_TOKEN ? process.env.TELEGRAM_BOT_TOKEN.length : 0,
+            using_env_file: fs.existsSync(path.resolve(process.cwd(), '.env'))
+          }
+        });
       }
+      
       const telegramBot = bridge.getTelegramBot();
+      const connected = telegramBot?.getIsConnected() || false;
+      
+      // Include more detailed information
+      let errorDetails = null;
+      if (!connected && telegramBot) {
+        errorDetails = {
+          code: "TELEGRAM_BOT_UNAVAILABLE",
+          message: "Telegram bot failed to initialize or connect"
+        };
+      }
+      
       res.json({
-        connected: telegramBot?.getIsConnected() || false,
+        connected,
+        error: errorDetails,
+        environment: {
+          token_set: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+          token_length: process.env.TELEGRAM_BOT_TOKEN ? process.env.TELEGRAM_BOT_TOKEN.length : 0,
+          using_env_file: fs.existsSync(path.resolve(process.cwd(), '.env'))
+        }
       });
     } catch (error: any) {
       log(`Error checking Telegram bot status: ${error}`, "error");
-      res.status(500).json({ message: "Failed to check Telegram bot status" });
+      res.status(500).json({ 
+        connected: false,
+        error: {
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Failed to check Telegram bot status: ${error.message}`
+        }
+      });
     }
   });
 
@@ -200,9 +235,13 @@ export async function registerRoutes(app: Express) {
       if (!bridge) {
         return res.json({ 
           connected: false,
-          error: "Bot bridge not initialized",
+          error: {
+            code: "BOT_BRIDGE_UNAVAILABLE",
+            message: "Bot bridge not initialized"
+          },
           environment: {
             token_set: Boolean(process.env.DISCORD_BOT_TOKEN),
+            token_length: process.env.DISCORD_BOT_TOKEN ? process.env.DISCORD_BOT_TOKEN.length : 0,
             using_env_file: fs.existsSync(path.resolve(process.cwd(), '.env'))
           }
         });
@@ -214,20 +253,103 @@ export async function registerRoutes(app: Express) {
       // Include more detailed information if Discord is not connected
       let errorDetails = null;
       if (!connected && discordBot) {
-        errorDetails = discordBot.getLastError();
+        const lastError = discordBot.getLastError();
+        
+        // Initialize with a default error object
+        errorDetails = {
+          code: "DISCORD_BOT_UNAVAILABLE",
+          message: "Discord bot failed to initialize or connect"
+        };
+        
+        // Override with bot's specific error if available
+        if (lastError) {
+          if (typeof lastError === 'string') {
+            // Handle string error
+            errorDetails.message = lastError;
+            
+            // Check for specific error messages in the string
+            if (lastError.includes("Unauthorized")) {
+              errorDetails.code = "INVALID_TOKEN";
+              errorDetails = {
+                ...errorDetails,
+                hint: "The Discord bot token appears to be invalid. Please check your token and try again."
+              };
+            } else if (lastError.includes("Connection reset")) {
+              errorDetails.code = "CONNECTION_RESET";
+              errorDetails = {
+                ...errorDetails,
+                hint: "Connection to Discord API was reset. This may be due to network issues or rate limiting."
+              };
+            }
+          } else if (typeof lastError === 'object') {
+            // Handle object error, preserving the existing properties
+            errorDetails = {
+              ...errorDetails,
+              ...lastError
+            };
+            
+            // Add hints for specific error codes
+            if (lastError.code === "TOKEN_INVALID") {
+              errorDetails = {
+                ...errorDetails,
+                hint: "The Discord bot token appears to be invalid. Please check your token and try again."
+              };
+            }
+          }
+        }
+      }
+      
+      // Try to check for server access if connected
+      let serverConnected = false;
+      let serverError = null;
+      
+      if (connected && discordBot) {
+        try {
+          await discordBot.getCategories();
+          serverConnected = true;
+        } catch (err) {
+          const error = err as Error;
+          if (error.message?.includes("Bot is not in any servers")) {
+            serverError = {
+              code: "NO_SERVER_CONNECTED",
+              message: "Bot is authenticated but not invited to any servers",
+              hint: "Invite the bot to your Discord server using an OAuth2 invite link"
+            };
+          } else if (error.message?.includes("Missing Access") || error.message?.includes("Missing Permissions")) {
+            serverError = {
+              code: "INSUFFICIENT_PERMISSIONS",
+              message: "Bot doesn't have the required permissions in the server",
+              hint: "Check the bot's role permissions in your Discord server"
+            };
+          } else {
+            serverError = {
+              code: "SERVER_ACCESS_ERROR",
+              message: error.message || "Unknown error accessing server resources"
+            };
+          }
+        }
       }
       
       res.json({
         connected,
+        server_connected: serverConnected,
         error: errorDetails,
+        server_error: serverError,
         environment: {
           token_set: Boolean(process.env.DISCORD_BOT_TOKEN),
+          token_length: process.env.DISCORD_BOT_TOKEN ? process.env.DISCORD_BOT_TOKEN.length : 0,
           using_env_file: fs.existsSync(path.resolve(process.cwd(), '.env'))
         }
       });
     } catch (error: any) {
       log(`Error checking Discord bot status: ${error}`, "error");
-      res.status(500).json({ message: "Failed to check Discord bot status" });
+      res.status(500).json({ 
+        connected: false,
+        error: {
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Failed to check Discord bot status: ${error.message}`
+        }
+      });
     }
   });
   
@@ -243,59 +365,29 @@ export async function registerRoutes(app: Express) {
         });
       }
       
+      // Validate token format
+      if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid Discord token format. Token should be in the format: XXXX.YYYY.ZZZZ"
+        });
+      }
+      
       // Update process environment variables
       process.env.DISCORD_BOT_TOKEN = token;
+      
+      // Import and use the utility function from loadEnv.ts
+      const { updateEnvFile } = await import('../utilities/loadEnv.js');
       
       // Try to update .env file
       let fileUpdated = false;
       try {
-        const envPath = path.resolve(process.cwd(), '.env');
-        let envContent = '';
-        
-        // Read existing .env if it exists
-        if (fs.existsSync(envPath)) {
-          const existingContent = fs.readFileSync(envPath, 'utf8');
-          const envLines = existingContent.split('\n');
-          let tokenLineExists = false;
-          
-          // Process each line
-          for (let i = 0; i < envLines.length; i++) {
-            const line = envLines[i];
-            if (line.trim() === '' || line.startsWith('#')) {
-              // Keep comments and empty lines unchanged
-              envContent += line + '\n';
-            } else {
-              // Check if this is a variable we're updating
-              const match = line.match(/^([^=]+)=/);
-              if (match) {
-                const key = match[1].trim();
-                if (key === 'DISCORD_BOT_TOKEN') {
-                  envContent += `${key}=${token}\n`;
-                  tokenLineExists = true;
-                } else {
-                  // Keep the line unchanged
-                  envContent += line + '\n';
-                }
-              } else {
-                // Keep the line unchanged
-                envContent += line + '\n';
-              }
-            }
-          }
-          
-          // Add token line if it doesn't exist
-          if (!tokenLineExists) {
-            envContent += `DISCORD_BOT_TOKEN=${token}\n`;
-          }
+        fileUpdated = updateEnvFile({ DISCORD_BOT_TOKEN: token });
+        if (fileUpdated) {
+          log("Updated .env file with new Discord token", "info");
         } else {
-          // Create new .env file with the provided token
-          envContent = `DISCORD_BOT_TOKEN=${token}\n`;
+          log("Failed to update .env file", "warn");
         }
-        
-        // Write the updated .env file
-        fs.writeFileSync(envPath, envContent);
-        fileUpdated = true;
-        log("Updated .env file with new Discord token", "info");
       } catch (error) {
         log(`Error updating .env file: ${error}`, "error");
       }
@@ -312,18 +404,95 @@ export async function registerRoutes(app: Express) {
         }
       }
       
+      // Return status with diagnostic information
       return res.json({
         success: true,
         message: "Discord bot configuration updated",
+        token_length: token.length,
         env_file_updated: fileUpdated,
-        bot_restarted: restartSuccess
+        bot_restarted: restartSuccess,
+        next_steps: !restartSuccess ? [
+          "The configuration was saved, but the bot could not be automatically restarted.",
+          "You may need to manually restart the application for changes to take effect."
+        ] : []
       });
     } catch (error) {
       log(`Error updating Discord bot configuration: ${error}`, "error");
       return res.status(500).json({
         success: false,
-        message: "Failed to update Discord bot configuration",
-        error: String(error)
+        message: `Error updating Discord bot configuration: ${error}`
+      });
+    }
+  });
+  
+  // API endpoint to update Telegram bot token
+  app.post("/api/bot/telegram/config", async (req, res) => {
+    try {
+      const { token } = req.body;
+      
+      if (!token) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Telegram token is required"
+        });
+      }
+      
+      // Validate token format (common pattern for Telegram tokens)
+      if (!/^\d+:[A-Za-z0-9_-]+$/.test(token)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid Telegram token format. Token should be in the format: 123456789:ABCDefGhIJKlmNoPQRsTUVwxyZ"
+        });
+      }
+      
+      // Update process environment variables
+      process.env.TELEGRAM_BOT_TOKEN = token;
+      
+      // Import and use the utility function from loadEnv.ts
+      const { updateEnvFile } = await import('../utilities/loadEnv.js');
+      
+      // Try to update .env file
+      let fileUpdated = false;
+      try {
+        fileUpdated = updateEnvFile({ TELEGRAM_BOT_TOKEN: token });
+        if (fileUpdated) {
+          log("Updated .env file with new Telegram token", "info");
+        } else {
+          log("Failed to update .env file", "warn");
+        }
+      } catch (error) {
+        log(`Error updating .env file: ${error}`, "error");
+      }
+      
+      // If the bridge is active, try to restart the Telegram bot
+      let restartSuccess = false;
+      if (bridge) {
+        try {
+          await bridge.restartTelegramBot();
+          restartSuccess = true;
+          log("Telegram bot restarted successfully", "info");
+        } catch (error) {
+          log(`Error restarting Telegram bot: ${error}`, "error");
+        }
+      }
+      
+      // Return status with diagnostic information
+      return res.json({
+        success: true,
+        message: "Telegram bot configuration updated",
+        token_length: token.length,
+        env_file_updated: fileUpdated,
+        bot_restarted: restartSuccess,
+        next_steps: !restartSuccess ? [
+          "The configuration was saved, but the bot could not be automatically restarted.",
+          "You may need to manually restart the application for changes to take effect."
+        ] : []
+      });
+    } catch (error) {
+      log(`Error updating Telegram bot configuration: ${error}`, "error");
+      return res.status(500).json({
+        success: false,
+        message: `Error updating Telegram bot configuration: ${error}`
       });
     }
   });

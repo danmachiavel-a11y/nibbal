@@ -1106,20 +1106,44 @@ export class TelegramBot {
 
       const message = `Please select a service from ${submenu.name}:`;
 
-      try {
-        await ctx.editMessageText(preserveMarkdown(message), {
-          parse_mode: "MarkdownV2",
-          reply_markup: { inline_keyboard: keyboard }
-        });
-      } catch (error) {
-        // If editing fails, send a new message
-        if (error instanceof Error && error.message?.includes("message can't be edited")) {
+      // Check if we have a callback query and a message with text to edit
+      const hasEditableMessage = 
+        ctx.callbackQuery && 
+        ctx.callbackQuery.message && 
+        'text' in ctx.callbackQuery.message && 
+        ctx.callbackQuery.message.text;
+
+      if (hasEditableMessage) {
+        // Try to edit existing message
+        try {
+          await ctx.editMessageText(preserveMarkdown(message), {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+          
+          // Answer the callback query to stop loading indicator
+          if (ctx.callbackQuery) {
+            await ctx.answerCbQuery();
+          }
+        } catch (error) {
+          log(`Error editing message: ${error}`, "warn");
+          // Send a new message instead
           await ctx.reply(preserveMarkdown(message), {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
-        } else {
-          throw error; // Re-throw other errors
+        }
+      } else {
+        // Either no callback query or message has no text (e.g., it's a photo with caption)
+        // Always send a new message in this case
+        await ctx.reply(preserveMarkdown(message), {
+          parse_mode: "MarkdownV2",
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        
+        // If there's a callback query, answer it
+        if (ctx.callbackQuery) {
+          await ctx.answerCbQuery();
         }
       }
 
@@ -1128,6 +1152,11 @@ export class TelegramBot {
       const errorMsg = error instanceof Error ? error.message : String(error);
       log(`Error in handleSubmenuClick: ${errorMsg}`, "error");
       await ctx.reply("❌ There was an error displaying the menu. Please try again.");
+      
+      // Make sure we always answer the callback query to stop the loading indicator
+      if (ctx.callbackQuery) {
+        await ctx.answerCbQuery("Error loading menu").catch(() => {});
+      }
     }
   }
 
