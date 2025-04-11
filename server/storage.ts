@@ -340,7 +340,12 @@ export class DatabaseStorage implements IStorage {
     // Cast the result to the Ticket type
     const result = await db.select()
       .from(tickets)
-      .where(eq(tickets.status, 'closed'))
+      .where(
+        or(
+          eq(tickets.status, 'closed'),
+          eq(tickets.status, 'transcript')
+        )
+      )
       .orderBy(desc(tickets.completedAt))
       .limit(100);
     

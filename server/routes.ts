@@ -286,11 +286,11 @@ export async function registerRoutes(app: Express) {
             errorDetails = {
               ...errorDetails,
               // Safely spread non-null object properties
-              ...(lastError || {})
+              ...(lastError as Record<string, unknown>)
             };
             
             // Add hints for specific error codes - safely check for code property
-            if (lastError && typeof lastError === 'object' && 'code' in lastError && lastError.code === "TOKEN_INVALID") {
+            if (lastError && typeof lastError === 'object' && 'code' in lastError && (lastError as {code: string}).code === "TOKEN_INVALID") {
               errorDetails = {
                 ...errorDetails,
                 hint: "The Discord bot token appears to be invalid. Please check your token and try again."

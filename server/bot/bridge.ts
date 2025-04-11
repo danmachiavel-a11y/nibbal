@@ -1468,7 +1468,7 @@ export class BridgeManager {
             {
               content: `🔔 <@${ticket.claimedBy}> The user has requested your assistance in this ticket.`,
               // Fix the allowedMentions property type to match Discord.js expectations
-              allowedMentions: { roles: [], parse: ['users'] },
+              allowedMentions: { roles: [] } as { roles: string[] },
               username: "Ticket Bot"
             },
             "Ticket Bot"
@@ -1561,7 +1561,7 @@ export class BridgeManager {
         if (channel?.isTextBased()) {
           await channel.send({
             content: `<@${ticket.claimedBy}> The user has pinged for assistance in this ticket.`,
-            allowedMentions: { parse: ['users'] }
+            allowedMentions: { users: [] } as { users: string[] }
           });
           log(`Successfully pinged staff ${ticket.claimedBy} for ticket #${ticket.id}`);
         }
