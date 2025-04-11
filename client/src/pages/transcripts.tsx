@@ -352,9 +352,14 @@ export default function Transcripts() {
                                 {ticket.messages.map((message, index) => (
                                   <div key={index} className="text-xs p-2 border-b last:border-0">
                                     <div className="flex items-center justify-between">
-                                      <Badge variant="outline" className="text-[10px]">
-                                        {message.platform}
-                                      </Badge>
+                                      <div className="flex items-center gap-1">
+                                        <Badge variant="outline" className="text-[10px]">
+                                          {message.platform}
+                                        </Badge>
+                                        <span className="text-[10px] font-medium">
+                                          {message.senderName || "Unknown User"}
+                                        </span>
+                                      </div>
                                       <span className="text-[10px] text-muted-foreground">
                                         {new Date(message.timestamp).toLocaleTimeString()}
                                       </span>
