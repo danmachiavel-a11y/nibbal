@@ -74,6 +74,7 @@ export const messages = pgTable("messages", {
   timestamp: timestamp("timestamp").notNull(),
   attachments: text("attachments").array(),
   rawAttachmentData: text("raw_attachment_data"),
+  senderName: text("sender_name"), // Added to store the display name of the sender
 });
 
 // Define message queue table for offline message processing
