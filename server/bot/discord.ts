@@ -2917,6 +2917,30 @@ export class DiscordBot {
       }
       this.lastError = null;
 
+      // Validate Discord token
+      const token = process.env.DISCORD_BOT_TOKEN;
+      if (!token) {
+        const errorMessage = "Discord bot token is missing. Please set DISCORD_BOT_TOKEN in your environment variables or .env file.";
+        log(errorMessage, "error");
+        this.lastError = new Error(errorMessage);
+        throw this.lastError;
+      }
+
+      if (token === "your_discord_bot_token_here" || token.includes("your_") || token.length < 50) {
+        const errorMessage = "Discord bot token appears to be invalid or a placeholder. Please set a valid token.";
+        log(errorMessage, "error");
+        this.lastError = new Error(errorMessage);
+        throw this.lastError;
+      }
+
+      // Verify token format basic validation (not foolproof but catches common issues)
+      if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
+        const errorMessage = "Discord bot token has invalid format. Tokens should be in the format 'XXXX.YYYY.ZZZZ'.";
+        log(errorMessage, "error");
+        this.lastError = new Error(errorMessage);
+        throw this.lastError;
+      }
+
       // Set connection timeout
       this.connectionTimeout = setTimeout(() => {
         log("Connection timeout reached, destroying client...", "warn");
@@ -2925,7 +2949,8 @@ export class DiscordBot {
           .catch(error => log(`Error destroying client: ${error}`, "error"));
       }, this.wsCleanupConfig.connectionTimeout);
 
-      await this.client.login(process.env.DISCORD_BOT_TOKEN);
+      log("Attempting to connect to Discord with provided token...");
+      await this.client.login(token);
 
       // Clear timeout on successful connection
       if (this.connectionTimeout) {
@@ -2935,9 +2960,22 @@ export class DiscordBot {
 
       log("Discord bot started successfully");
     } catch (error) {
-      this.lastError = error instanceof Error ? error : new Error(String(error));
-      log(`Error starting Discord bot: ${error}`, "error");
-      throw error;
+      let errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Provide more helpful error messages for common issues
+      if (errorMessage.includes("Incorrect login details were provided")) {
+        errorMessage = "Failed to authenticate with Discord: Invalid bot token provided. Check that your token is correct.";
+      } else if (errorMessage.includes("getaddrinfo ENOTFOUND")) {
+        errorMessage = "Failed to connect to Discord API: Network connection issue. Check your internet connection.";
+      } else if (errorMessage.includes("connect ETIMEDOUT")) {
+        errorMessage = "Connection to Discord API timed out. This may be due to network issues or API being down.";
+      } else if (errorMessage.includes("disallowed intents specified")) {
+        errorMessage = "Discord bot setup error: Your bot is missing required intents. Go to Discord Developer Portal, select your bot, and enable the necessary intents under the 'Bot' section.";
+      }
+      
+      this.lastError = new Error(errorMessage);
+      log(`Error starting Discord bot: ${errorMessage}`, "error");
+      throw this.lastError;
     }
   }
 

@@ -217,11 +217,22 @@ export async function registerRoutes(app: Express) {
           error: "BOT_BRIDGE_UNAVAILABLE" 
         });
       }
+      
       const discordBot = bridge.getDiscordBot();
       if (!discordBot) {
         return res.status(503).json({ 
-          message: "Discord bot not initialized",
+          message: "Discord bot not initialized. The bot could not be started.",
           error: "DISCORD_BOT_UNAVAILABLE"
+        });
+      }
+
+      // Check if the bot is ready
+      if (!discordBot.isReady()) {
+        const lastError = discordBot.getLastError();
+        return res.status(503).json({
+          message: "Discord bot is not connected.",
+          error: "DISCORD_BOT_NOT_READY",
+          details: lastError || "No additional error details available. Check that your token is valid and properly configured."
         });
       }
 
@@ -229,6 +240,7 @@ export async function registerRoutes(app: Express) {
         const categories = await discordBot.getCategories();
         res.json(categories);
       } catch (error: any) {
+        // Special case for no servers
         if (error.message?.includes("Bot is not in any servers")) {
           return res.status(503).json({
             message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
@@ -236,6 +248,25 @@ export async function registerRoutes(app: Express) {
             details: "The Discord bot token is valid but the bot hasn't been invited to any servers. Use the Discord Developer Portal to generate an invite link."
           });
         }
+        
+        // Special case for permissions issues
+        if (error.message?.includes("Missing Permissions") || error.message?.includes("Missing Access")) {
+          return res.status(503).json({
+            message: "The bot doesn't have enough permissions in your Discord server.",
+            error: "INSUFFICIENT_PERMISSIONS",
+            details: "Make sure the bot has the 'View Channels' and 'Manage Channels' permissions at the server level or in the specific categories you want to use."
+          });
+        }
+
+        // Special case for rate limits
+        if (error.message?.includes("rate limit")) {
+          return res.status(429).json({
+            message: "Discord API rate limit reached. Please try again later.",
+            error: "RATE_LIMITED",
+            details: error.message
+          });
+        }
+        
         throw error; // Re-throw to be caught by the outer catch
       }
     } catch (error: any) {
@@ -243,7 +274,7 @@ export async function registerRoutes(app: Express) {
       res.status(500).json({ 
         message: "Failed to fetch Discord categories", 
         error: "DISCORD_CATEGORIES_ERROR",
-        details: error.message
+        details: error.message || String(error)
       });
     }
   });
@@ -257,11 +288,22 @@ export async function registerRoutes(app: Express) {
           error: "BOT_BRIDGE_UNAVAILABLE" 
         });
       }
+      
       const discordBot = bridge.getDiscordBot();
       if (!discordBot) {
         return res.status(503).json({ 
-          message: "Discord bot not initialized",
+          message: "Discord bot not initialized. The bot could not be started.",
           error: "DISCORD_BOT_UNAVAILABLE"
+        });
+      }
+
+      // Check if the bot is ready
+      if (!discordBot.isReady()) {
+        const lastError = discordBot.getLastError();
+        return res.status(503).json({
+          message: "Discord bot is not connected.",
+          error: "DISCORD_BOT_NOT_READY",
+          details: lastError || "No additional error details available. Check that your token is valid and properly configured."
         });
       }
 
@@ -269,13 +311,33 @@ export async function registerRoutes(app: Express) {
         const roles = await discordBot.getRoles();
         res.json(roles);
       } catch (error: any) {
-        if (error.message?.includes("No guild found")) {
+        // Special case for no servers
+        if (error.message?.includes("No guild found") || error.message?.includes("Bot is not in any servers")) {
           return res.status(503).json({
             message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
             error: "NO_SERVER_CONNECTED",
             details: "The Discord bot token is valid but the bot hasn't been invited to any servers. Use the Discord Developer Portal to generate an invite link."
           });
         }
+        
+        // Special case for permissions issues
+        if (error.message?.includes("Missing Permissions") || error.message?.includes("Missing Access")) {
+          return res.status(503).json({
+            message: "The bot doesn't have enough permissions in your Discord server.",
+            error: "INSUFFICIENT_PERMISSIONS",
+            details: "Make sure the bot has the 'View Channels' and 'Manage Roles' permissions at the server level."
+          });
+        }
+
+        // Special case for rate limits
+        if (error.message?.includes("rate limit")) {
+          return res.status(429).json({
+            message: "Discord API rate limit reached. Please try again later.",
+            error: "RATE_LIMITED",
+            details: error.message
+          });
+        }
+        
         throw error; // Re-throw to be caught by the outer catch
       }
     } catch (error: any) {
@@ -283,7 +345,7 @@ export async function registerRoutes(app: Express) {
       res.status(500).json({ 
         message: "Failed to fetch Discord roles", 
         error: "DISCORD_ROLES_ERROR",
-        details: error.message
+        details: error.message || String(error)
       });
     }
   });
@@ -297,11 +359,22 @@ export async function registerRoutes(app: Express) {
           error: "BOT_BRIDGE_UNAVAILABLE" 
         });
       }
+      
       const discordBot = bridge.getDiscordBot();
       if (!discordBot) {
         return res.status(503).json({ 
-          message: "Discord bot not initialized",
+          message: "Discord bot not initialized. The bot could not be started.",
           error: "DISCORD_BOT_UNAVAILABLE"
+        });
+      }
+
+      // Check if the bot is ready
+      if (!discordBot.isReady()) {
+        const lastError = discordBot.getLastError();
+        return res.status(503).json({
+          message: "Discord bot is not connected.",
+          error: "DISCORD_BOT_NOT_READY",
+          details: lastError || "No additional error details available. Check that your token is valid and properly configured."
         });
       }
 
@@ -309,13 +382,33 @@ export async function registerRoutes(app: Express) {
         const channels = await discordBot.getTextChannels();
         res.json(channels);
       } catch (error: any) {
-        if (error.message?.includes("No guild found")) {
+        // Special case for no servers
+        if (error.message?.includes("No guild found") || error.message?.includes("Bot is not in any servers")) {
           return res.status(503).json({
             message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
             error: "NO_SERVER_CONNECTED",
             details: "The Discord bot token is valid but the bot hasn't been invited to any servers. Use the Discord Developer Portal to generate an invite link."
           });
         }
+        
+        // Special case for permissions issues
+        if (error.message?.includes("Missing Permissions") || error.message?.includes("Missing Access")) {
+          return res.status(503).json({
+            message: "The bot doesn't have enough permissions in your Discord server.",
+            error: "INSUFFICIENT_PERMISSIONS",
+            details: "Make sure the bot has the 'View Channels' permission at the server level."
+          });
+        }
+
+        // Special case for rate limits
+        if (error.message?.includes("rate limit")) {
+          return res.status(429).json({
+            message: "Discord API rate limit reached. Please try again later.",
+            error: "RATE_LIMITED",
+            details: error.message
+          });
+        }
+        
         throw error; // Re-throw to be caught by the outer catch
       }
     } catch (error: any) {
@@ -323,7 +416,7 @@ export async function registerRoutes(app: Express) {
       res.status(500).json({ 
         message: "Failed to fetch Discord text channels", 
         error: "DISCORD_CHANNELS_ERROR",
-        details: error.message
+        details: error.message || String(error)
       });
     }
   });

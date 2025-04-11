@@ -4,6 +4,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { db } from './db';
+import { loadEnv } from "../utilities/loadEnv";
 
 const app = express();
 app.use(express.json());
@@ -41,6 +42,9 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
+    // Load environment variables from .env file if available
+    loadEnv();
+    
     // First, run database migrations
     log("Running database migrations...");
     await migrate(db, { migrationsFolder: './migrations' });
