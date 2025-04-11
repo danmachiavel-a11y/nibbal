@@ -2087,25 +2087,50 @@ export class DiscordBot {
           });
         }
       }
-      } // Close the if (interaction.isChatInputCommand())
+      } // End of if (interaction.isChatInputCommand())
       
-      } catch (error) {
+    } catch (error) {
         // Global error handler for all interactions
         const errorMessage = `CRITICAL ERROR handling interaction: ${error}`;
         log(errorMessage, "error");
         
         // Try to give feedback to the user without crashing
         try {
-          if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({
-              content: "An error occurred while processing your command. The error has been logged.",
-              ephemeral: true
-            });
-          } else if (interaction.deferred && !interaction.replied) {
-            await interaction.editReply({
-              content: "An error occurred while processing your command. The error has been logged."
-            });
+          // We need to handle each interaction type differently
+          if (interaction.isChatInputCommand()) {
+            const cmdInteraction = interaction as ChatInputCommandInteraction;
+            if (!cmdInteraction.replied && !cmdInteraction.deferred) {
+              await cmdInteraction.reply({
+                content: "An error occurred while processing your command. The error has been logged.",
+                ephemeral: true
+              });
+            } else if (cmdInteraction.deferred && !cmdInteraction.replied) {
+              await cmdInteraction.editReply({
+                content: "An error occurred while processing your command. The error has been logged."
+              });
+            }
+          } else if (interaction.isButton()) {
+            const buttonInteraction = interaction as ButtonInteraction;
+            if (!buttonInteraction.replied && !buttonInteraction.deferred) {
+              await buttonInteraction.reply({
+                content: "An error occurred while processing your button press. The error has been logged.",
+                ephemeral: true
+              });
+            } else if (buttonInteraction.deferred && !buttonInteraction.replied) {
+              await buttonInteraction.editReply({
+                content: "An error occurred while processing your request. The error has been logged."
+              });
+            }
+          } else if (interaction.isAutocomplete()) {
+            // For autocomplete, just respond with empty results
+            const autoCompleteInteraction = interaction as AutocompleteInteraction;
+            try {
+              await autoCompleteInteraction.respond([]);
+            } catch (autocompleteError) {
+              log(`Failed to respond to autocomplete after error: ${autocompleteError}`, "error");
+            }
           }
+          // Other interaction types may not need response
         } catch (replyError) {
           // If we can't reply, just log and continue
           log(`Failed to notify user of error: ${replyError}`, "error");
