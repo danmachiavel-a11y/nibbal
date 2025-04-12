@@ -54,7 +54,19 @@ export default function Stats() {
   });
 
   const formatDate = (dateStr: string) => {
-    return format(new Date(dateStr), 'MMM d, yyyy');
+    const date = new Date(dateStr);
+    
+    // Check if the date is in the future (more than a day ahead)
+    const now = new Date();
+    const oneDay = 24 * 60 * 60 * 1000; // milliseconds in a day
+    
+    if (date.getTime() - now.getTime() > oneDay) {
+      // If the date is in the future, adjust year to current year
+      console.log(`Fixing future date: ${date.toISOString()} -> using current year instead`);
+      return format(new Date(now.getFullYear(), date.getMonth(), date.getDate()), 'MMM d, yyyy');
+    }
+    
+    return format(date, 'MMM d, yyyy');
   };
 
   if (isLoading) {

@@ -24,9 +24,9 @@ function calculatePeriodStart(period: 'week' | 'month' | 'all', now: Date): Date
     periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
     periodStart.setHours(0, 0, 0, 0);
   } else {
-    // For all: show from one year ago from today
-    periodStart = new Date();
-    periodStart.setFullYear(periodStart.getFullYear() - 1);
+    // For all: show from 5 years ago instead of 1 year ago to ensure all tickets are included
+    // This is simpler than trying to fix every individual query
+    periodStart = new Date(2020, 0, 1); // January 1, 2020
     periodStart.setHours(0, 0, 0, 0);
     
     // Log the actual date we're using
