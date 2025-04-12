@@ -1423,14 +1423,9 @@ export class BridgeManager {
           `🔄 Staff has switched your active ticket to #${ticketId} (${category.name}).\nYou can switch to another ticket by using /switch`
         );
         
-        // Send notification in both Discord channels
-        // First in the current channel
-        if (ticket.discordChannelId) {
-          await this.sendSystemMessageToDiscord(
-            ticket.discordChannelId,
-            `**Note:** The user has been forced back to this ticket by staff.`
-          );
-        }
+        // We'll skip sending a system message to the current channel here
+        // because Discord.ts already handles sending a notification in the channel
+        // when the button is clicked
         
         // Get all other active tickets for this user
         const otherTickets = await storage.getActiveTicketsByUserId(user.id);

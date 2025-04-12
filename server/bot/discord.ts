@@ -564,13 +564,21 @@ export class DiscordBot {
                 // Call bridge to handle the force switch
                 await this.bridge.forceUserTicketSwitch(telegramId, ticketId);
                 
-                await interaction.editReply(`✅ Successfully forced ${username} back to ticket #${ticketId}`);
+                // Only send a reply to the user who clicked the button
+                await interaction.editReply(`✅ Action completed successfully`);
                 
-                // Send confirmation message to the channel visible to everyone
+                // Send a single comprehensive message to the channel
                 if (interaction.channel) {
                   try {
                     const channel = interaction.channel as TextChannel;
-                    await channel.send(`✅ ${interaction.user.username} has forced ${username} back to this ticket.`);
+                    await channel.send({
+                      content: `**System Message:** ${interaction.user.username} has forced the user back to this ticket.`,
+                      // Make it stand out
+                      embeds: [{
+                        color: 0x00ff00, // Green color
+                        description: "The user has been notified of this change."
+                      }]
+                    });
                   } catch (error) {
                     log(`Error sending channel message: ${error}`, "error");
                   }
@@ -2233,11 +2241,22 @@ export class DiscordBot {
               `⚠️ *A support agent has redirected you to ticket #${ticketId} (${categoryName}).*\n\nPlease continue your conversation in this ticket.`
             );
             
-            // Send a confirmation message to Discord
-            await message.reply(`✅ Successfully forced user with Telegram ID ${telegramId} to switch to ticket #${ticketId}.`);
+            // Send a brief confirmation message to Discord
+            await message.reply(`✅ Action completed successfully`);
             
             // Log the forced switch
             log(`Staff member ${message.author.tag} forced user ${telegramId} to switch to ticket #${ticketId}`, "info");
+            
+            // Send a more informative system message to the current channel
+            const channel = message.channel as TextChannel;
+            await channel.send({
+              content: `**System Message:** ${message.author.username} has forced the user back to this ticket.`,
+              // Make it stand out
+              embeds: [{
+                color: 0x00ff00, // Green color
+                description: "The user has been notified of this change."
+              }]
+            });
             
             // Send a system message to the ticket channel
             try {
