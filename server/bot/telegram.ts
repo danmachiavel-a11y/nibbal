@@ -2484,7 +2484,15 @@ Images/photos are also supported.
             // Set fromSwitchCommand flag to true to bypass the "already has ticket" check
             // userState is guaranteed to be defined here since we initialized it above
             userState.fromSwitchCommand = true;
+            
+            // Store any currently active ticket ID before starting new ticket creation
+            const prevActiveTicketId = userState.activeTicketId;
             await this.setState(userId, userState);
+            
+            // If the user has an active ticket, let them know it's paused
+            if (prevActiveTicketId) {
+              await ctx.reply(`⚠️ You're currently trying to create a new ticket. Your active ticket (#${prevActiveTicketId}) is paused. Use /cancel to return to your active ticket without creating a new one.`);
+            }
             
             await ctx.reply("✅ Let's create your new support ticket. Please select a category from the options displayed.");
             await this.handleCategoryMenu(ctx);
