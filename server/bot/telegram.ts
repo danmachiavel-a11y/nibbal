@@ -1303,11 +1303,13 @@ Only one active ticket per service category is allowed.`);
         
         // Notify the user they already have a ticket in this category with specific category name
         const categoryName = category ? category.name : "this category";
-        await ctx.reply(`⚠️ You already have an active ${categoryName} ticket (#${existingTicketInCategory.id}).
+        await ctx.reply(`ℹ️ You already have an active ticket in ${categoryName} (#${existingTicketInCategory.id}).
 
-You have two options:
-1️⃣ Use /close to close your existing ${categoryName} ticket first
-2️⃣ Choose a different category to create a new ticket`);
+To continue, you must either:
+1️⃣ Type /close to close your existing ${categoryName} ticket first, then select ${categoryName} again
+2️⃣ Choose a different service category for your new ticket
+
+Only one active ticket per service category is allowed.`);
         
         // Provide context about using /switch
         await ctx.reply("Use /switch to see all your active tickets and choose which one to continue.");
