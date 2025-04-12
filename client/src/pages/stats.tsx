@@ -55,6 +55,7 @@ export default function Stats() {
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
+    // Show complete date with year always included 
     return format(date, 'MMM d, yyyy');
   };
 

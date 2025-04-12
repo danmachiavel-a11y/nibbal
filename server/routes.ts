@@ -1151,17 +1151,9 @@ export async function registerRoutes(app: Express) {
         stats = await storage.getUserStatsByPeriod(discordId, period || 'all');
       }
       
-      // Fix the year in periodEnd if it's in the future (workaround for possible bug)
-      if (stats.periodEnd instanceof Date) {
-        const now = new Date();
-        if (stats.periodEnd.getFullYear() > now.getFullYear()) {
-          // Create a corrected date with the current year
-          const correctedDate = new Date(stats.periodEnd);
-          correctedDate.setFullYear(now.getFullYear());
-          stats.periodEnd = correctedDate;
-          console.log(`Corrected future year in periodEnd to current year: ${correctedDate.toISOString()}`);
-        }
-      }
+      // Log the date range we're using for debugging
+      console.log(`Using stats date range: ${stats.periodStart?.toISOString()} to ${stats.periodEnd?.toISOString()}`);
+      // DO NOT "fix" or modify any dates - use them exactly as they are
       
       res.json(stats);
     } catch (error: any) {
@@ -1183,20 +1175,11 @@ export async function registerRoutes(app: Express) {
         stats = await storage.getAllWorkerStatsByPeriod(period || 'all');
       }
       
-      // Fix any future years in the periodEnd dates
-      if (Array.isArray(stats)) {
-        const now = new Date();
-        stats = stats.map(stat => {
-          if (stat.periodEnd instanceof Date && stat.periodEnd.getFullYear() > now.getFullYear()) {
-            // Create a corrected date with the current year
-            const correctedDate = new Date(stat.periodEnd);
-            correctedDate.setFullYear(now.getFullYear());
-            stat.periodEnd = correctedDate;
-            console.log(`Corrected future year in worker stats periodEnd to current year: ${correctedDate.toISOString()}`);
-          }
-          return stat;
-        });
+      // Log the date ranges we're using for debugging
+      if (Array.isArray(stats) && stats.length > 0) {
+        console.log(`Using workers stats date range: ${stats[0].periodStart?.toISOString()} to ${stats[0].periodEnd?.toISOString()}`);
       }
+      // DO NOT "fix" or modify any dates - use them exactly as they are
       
       res.json(stats);
     } catch (error: any) {
