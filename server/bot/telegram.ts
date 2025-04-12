@@ -2045,6 +2045,70 @@ Images/photos are also supported.
           console.log(`Ticket ${ticketToClose.id} has no Discord channel associated, skipping transcript move`);
           await ctx.reply("✅ Your ticket has been closed. Use /start when you're ready to create a new ticket.");
         }
+        
+        // Check if user has other active tickets after closing this one
+        const remainingActiveTickets = await storage.getActiveTicketsByUserId(user.id);
+        
+        if (remainingActiveTickets.length > 0) {
+          // User has other active tickets, automatically switch to one of them
+          console.log(`User has ${remainingActiveTickets.length} active tickets remaining, switching to ticket #${remainingActiveTickets[0].id}`);
+          
+          // Get category for the first active ticket to display name
+          let categoryName = "Unknown service";
+          if (remainingActiveTickets[0].categoryId) {
+            const nextCategory = await storage.getCategory(remainingActiveTickets[0].categoryId);
+            if (nextCategory) {
+              categoryName = nextCategory.name;
+            }
+          }
+          
+          // Update the user's state with the new active ticket
+          if (userMemoryState) {
+            userMemoryState.activeTicketId = remainingActiveTickets[0].id;
+            userMemoryState.categoryId = remainingActiveTickets[0].categoryId || 0;
+            await this.setState(userId, userMemoryState);
+          }
+          
+          // Send a message to let the user know which ticket they were switched to
+          await ctx.reply(`🔄 You've been automatically switched to your other active ticket: *${categoryName}* (#${remainingActiveTickets[0].id})`, {
+            parse_mode: 'Markdown'
+          });
+          
+          // Show the menu of remaining tickets
+          const buttons = [];
+          const categoriesMap = new Map();
+          
+          // Get all categories for the active tickets
+          const categoryIds = [...new Set(remainingActiveTickets.map(t => t.categoryId).filter(id => id !== null))];
+          for (const categoryId of categoryIds) {
+            const ticket_category = await storage.getCategory(categoryId!);
+            if (ticket_category) {
+              categoriesMap.set(categoryId, ticket_category);
+            }
+          }
+          
+          // Create a button for each remaining ticket
+          for (const ticket of remainingActiveTickets) {
+            const ticket_category = categoriesMap.get(ticket.categoryId);
+            const ticket_categoryName = ticket_category ? ticket_category.name : "Unknown category";
+            const buttonLabel = `#${ticket.id}: ${ticket_categoryName}`;
+            
+            // Highlight the current active ticket
+            const isActive = ticket.id === remainingActiveTickets[0].id;
+            
+            buttons.push([{
+              text: isActive ? `✅ ${buttonLabel}` : buttonLabel,
+              callback_data: `switch_${ticket.id}`
+            }]);
+          }
+          
+          // Send the remaining tickets menu
+          await ctx.reply("🎫 Here are your active tickets:", {
+            reply_markup: {
+              inline_keyboard: buttons
+            }
+          });
+        }
       } catch (error) {
         console.error(`Error in close command: ${error}`);
         await ctx.reply("❌ There was an error closing your ticket. Please try again later.");

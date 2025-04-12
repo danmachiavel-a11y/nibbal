@@ -1133,22 +1133,34 @@ export class DiscordBot {
 
           // Now perform the slower operations
           
-          // Get ticket creator's info for notification
-          const user = await storage.getUser(ticket.userId!);
-          if (user?.telegramId) {
-            // Get staff member's display name with type safety
-            let staffName = "Discord Staff";
-            if (interaction.member && 'displayName' in interaction.member) {
-              staffName = interaction.member.displayName;
-            } else if (interaction.user && 'username' in interaction.user) {
-              staffName = interaction.user.username;
+          // Check if ticket is already closed to avoid duplicate notifications
+          if (ticket.status === 'closed' || ticket.status === 'transcript' || ticket.status === 'deleted') {
+            // Ticket is already closed, just inform the staff and continue with transcript move
+            const alreadyClosedEmbed = new EmbedBuilder()
+              .setColor(0xFFA500) // Orange color for warning
+              .setTitle('ℹ️ Ticket Already Closed')
+              .setDescription(`This ticket is already marked as ${ticket.status}. Moving to transcripts.`)
+              .setTimestamp();
+            
+            await interaction.editReply({ embeds: [alreadyClosedEmbed] });
+          } else {
+            // Get ticket creator's info for notification
+            const user = await storage.getUser(ticket.userId!);
+            if (user?.telegramId) {
+              // Get staff member's display name with type safety
+              let staffName = "Discord Staff";
+              if (interaction.member && 'displayName' in interaction.member) {
+                staffName = interaction.member.displayName;
+              } else if (interaction.user && 'username' in interaction.user) {
+                staffName = interaction.user.username;
+              }
+  
+              // Send notification only if ticket wasn't already closed
+              await this.bridge.getTelegramBot().sendMessage(
+                parseInt(user.telegramId),
+                `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
+              );
             }
-
-            // Send notification
-            await this.bridge.getTelegramBot().sendMessage(
-              parseInt(user.telegramId),
-              `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-            );
           }
 
           // Move channel to transcripts category using the Bridge's moveToTranscripts method
@@ -1492,17 +1504,21 @@ export class DiscordBot {
                     continue;
                   }
                   
-                  // Notify Telegram user before moving the channel
-                  const user = await storage.getUser(ticket.userId!);
-                  if (user?.telegramId) {
-                    try {
-                      await this.bridge.getTelegramBot().sendMessage(
-                        parseInt(user.telegramId),
-                        `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-                      );
-                    } catch (notifyError) {
-                      log(`Error notifying Telegram user for ticket ${ticket.id}: ${notifyError}`, "warn");
+                  // Only notify Telegram user if ticket isn't already closed
+                  if (ticket.status !== 'closed' && ticket.status !== 'transcript' && ticket.status !== 'deleted') {
+                    const user = await storage.getUser(ticket.userId!);
+                    if (user?.telegramId) {
+                      try {
+                        await this.bridge.getTelegramBot().sendMessage(
+                          parseInt(user.telegramId),
+                          `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
+                        );
+                      } catch (notifyError) {
+                        log(`Error notifying Telegram user for ticket ${ticket.id}: ${notifyError}`, "warn");
+                      }
                     }
+                  } else {
+                    log(`Ticket ${ticket.id} already has status ${ticket.status}, skipping notification`, "info");
                   }
 
                   // Use the bridge.moveToTranscripts method to ensure consistent permission handling
