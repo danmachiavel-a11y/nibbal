@@ -777,9 +777,16 @@ export class DiscordBot {
               if (user && user.telegramId) {
                 // Get the Telegram bot to send a message to the user
                 log(`Notifying Telegram user ${user.telegramId} about payment for ticket #${ticket.id}`);
-                await this.bridge.getTelegramBot().sendMessage(
+                // Get the category for better context
+                const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
+                const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
+                
+                // Send improved format notification with service name
+                const telegramBot = this.bridge.getTelegramBot();
+                await telegramBot.sendMessage(
                   parseInt(user.telegramId),
-                  `💰 Your ticket #${ticket.id} has been marked as paid ($${amount}).\n\nYou can continue to use this ticket for any follow-up questions.`
+                  `━━━━━━━━━━━━━━━━━━━━━━\n💰 *Payment Confirmed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been marked as paid ($${amount}).\n\nYou can continue to use this ticket for any follow-up questions.\n━━━━━━━━━━━━━━━━━━━━━━`,
+                  { parse_mode: 'Markdown' }
                 );
               }
             }
@@ -838,10 +845,51 @@ export class DiscordBot {
             }
 
             // Send notification
-            await this.bridge.getTelegramBot().sendMessage(
-              parseInt(user.telegramId),
-              `📝 Ticket Update\n\nYour ticket #${ticket.id} has been reopened by ${staffName}.`
-            );
+            // Send notification with improved formatting and context awareness
+            try {
+              // Get user state from Telegram bot to check currently active ticket
+              const telegramBot = this.bridge.getTelegramBot();
+              const userState = telegramBot.getUserState(parseInt(user.telegramId));
+              
+              // Get the category for better context
+              const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
+              const categoryName = ticketCategory ? ticketCategory.name : "Unknown category";
+              
+              // If user is viewing a different ticket, include that context in the message
+              if (userState && userState.activeTicketId && userState.activeTicketId !== ticket.id) {
+                // Get the category of the active ticket for better user context
+                const activeTicket = await storage.getTicket(userState.activeTicketId);
+                let activeTicketInfo = `#${userState.activeTicketId}`;
+                
+                if (activeTicket && activeTicket.categoryId) {
+                  const activeCategory = await storage.getCategory(activeTicket.categoryId);
+                  if (activeCategory) {
+                    activeTicketInfo = `${activeCategory.name} (#${userState.activeTicketId})`;
+                  }
+                }
+                
+                // Context-aware reopening notification
+                await telegramBot.sendMessage(
+                  parseInt(user.telegramId),
+                  `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Reopened*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou are currently viewing ${activeTicketInfo}. Use /switch to return to your reopened ticket.\n━━━━━━━━━━━━━━━━━━━━━━`,
+                  { parse_mode: 'Markdown' }
+                );
+              } else {
+                // Standard message if they're viewing the reopened ticket or no active ticket
+                await telegramBot.sendMessage(
+                  parseInt(user.telegramId),
+                  `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Reopened*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou can continue your conversation in this ticket.\n━━━━━━━━━━━━━━━━━━━━━━`,
+                  { parse_mode: 'Markdown' }
+                );
+              }
+            } catch (stateError) {
+              // If error getting state, fall back to standard message
+              log(`Error checking user state for context-aware notification: ${stateError}`, "warn");
+              await this.bridge.getTelegramBot().sendMessage(
+                parseInt(user.telegramId),
+                `📝 Ticket Update\n\nYour ticket #${ticket.id} has been reopened by ${staffName}.`
+              );
+            }
           }
 
           // Move ticket back from transcripts to active category
