@@ -528,18 +528,9 @@ export class DatabaseStorage implements IStorage {
     periodEnd: Date;
   }> {
     const now = new Date();
-    // Set default period to one year ago instead of Jan 1, 1970
-    let periodStart = new Date(now);
-    periodStart.setFullYear(now.getFullYear() - 1);
     const periodEnd = now;
-
-    if (period === 'week') {
-      periodStart = new Date(now);
-      periodStart.setDate(now.getDate() - now.getDay());
-      periodStart.setHours(0, 0, 0, 0);
-    } else if (period === 'month') {
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    }
+    // Use our helper function to calculate the appropriate start date
+    const periodStart = calculatePeriodStart(period, now);
 
     const result = await db.select({
       earnings: sql<number>`sum(${tickets.amount})::int`,
@@ -596,18 +587,9 @@ export class DatabaseStorage implements IStorage {
     periodEnd: Date;
   }>> {
     const now = new Date();
-    // Set default period to one year ago instead of Jan 1, 1970
-    let periodStart = new Date(now);
-    periodStart.setFullYear(now.getFullYear() - 1);
     const periodEnd = now;
-
-    if (period === 'week') {
-      periodStart = new Date(now);
-      periodStart.setDate(now.getDate() - now.getDay());
-      periodStart.setHours(0, 0, 0, 0);
-    } else if (period === 'month') {
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    }
+    // Use our helper function to calculate the appropriate start date
+    const periodStart = calculatePeriodStart(period, now);
 
     const stats = await db.select({
       discordId: tickets.claimedBy,
