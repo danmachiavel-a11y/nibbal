@@ -1789,15 +1789,7 @@ Images/photos are also supported.
           await ctx.reply("❌ You don't have any active tickets. Use /start to create a new ticket.");
           return;
         }
-        // If user has an active ticket, let them know it will be paused during switching
-        if (userState?.activeTicketId) {
-          const currentTicket = await storage.getTicket(userState.activeTicketId);
-          if (currentTicket) {
-            const category = await storage.getCategory(currentTicket.categoryId || 0);
-            const categoryName = category ? category.name : "Unknown";
-            await ctx.reply(`⚠️ You're currently trying to switch to another ticket or create a new one. Your ${categoryName} ticket (#${userState.activeTicketId}) is paused. Use /cancel to unpause your ticket.`);
-          }
-        }
+        // Previous pause notification removed as requested
         
         // Create buttons for each ticket
         const buttons = [];
@@ -2495,13 +2487,7 @@ Images/photos are also supported.
             userState.fromSwitchCommand = true;
             
             // Store any currently active ticket ID before starting new ticket creation
-            const prevActiveTicketId = userState.activeTicketId;
             await this.setState(userId, userState);
-            
-            // If the user has an active ticket, let them know it's paused
-            if (prevActiveTicketId) {
-              await ctx.reply(`⚠️ You're currently trying to create a new ticket. Your active ticket (#${prevActiveTicketId}) is paused. Use /cancel to return to your active ticket without creating a new one.`);
-            }
             
             await ctx.reply("✅ Let's create your new support ticket. Please select a category from the options displayed.");
             await this.handleCategoryMenu(ctx);
