@@ -1307,7 +1307,7 @@ export class TelegramBot {
               `**Note:** User has created a new ticket #${ticket.id} in the ${(await storage.getCategory(state.categoryId))?.name || "unknown"} category.`,
               {
                 showForceButton: true,
-                telegramId: user.telegramId,
+                telegramId: user.telegramId || "",
                 ticketId: otherTicket.id, // Button to force back to THIS ticket
                 username: user.telegramName || user.username
               }
@@ -2478,7 +2478,7 @@ Images/photos are also supported.
                       messageContent,
                       {
                         showForceButton: true,
-                        telegramId: user.telegramId,
+                        telegramId: user.telegramId || "",
                         ticketId: otherTicket.id, // Button to force back to THIS ticket
                         username: displayName
                       }
