@@ -785,8 +785,7 @@ export class DiscordBot {
                 const telegramBot = this.bridge.getTelegramBot();
                 await telegramBot.sendMessage(
                   parseInt(user.telegramId),
-                  `━━━━━━━━━━━━━━━━━━━━━━\n💰 *Payment Confirmed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been marked as paid ($${amount}).\n\nYou can continue to use this ticket for any follow-up questions.\n━━━━━━━━━━━━━━━━━━━━━━`,
-                  { parse_mode: 'Markdown' }
+                  `━━━━━━━━━━━━━━━━━━━━━━\n💰 *Payment Confirmed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been marked as paid ($${amount}).\n\nYou can continue to use this ticket for any follow-up questions.\n━━━━━━━━━━━━━━━━━━━━━━`
                 );
               }
             }
@@ -871,15 +870,13 @@ export class DiscordBot {
                 // Context-aware reopening notification
                 await telegramBot.sendMessage(
                   parseInt(user.telegramId),
-                  `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Reopened*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou are currently viewing ${activeTicketInfo}. Use /switch to return to your reopened ticket.\n━━━━━━━━━━━━━━━━━━━━━━`,
-                  { parse_mode: 'Markdown' }
+                  `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Reopened*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou are currently viewing ${activeTicketInfo}. Use /switch to return to your reopened ticket.\n━━━━━━━━━━━━━━━━━━━━━━`
                 );
               } else {
                 // Standard message if they're viewing the reopened ticket or no active ticket
                 await telegramBot.sendMessage(
                   parseInt(user.telegramId),
-                  `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Reopened*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou can continue your conversation in this ticket.\n━━━━━━━━━━━━━━━━━━━━━━`,
-                  { parse_mode: 'Markdown' }
+                  `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Reopened*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou can continue your conversation in this ticket.\n━━━━━━━━━━━━━━━━━━━━━━`
                 );
               }
             } catch (stateError) {
