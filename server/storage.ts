@@ -542,13 +542,15 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }> {
-    // Set end date to now with current date/time (always use the current year)
+    // Set end date to now with current date/time from the system
     const today = new Date();
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, today);
     
-    // IMPORTANT FIX: Always use the current date for periodEnd (April 12, 2024)
-    const periodEnd = new Date(2024, 3, 12, 23, 59, 59, 999); // Month is 0-indexed, so 3 = April
+    // Use the current date from the system - this ensures we use the correct date
+    const periodEnd = new Date();
+    // Set to end of day to include all tickets from today
+    periodEnd.setHours(23, 59, 59, 999);
     
     // Log the dates for debugging
     console.log(`Stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
@@ -607,13 +609,15 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }>> {
-    // Set end date to now with current date/time
+    // Set end date to now with current date/time from the system
     const today = new Date();
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, today);
     
-    // IMPORTANT FIX: Always use the current date for periodEnd (April 12, 2024)
-    const periodEnd = new Date(2024, 3, 12, 23, 59, 59, 999); // Month is 0-indexed, so 3 = April
+    // Use the current date from the system - this ensures we use the correct date
+    const periodEnd = new Date();
+    // Set to end of day to include all tickets from today
+    periodEnd.setHours(23, 59, 59, 999);
     
     // Log the dates for debugging
     console.log(`Worker stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
