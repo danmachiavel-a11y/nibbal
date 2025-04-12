@@ -875,7 +875,13 @@ export class TelegramBot {
       }
 
       // Use our new preserveMarkdown function to keep markdown formatting while escaping special chars
-      const welcomeMessage = preserveMarkdown(botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:");
+      let welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
+      
+      // Add clear visual separator and instructions
+      welcomeMessage = `━━━━━━━━━━━━━━━━━━━━━━\n🎫 *Create a new support ticket*\n\n${welcomeMessage}\n\n⚠️ *Please select a service category below*\n*This will start a new ticket creation process.*\n━━━━━━━━━━━━━━━━━━━━━━`;
+      
+      // Preserve markdown in the enhanced message
+      welcomeMessage = preserveMarkdown(welcomeMessage);
       const welcomeImageUrl = botConfig?.welcomeImageUrl;
 
       try {
@@ -1064,8 +1070,12 @@ export class TelegramBot {
       };
       this.setState(userId, state);
 
-      // Ask first question
-      await ctx.reply(preserveMarkdown(questions[0]), {
+      // Ask first question with clear context
+      // Show progress indication and separator
+      const questionProgress = `*Question 1/${questions.length}*`;
+      const questionText = preserveMarkdown(`━━━━━━━━━━━━━━━━━━━━━━\n${questionProgress}\n\n${questions[0]}\n\n⚠️ *Please answer each question to complete your ticket*\n━━━━━━━━━━━━━━━━━━━━━━`);
+        
+      await ctx.reply(questionText, {
         parse_mode: "MarkdownV2"
       });
 
@@ -1117,7 +1127,8 @@ export class TelegramBot {
         callback_data: "back_to_main"
       }]);
 
-      const message = `Please select a service from ${submenu.name}:`;
+      // Add clear instructions with the submenu selection
+      const message = `━━━━━━━━━━━━━━━━━━━━━━\n🎫 *Create a new support ticket*\n\nPlease select a service from *${submenu.name}*:\n\n⚠️ *This will start a new ticket creation process.*\n━━━━━━━━━━━━━━━━━━━━━━`;
 
       // Check if we have a callback query and a message with text to edit
       const hasEditableMessage = 
@@ -1219,8 +1230,12 @@ export class TelegramBot {
         state.currentQuestion++;
         this.setState(userId, state);
         
-        // Ask the next question
-        await ctx.reply(preserveMarkdown(questions[state.currentQuestion]), {
+        // Ask the next question with clear context
+        // Show progress indication
+        const questionProgress = `*Question ${state.currentQuestion + 1}/${questions.length}*`;
+        const questionText = preserveMarkdown(`━━━━━━━━━━━━━━━━━━━━━━\n${questionProgress}\n\n${questions[state.currentQuestion]}\n\n⚠️ *Please answer each question to complete your ticket*\n━━━━━━━━━━━━━━━━━━━━━━`);
+        
+        await ctx.reply(questionText, {
           parse_mode: "MarkdownV2"
         });
       } else {
