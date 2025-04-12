@@ -542,12 +542,13 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }> {
-    // Set end date to now with current date/time
+    // Set end date to now with current date/time (always use the current year)
     const today = new Date();
-    // Create a new Date object for end date to avoid reference issues
-    const periodEnd = new Date();
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, today);
+    
+    // IMPORTANT FIX: Use current date for periodEnd to avoid future dates
+    const periodEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
     
     // Log the dates for debugging
     console.log(`Stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
@@ -594,7 +595,7 @@ export class DatabaseStorage implements IStorage {
         ticketCount: stat.ticketCount
       })),
       periodStart,
-      periodEnd // Use the explicitly created periodEnd variable
+      periodEnd
     };
   }
 
@@ -608,10 +609,11 @@ export class DatabaseStorage implements IStorage {
   }>> {
     // Set end date to now with current date/time
     const today = new Date();
-    // Create a new Date object for end date to avoid reference issues
-    const periodEnd = new Date();
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, today);
+    
+    // IMPORTANT FIX: Use current date for periodEnd to avoid future dates
+    const periodEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
     
     // Log the dates for debugging
     console.log(`Worker stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
@@ -639,7 +641,7 @@ export class DatabaseStorage implements IStorage {
       totalEarnings: stat.earnings || 0,
       ticketCount: stat.count,
       periodStart,
-      periodEnd // Use explicitly created periodEnd variable
+      periodEnd
     }));
   }
 
