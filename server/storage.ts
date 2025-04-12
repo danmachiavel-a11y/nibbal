@@ -562,9 +562,13 @@ export class DatabaseStorage implements IStorage {
     // Set to end of day to include all tickets
     periodEnd.setHours(23, 59, 59, 999);
     
-    // Log the dates for debugging
-    console.log(`Stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
+    // Log with detailed date info to help diagnose issues
+    console.log(`Stats period for ${period}: 
+      Start: ${periodStart.toISOString()} (${periodStart.getFullYear()}-${periodStart.getMonth()+1}-${periodStart.getDate()})
+      End: ${periodEnd.toISOString()} (${periodEnd.getFullYear()}-${periodEnd.getMonth()+1}-${periodEnd.getDate()})
+    `);
 
+    // Use SQL date casting to explicitly compare dates with year precision
     const result = await db.select({
       earnings: sql<number>`sum(${tickets.amount})::int`,
       count: sql<number>`count(*)::int`
@@ -574,10 +578,13 @@ export class DatabaseStorage implements IStorage {
       and(
         eq(tickets.claimedBy, discordId),
         eq(tickets.status, 'paid'),
-        sql`${tickets.completedAt} >= ${periodStart}`,
-        sql`${tickets.completedAt} <= ${periodEnd}`
+        sql`DATE(${tickets.completedAt}) >= DATE(${periodStart})`,
+        sql`DATE(${tickets.completedAt}) <= DATE(${periodEnd})`
       )
     );
+
+    // Log the SQL that would be generated for debugging
+    console.log(`Using improved date comparison with explicit DATE casting for period ${period}`);
 
     const categoryStats = await db.select({
       categoryId: categories.id,
@@ -591,8 +598,8 @@ export class DatabaseStorage implements IStorage {
       and(
         eq(tickets.claimedBy, discordId),
         eq(tickets.status, 'paid'),
-        sql`${tickets.completedAt} >= ${periodStart}`,
-        sql`${tickets.completedAt} <= ${periodEnd}`
+        sql`DATE(${tickets.completedAt}) >= DATE(${periodStart})`,
+        sql`DATE(${tickets.completedAt}) <= DATE(${periodEnd})`
       )
     )
     .groupBy(categories.id, categories.name);
@@ -629,9 +636,13 @@ export class DatabaseStorage implements IStorage {
     // Set to end of day to include all tickets
     periodEnd.setHours(23, 59, 59, 999);
     
-    // Log the dates for debugging
-    console.log(`Worker stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
+    // Log with detailed date info to help diagnose issues
+    console.log(`Worker stats period for ${period}: 
+      Start: ${periodStart.toISOString()} (${periodStart.getFullYear()}-${periodStart.getMonth()+1}-${periodStart.getDate()})
+      End: ${periodEnd.toISOString()} (${periodEnd.getFullYear()}-${periodEnd.getMonth()+1}-${periodEnd.getDate()})
+    `);
 
+    // Use SQL date casting to explicitly compare dates with year precision
     const stats = await db.select({
       discordId: tickets.claimedBy,
       earnings: sql<number>`sum(${tickets.amount})::int`,
@@ -642,12 +653,15 @@ export class DatabaseStorage implements IStorage {
       and(
         sql`${tickets.claimedBy} is not null`,
         eq(tickets.status, 'paid'),
-        sql`${tickets.completedAt} >= ${periodStart}`,
-        sql`${tickets.completedAt} <= ${periodEnd}`
+        sql`DATE(${tickets.completedAt}) >= DATE(${periodStart})`,
+        sql`DATE(${tickets.completedAt}) <= DATE(${periodEnd})`
       )
     )
     .groupBy(tickets.claimedBy)
     .orderBy(desc(sql<number>`sum(${tickets.amount})`));
+
+    // Log the SQL that would be generated for debugging
+    console.log(`Using improved date comparison with explicit DATE casting for worker period ${period}`);
 
     return stats.map(stat => ({
       discordId: stat.discordId!,
@@ -676,9 +690,14 @@ export class DatabaseStorage implements IStorage {
     const adjustedEndDate = new Date(endDate);
     adjustedEndDate.setHours(23, 59, 59, 999);
     
-    // Log for debugging purposes
-    console.log(`Querying stats with range: ${startDate.toISOString()} to ${adjustedEndDate.toISOString()}`);
+    // Log for debugging purposes with detailed date info to help diagnose issues
+    console.log(`Querying stats with date range: 
+      Start: ${startDate.toISOString()} (${startDate.getFullYear()}-${startDate.getMonth()+1}-${startDate.getDate()})
+      End: ${adjustedEndDate.toISOString()} (${adjustedEndDate.getFullYear()}-${adjustedEndDate.getMonth()+1}-${adjustedEndDate.getDate()})
+    `);
     
+    // Use SQL date casting to explicitly compare dates with year precision
+    // This uses PostgreSQL's date functions to ensure proper date comparison
     const result = await db.select({
       earnings: sql<number>`sum(${tickets.amount})::int`,
       count: sql<number>`count(*)::int`
@@ -688,10 +707,13 @@ export class DatabaseStorage implements IStorage {
       and(
         eq(tickets.claimedBy, discordId),
         eq(tickets.status, 'paid'),
-        sql`${tickets.completedAt} >= ${startDate}`,
-        sql`${tickets.completedAt} <= ${adjustedEndDate}`
+        sql`DATE(${tickets.completedAt}) >= DATE(${startDate})`,
+        sql`DATE(${tickets.completedAt}) <= DATE(${adjustedEndDate})`
       )
     );
+
+    // Log the SQL that would be generated for debugging
+    console.log(`Using improved date comparison with explicit DATE casting to respect year differences`);
 
     const categoryStats = await db.select({
       categoryId: categories.id,
@@ -705,8 +727,8 @@ export class DatabaseStorage implements IStorage {
       and(
         eq(tickets.claimedBy, discordId),
         eq(tickets.status, 'paid'),
-        sql`${tickets.completedAt} >= ${startDate}`,
-        sql`${tickets.completedAt} <= ${adjustedEndDate}`
+        sql`DATE(${tickets.completedAt}) >= DATE(${startDate})`,
+        sql`DATE(${tickets.completedAt}) <= DATE(${adjustedEndDate})`
       )
     )
     .groupBy(categories.id, categories.name);
@@ -738,9 +760,14 @@ export class DatabaseStorage implements IStorage {
     const adjustedEndDate = new Date(endDate);
     adjustedEndDate.setHours(23, 59, 59, 999);
     
-    // Log for debugging purposes
-    console.log(`Querying all worker stats with range: ${startDate.toISOString()} to ${adjustedEndDate.toISOString()}`);
+    // Log for debugging purposes with detailed date info to help diagnose issues
+    console.log(`Querying all worker stats with date range: 
+      Start: ${startDate.toISOString()} (${startDate.getFullYear()}-${startDate.getMonth()+1}-${startDate.getDate()})
+      End: ${adjustedEndDate.toISOString()} (${adjustedEndDate.getFullYear()}-${adjustedEndDate.getMonth()+1}-${adjustedEndDate.getDate()})
+    `);
     
+    // Use SQL date casting to explicitly compare dates with year precision
+    // This uses PostgreSQL's date functions to ensure proper date comparison
     const stats = await db.select({
       discordId: tickets.claimedBy,
       earnings: sql<number>`sum(${tickets.amount})::int`,
@@ -751,12 +778,15 @@ export class DatabaseStorage implements IStorage {
       and(
         sql`${tickets.claimedBy} is not null`,
         eq(tickets.status, 'paid'),
-        sql`${tickets.completedAt} >= ${startDate}`,
-        sql`${tickets.completedAt} <= ${adjustedEndDate}`
+        sql`DATE(${tickets.completedAt}) >= DATE(${startDate})`,
+        sql`DATE(${tickets.completedAt}) <= DATE(${adjustedEndDate})`
       )
     )
     .groupBy(tickets.claimedBy)
     .orderBy(desc(sql<number>`sum(${tickets.amount})`));
+
+    // Log the SQL that would be generated for debugging
+    console.log(`Using improved date comparison with explicit DATE casting to respect year differences in worker stats`);
 
     return stats.map(stat => ({
       discordId: stat.discordId!,
