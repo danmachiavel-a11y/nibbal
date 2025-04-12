@@ -1332,7 +1332,9 @@ export class TelegramBot {
       try {
         await this.bridge.createTicketChannel(ticket);
         
-        await ctx.reply("✅ Your ticket has been created! You're now connected with our staff. Your messages will be sent directly to our team, and they'll respond to you here.");
+        await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n✅ *Ticket created successfully!*\n\n*You are now in:* ${category.name} (#${ticket.id})\n\n⚠️ *All your messages will be sent to our staff in this ticket. They will respond here.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
+          parse_mode: 'Markdown'
+        });
         
         // Send summary of the ticket
         const ticketSummary = [
@@ -1811,9 +1813,24 @@ Images/photos are also supported.
           callback_data: "switch_new"
         }]);
         
-        // Format ticket list
-        let ticketList = "🎫 *Your active tickets:*\n\n";
-        ticketList += "Please select a ticket to switch to, or create a new one:";
+        // Format ticket list with visual dividers and clear instructions
+        let ticketList = "━━━━━━━━━━━━━━━━━━━━━━\n";
+        ticketList += "🎫 *Your active tickets:*\n\n";
+        
+        // Include current active ticket info if applicable
+        if (currentTicketId) {
+          // Get the active ticket category name
+          const activeTicket = userTickets.find(t => t.id === currentTicketId);
+          if (activeTicket && activeTicket.categoryId) {
+            const category = categoriesMap.get(activeTicket.categoryId);
+            const categoryName = category ? category.name : "Unknown service";
+            ticketList += `⚠️ *Your messages are currently sent to:*\n✅ ${categoryName} (#${currentTicketId})\n\n`;
+          }
+        } else {
+          ticketList += `⚠️ *You don't have an active ticket selected.*\n\n`;
+        }
+        
+        ticketList += "Please select a ticket to switch to, or create a new one:\n━━━━━━━━━━━━━━━━━━━━━━";
         
         // Send list with inline keyboard buttons
         await ctx.reply(ticketList, { 
@@ -2074,8 +2091,8 @@ Images/photos are also supported.
             await this.setState(userId, userMemoryState);
           }
           
-          // Send a message to let the user know which ticket they were switched to
-          await ctx.reply(`🔄 You've been automatically switched to your other active ticket: *${categoryName}* (#${remainingActiveTickets[0].id})`, {
+          // Send a message to let the user know which ticket they were switched to with visual separator
+          await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n🔄 *You've been automatically switched to:*\n*${categoryName}* (#${remainingActiveTickets[0].id})\n\n⚠️ *Your messages will be sent to this ticket unless you select another option below.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
             parse_mode: 'Markdown'
           });
           
@@ -2102,7 +2119,7 @@ Images/photos are also supported.
             const isActive = ticket.id === remainingActiveTickets[0].id;
             
             buttons.push([{
-              text: isActive ? `✅ ${buttonLabel}` : buttonLabel,
+              text: isActive ? `✅ ${buttonLabel} (current)` : buttonLabel,
               callback_data: `switch_${ticket.id}`
             }]);
           }
@@ -2113,8 +2130,9 @@ Images/photos are also supported.
             callback_data: "switch_new"
           }]);
           
-          // Send the remaining tickets menu
-          await ctx.reply("🎫 Here are your active tickets:", {
+          // Send the remaining tickets menu with better header
+          await ctx.reply(`🎫 *Your active tickets:*\nPlease select a ticket or create a new one:`, {
+            parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: buttons
             }
@@ -2490,6 +2508,11 @@ Images/photos are also supported.
               const categoryName = category ? category.name : "Unknown category";
               
               await ctx.answerCbQuery(`Switched to ticket #${ticketId}`);
+              
+              // Send a clear confirmation message with visual separator
+              await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n✅ *You are now in:* *${categoryName}* (#${ticketId})\n\n⚠️ *All your messages will be sent to this ticket.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
+                parse_mode: 'Markdown'
+              });
               
               // Get all active tickets again to display the updated menu
               const userTickets = await storage.getActiveTicketsByUserId(user.id);
