@@ -1420,7 +1420,7 @@ export class BridgeManager {
         // Send notification to the Telegram user
         await this.sendMessageToTelegram(
           telegramIdNum, 
-          `🔄 Staff has switched your active ticket to #${ticketId} (${category.name}).`
+          `🔄 Staff has switched your active ticket to #${ticketId} (${category.name}).\nYou can switch to another ticket by using /switch`
         );
         
         // Send notification in both Discord channels
