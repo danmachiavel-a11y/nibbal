@@ -1413,8 +1413,8 @@ export class BridgeManager {
         currentQuestion: 0,
         answers: [],
         inQuestionnaire: false,
-        lastUpdated: Date.now(),
-        fromSwitchCommand: true
+        lastUpdated: Date.now()
+        // Removed fromSwitchCommand flag to prevent duplicate ticket creation in same category
       };
       
       // Update state in memory 

@@ -125,7 +125,8 @@ interface UserState {
   activeTicketId?: number;
   // Record time of last state change to help with recovery logic
   lastUpdated?: number;
-  // Flag to indicate this ticket creation is coming from the /switch command
+  // Flag used to be used to bypass duplicate ticket check from /switch command
+  // Kept for backward compatibility but no longer used
   fromSwitchCommand?: boolean;
 }
 
