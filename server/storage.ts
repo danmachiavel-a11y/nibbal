@@ -8,6 +8,30 @@ import {
 } from '@shared/schema';
 import { log } from './vite';
 
+// Helper function to calculate the period start date
+function calculatePeriodStart(period: 'week' | 'month' | 'all', now: Date): Date {
+  let periodStart: Date;
+  
+  if (period === 'week') {
+    // For week: show from beginning of the week (Monday)
+    periodStart = new Date(now);
+    const dayOfWeek = now.getDay() || 7; // Convert Sunday (0) to 7
+    const daysToGoBack = dayOfWeek - 1; // Monday is 1, so Monday should go back 0 days
+    periodStart.setDate(now.getDate() - daysToGoBack);
+    periodStart.setHours(0, 0, 0, 0);
+  } else if (period === 'month') {
+    // For month: show from the first day of the current month
+    periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    periodStart.setHours(0, 0, 0, 0);
+  } else {
+    // For all: show from one year ago
+    periodStart = new Date(now);
+    periodStart.setFullYear(now.getFullYear() - 1);
+  }
+  
+  return periodStart;
+}
+
 export interface IStorage {
   // Bot config operations
   getBotConfig(): Promise<BotConfig | undefined>;
