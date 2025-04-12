@@ -1144,12 +1144,28 @@ export async function registerRoutes(app: Express) {
     try {
       let stats;
       if (startDate && endDate) {
+        // For custom date range queries
         stats = await storage.getUserStatsByDateRange(discordId, startDate, endDate);
       } else {
+        // For predefined period queries
         stats = await storage.getUserStatsByPeriod(discordId, period || 'all');
       }
+      
+      // Fix the year in periodEnd if it's in the future (workaround for possible bug)
+      if (stats.periodEnd instanceof Date) {
+        const now = new Date();
+        if (stats.periodEnd.getFullYear() > now.getFullYear()) {
+          // Create a corrected date with the current year
+          const correctedDate = new Date(stats.periodEnd);
+          correctedDate.setFullYear(now.getFullYear());
+          stats.periodEnd = correctedDate;
+          console.log(`Corrected future year in periodEnd to current year: ${correctedDate.toISOString()}`);
+        }
+      }
+      
       res.json(stats);
     } catch (error: any) {
+      console.error("Error fetching user stats:", error);
       res.status(500).json({ message: "Failed to fetch user stats" });
     }
   });
@@ -1166,8 +1182,25 @@ export async function registerRoutes(app: Express) {
       } else {
         stats = await storage.getAllWorkerStatsByPeriod(period || 'all');
       }
+      
+      // Fix any future years in the periodEnd dates
+      if (Array.isArray(stats)) {
+        const now = new Date();
+        stats = stats.map(stat => {
+          if (stat.periodEnd instanceof Date && stat.periodEnd.getFullYear() > now.getFullYear()) {
+            // Create a corrected date with the current year
+            const correctedDate = new Date(stat.periodEnd);
+            correctedDate.setFullYear(now.getFullYear());
+            stat.periodEnd = correctedDate;
+            console.log(`Corrected future year in worker stats periodEnd to current year: ${correctedDate.toISOString()}`);
+          }
+          return stat;
+        });
+      }
+      
       res.json(stats);
     } catch (error: any) {
+      console.error("Error fetching worker stats:", error);
       res.status(500).json({ message: "Failed to fetch worker stats" });
     }
   });
