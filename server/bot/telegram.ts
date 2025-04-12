@@ -2496,11 +2496,8 @@ Images/photos are also supported.
             // User wants to create a new ticket
             await ctx.answerCbQuery("Creating a new ticket");
             
-            // Set fromSwitchCommand flag to true to bypass the "already has ticket" check
-            // userState is guaranteed to be defined here since we initialized it above
-            userState.fromSwitchCommand = true;
-            
-            // Store any currently active ticket ID before starting new ticket creation
+            // Important: We no longer bypass the duplicate ticket check
+            // Store current state before starting new ticket creation
             await this.setState(userId, userState);
             
             await ctx.reply("✅ Let's create your new support ticket. Please select a category from the options displayed.");
