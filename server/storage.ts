@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, or } from 'drizzle-orm';
+import { eq, and, desc, sql, or, gt } from 'drizzle-orm';
 import { db } from './db';
 import {
   users, categories, tickets, messages, botConfig, messageQueue, userStates,
@@ -479,7 +479,7 @@ export class DatabaseStorage implements IStorage {
     .where(
       and(
         eq(tickets.claimedBy, discordId),
-        eq(tickets.status, 'paid')
+        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
       )
     );
 
@@ -494,7 +494,7 @@ export class DatabaseStorage implements IStorage {
     .where(
       and(
         eq(tickets.claimedBy, discordId),
-        eq(tickets.status, 'paid')
+        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
       )
     )
     .groupBy(categories.id, categories.name);
