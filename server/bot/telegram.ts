@@ -1789,6 +1789,15 @@ Images/photos are also supported.
           await ctx.reply("❌ You don't have any active tickets. Use /start to create a new ticket.");
           return;
         }
+        // If user has an active ticket, let them know it will be paused during switching
+        if (userState?.activeTicketId) {
+          const currentTicket = await storage.getTicket(userState.activeTicketId);
+          if (currentTicket) {
+            const category = await storage.getCategory(currentTicket.categoryId || 0);
+            const categoryName = category ? category.name : "Unknown";
+            await ctx.reply(`⚠️ You're currently trying to switch to another ticket or create a new one. Your ${categoryName} ticket (#${userState.activeTicketId}) is paused. Use /cancel to unpause your ticket.`);
+          }
+        }
         
         // Create buttons for each ticket
         const buttons = [];
@@ -2635,17 +2644,16 @@ Images/photos are also supported.
                   if (otherTicket.discordChannelId) {
                     log(`Sending Discord notification to other channel: ${otherTicket.discordChannelId}`, "debug");
                     
-                    // Create a button to force the user back to this ticket
-                    const buttonId = `force_ticket:${user.telegramId}:${otherTicket.id}:${displayName}`;
-                    
                     // Create message content without the command instruction
                     const messageContent = `**Note:** The user has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.`;
                     
+                    // Only include the force button on successful switch, not when attempting to switch
                     // Use our updated system message method with Force Back button
                     await this.bridge.sendSystemMessageToDiscord(
                       otherTicket.discordChannelId,
                       messageContent,
                       {
+                        // We include force button here because this is after a SUCCESSFUL switch
                         showForceButton: true,
                         telegramId: user.telegramId || "",
                         ticketId: otherTicket.id, // Button to force back to THIS ticket
