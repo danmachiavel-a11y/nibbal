@@ -55,24 +55,6 @@ export default function Stats() {
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    
-    // Check if the date is in 2025 (the system time is wrong)
-    if (date.getFullYear() === 2025) {
-      // If the date is from 2025, fix it to 2023
-      console.log(`Fixing 2025 date: ${date.toISOString()} -> changing to 2023`);
-      return format(new Date(2023, date.getMonth(), date.getDate()), 'MMM d, yyyy');
-    }
-    
-    // Check if the date is in the future (more than a day ahead)
-    const now = new Date();
-    const oneDay = 24 * 60 * 60 * 1000; // milliseconds in a day
-    
-    if (date.getTime() - now.getTime() > oneDay) {
-      // If the date is in the future, adjust year to 2023
-      console.log(`Fixing future date: ${date.toISOString()} -> changing to 2023`);
-      return format(new Date(2023, date.getMonth(), date.getDate()), 'MMM d, yyyy');
-    }
-    
     return format(date, 'MMM d, yyyy');
   };
 

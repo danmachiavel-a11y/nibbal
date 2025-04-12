@@ -542,13 +542,13 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }> {
-    // Set today's date to April 12, 2023 since system date is incorrect
-    const today = new Date(2023, 3, 12);
+    // Use the current system date which is 2025-04-12
+    const today = new Date();
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, today);
     
-    // Hardcode to April 12, 2023 since system date is showing 2025
-    const periodEnd = new Date(2023, 3, 12);
+    // Use the current date - this is already 2025-04-12
+    const periodEnd = new Date();
     // Set to end of day to include all tickets
     periodEnd.setHours(23, 59, 59, 999);
     
@@ -609,13 +609,13 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }>> {
-    // Set today's date to April 12, 2023 since system date is incorrect
-    const today = new Date(2023, 3, 12);
+    // Use the current system date which is 2025-04-12
+    const today = new Date();
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, today);
     
-    // Hardcode to April 12, 2023 since system date is showing 2025
-    const periodEnd = new Date(2023, 3, 12);
+    // Use the current date - this is already 2025-04-12
+    const periodEnd = new Date();
     // Set to end of day to include all tickets
     periodEnd.setHours(23, 59, 59, 999);
     
