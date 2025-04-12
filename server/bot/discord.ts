@@ -2216,37 +2216,17 @@ export class DiscordBot {
             return;
           }
           
-          // Get the user's ID
-          const userId = user.id;
-          
-          // Create the new state
-          const newState = JSON.stringify({
-            activeTicketId: ticketId,
-            categoryId: ticket.categoryId || 0,
-            currentQuestion: 0,
-            answers: [],
-            inQuestionnaire: false,
-            lastUpdated: Date.now()
-          });
-          
-          // Save the state
-          await storage.saveUserState(userId, telegramId, newState);
-          
-          // Get category name for message
-          let categoryName = "Unknown category";
-          if (ticket.categoryId) {
-            const category = await storage.getCategory(ticket.categoryId);
-            if (category) {
-              categoryName = category.name;
-            }
-          }
-          
-          // Notify the user via Telegram
+          // Use bridge.forceUserTicketSwitch instead of manually managing the state
           try {
-            await this.bridge.sendMessageToTelegram(
-              parseInt(telegramId),
-              `⚠️ *A support agent has redirected you to ticket #${ticketId} (${categoryName}).*\n\nPlease continue your conversation in this ticket.`
-            );
+            // Call bridge to handle the force switch logic with improved handling
+            const result = await this.bridge.forceUserTicketSwitch(telegramId, ticketId);
+            
+            // Check if user was already in this ticket
+            if (result.alreadyInTicket) {
+              // User was already in this ticket, just let the staff member know without sending notification
+              await message.reply(`ℹ️ The user is already in ticket #${ticketId}.`);
+              return;
+            }
             
             // Send a brief confirmation message to Discord
             await message.reply(`✅ Action completed successfully`);

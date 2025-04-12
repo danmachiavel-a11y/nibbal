@@ -274,6 +274,15 @@ export class TelegramBot {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   
   /**
+   * Get the current state for a user from memory
+   * @param userId The Telegram user ID
+   * @returns The user state or undefined if not found
+   */
+  getUserState(userId: number): UserState | undefined {
+    return this.userStates.get(userId);
+  }
+  
+  /**
    * Safe getter for the telegram property
    * Returns a proxy that throws a helpful error if the bot is null
    */
