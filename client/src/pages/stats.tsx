@@ -147,7 +147,7 @@ export default function Stats() {
             <>
               Showing data from {format(dateRange.from, "MMM d, yyyy")} to {format(dateRange.to, "MMM d, yyyy")}
             </>
-          ) : period !== 'all' && stats ? (
+          ) : stats ? (
             <>
               Showing data from {formatDate(stats.periodStart)} to {formatDate(stats.periodEnd)}
             </>
