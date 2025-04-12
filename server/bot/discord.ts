@@ -1207,78 +1207,18 @@ export class DiscordBot {
             
             await interaction.editReply({ embeds: [alreadyClosedEmbed] });
           } else {
-            // Get ticket creator's info for notification
-            const user = await storage.getUser(ticket.userId!);
-            if (user?.telegramId) {
-              // Get staff member's display name with type safety
-              let staffName = "Discord Staff";
-              if (interaction.member && 'displayName' in interaction.member) {
-                staffName = interaction.member.displayName;
-              } else if (interaction.user && 'username' in interaction.user) {
-                staffName = interaction.user.username;
-              }
-  
-              // Send notification only if ticket wasn't already closed
-              // Check if the user is currently viewing a different ticket before notifying
-              try {
-                // Get user state from Telegram bot to check currently active ticket
-                const telegramBot = this.bridge.getTelegramBot();
-                const userState = telegramBot.getUserState(parseInt(user.telegramId));
-                
-                // If user is viewing a different ticket, include that context in the message
-                if (userState && userState.activeTicketId && userState.activeTicketId !== ticket.id) {
-                  // Get the category of the active ticket for better user context
-                  const activeTicket = await storage.getTicket(userState.activeTicketId);
-                  let activeTicketInfo = `#${userState.activeTicketId}`;
-                  
-                  if (activeTicket && activeTicket.categoryId) {
-                    const activeCategory = await storage.getCategory(activeTicket.categoryId);
-                    if (activeCategory) {
-                      activeTicketInfo = `${activeCategory.name} (#${userState.activeTicketId})`;
-                    }
-                  }
-                  
-                  // Get the ticket's category information for better context
-                  const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
-                  const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
-
-                  // Let the user know which ticket was closed vs which one they're viewing with improved formatting
-                  await this.bridge.getTelegramBot().sendMessage(
-                    parseInt(user.telegramId),
-                    `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Closed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been closed by ${staffName}.\n\nYou are currently viewing ${activeTicketInfo}, which is still active.\n━━━━━━━━━━━━━━━━━━━━━━`
-                  );
-                } else {
-                  // Get the ticket's category information for better context
-                  const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
-                  const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
-                  
-                  // Enhanced standard message with service name and better formatting
-                  await this.bridge.getTelegramBot().sendMessage(
-                    parseInt(user.telegramId),
-                    `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Closed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been closed by ${staffName}.\n\nThank you for using our service. You can create a new ticket anytime.\n━━━━━━━━━━━━━━━━━━━━━━`
-                  );
-                }
-              } catch (stateError) {
-                // If error getting state, fall back to standard message but still get service info if possible
-                log(`Error checking user state for context-aware notification: ${stateError}`, "warn");
-                try {
-                  // Try to get category info even in error case
-                  const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
-                  const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
-                  
-                  await this.bridge.getTelegramBot().sendMessage(
-                    parseInt(user.telegramId),
-                    `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Closed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been closed by ${staffName}.\n\nThank you for using our service.\n━━━━━━━━━━━━━━━━━━━━━━`
-                  );
-                } catch (finalError) {
-                  // Ultimate fallback with minimal info
-                  await this.bridge.getTelegramBot().sendMessage(
-                    parseInt(user.telegramId),
-                    `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-                  );
-                }
-              }
-            }
+            // Get staff member's display name for logs, but don't notify Telegram user
+          let staffName = "Discord Staff";
+          if (interaction.member && 'displayName' in interaction.member) {
+            staffName = interaction.member.displayName;
+          } else if (interaction.user && 'username' in interaction.user) {
+            staffName = interaction.user.username;
+          }
+          
+          // Log the ticket closure but don't send Telegram notification
+          const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
+          const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
+          log(`Ticket #${ticket.id} (${categoryName}) closed by ${staffName}. Telegram notification suppressed.`, "info");
           }
 
           // Move channel to transcripts category using the Bridge's moveToTranscripts method
