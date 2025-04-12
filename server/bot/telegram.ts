@@ -2050,13 +2050,18 @@ Images/photos are also supported.
         const remainingActiveTickets = await storage.getActiveTicketsByUserId(user.id);
         
         if (remainingActiveTickets.length > 0) {
-          // User has other active tickets, automatically switch to one of them
-          console.log(`User has ${remainingActiveTickets.length} active tickets remaining, switching to ticket #${remainingActiveTickets[0].id}`);
+          // Sort tickets by ID in descending order to get the most recent one first
+          // Since IDs are auto-incrementing, higher ID = more recent ticket
+          remainingActiveTickets.sort((a, b) => b.id - a.id);
           
-          // Get category for the first active ticket to display name
+          // User has other active tickets, automatically switch to the most recent one
+          const mostRecentTicket = remainingActiveTickets[0];
+          console.log(`User has ${remainingActiveTickets.length} active tickets remaining, switching to most recent ticket #${mostRecentTicket.id}`);
+          
+          // Get category for the most recent active ticket to display name
           let categoryName = "Unknown service";
-          if (remainingActiveTickets[0].categoryId) {
-            const nextCategory = await storage.getCategory(remainingActiveTickets[0].categoryId);
+          if (mostRecentTicket.categoryId) {
+            const nextCategory = await storage.getCategory(mostRecentTicket.categoryId);
             if (nextCategory) {
               categoryName = nextCategory.name;
             }
@@ -2064,8 +2069,8 @@ Images/photos are also supported.
           
           // Update the user's state with the new active ticket
           if (userMemoryState) {
-            userMemoryState.activeTicketId = remainingActiveTickets[0].id;
-            userMemoryState.categoryId = remainingActiveTickets[0].categoryId || 0;
+            userMemoryState.activeTicketId = mostRecentTicket.id;
+            userMemoryState.categoryId = mostRecentTicket.categoryId || 0;
             await this.setState(userId, userMemoryState);
           }
           
@@ -2101,6 +2106,12 @@ Images/photos are also supported.
               callback_data: `switch_${ticket.id}`
             }]);
           }
+          
+          // Add a button to create a new ticket
+          buttons.push([{
+            text: "➕ Create a new ticket",
+            callback_data: "switch_new"
+          }]);
           
           // Send the remaining tickets menu
           await ctx.reply("🎫 Here are your active tickets:", {
