@@ -504,9 +504,7 @@ export class DatabaseStorage implements IStorage {
     periodEnd: Date;
   }> {
     const now = new Date();
-    // Set default period to one year ago instead of Jan 1, 1970
-    let periodStart = new Date(now);
-    periodStart.setFullYear(now.getFullYear() - 1);
+    let periodStart = new Date(0);
     const periodEnd = now;
 
     if (period === 'week') {
@@ -572,9 +570,7 @@ export class DatabaseStorage implements IStorage {
     periodEnd: Date;
   }>> {
     const now = new Date();
-    // Set default period to one year ago instead of Jan 1, 1970
-    let periodStart = new Date(now);
-    periodStart.setFullYear(now.getFullYear() - 1);
+    let periodStart = new Date(0);
     const periodEnd = now;
 
     if (period === 'week') {
