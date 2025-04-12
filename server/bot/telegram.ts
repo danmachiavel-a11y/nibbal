@@ -2522,8 +2522,8 @@ Images/photos are also supported.
                 return;
               }
               
-              // Check if the ticket is active
-              if (ticket.status !== "pending") {
+              // Check if the ticket is active (pending or paid)
+              if (ticket.status !== "pending" && ticket.status !== "paid") {
                 await ctx.answerCbQuery(`Ticket #${ticketId} is not active (status: ${ticket.status})`);
                 return;
               }
@@ -2791,8 +2791,8 @@ Images/photos are also supported.
               return;
             }
             
-            // Check if the ticket is active
-            if (ticket.status !== "pending") {
+            // Check if the ticket is active (pending or paid)
+            if (ticket.status !== "pending" && ticket.status !== "paid") {
               await ctx.reply(`❌ Ticket #${ticketId} is not active (status: ${ticket.status}).`);
               return;
             }
@@ -2856,7 +2856,8 @@ Images/photos are also supported.
         // If active ticket, handle that
         if (userState.activeTicketId) {
           const ticket = await storage.getTicket(userState.activeTicketId);
-          if (ticket && ticket.status !== 'closed' && ticket.status !== 'deleted') {
+          // Allow handling messages for both pending and paid tickets
+          if (ticket && ticket.status !== 'closed' && ticket.status !== 'deleted' && ticket.status !== 'transcript') {
             await this.handleTicketMessage(ctx, user, ticket);
             return;
           }
