@@ -41,8 +41,26 @@ export default function Stats() {
     to: new Date()
   });
 
+  // Force dates to the correct year (2025) for date range filtering
+  // This ensures the date picker sends dates with the correct year
+  const fixedDateRange = {
+    from: new Date(dateRange.from),
+    to: new Date(dateRange.to)
+  };
+  
+  // Set to current system year (2025)
+  if (fixedDateRange.from.getFullYear() !== 2025) {
+    fixedDateRange.from.setFullYear(2025);
+  }
+  if (fixedDateRange.to.getFullYear() !== 2025) {
+    fixedDateRange.to.setFullYear(2025);
+  }
+  
   const queryParams = period === 'custom' 
-    ? { startDate: dateRange.from.toISOString(), endDate: dateRange.to.toISOString() }
+    ? { 
+        startDate: fixedDateRange.from.toISOString(), 
+        endDate: fixedDateRange.to.toISOString() 
+      }
     : { period };
 
   const { data: stats, isLoading } = useQuery<UserStats>({
@@ -115,8 +133,9 @@ export default function Stats() {
                 <Calendar className="mr-2 h-4 w-4" />
                 {period === 'custom' ? (
                   <>
-                    {format(dateRange.from, "LLL dd, y")} -{" "}
-                    {format(dateRange.to, "LLL dd, y")}
+                    {/* Display the fixed date range with 2025 year */}
+                    {format(fixedDateRange.from, "LLL dd, yyyy")} -{" "}
+                    {format(fixedDateRange.to, "LLL dd, yyyy")}
                   </>
                 ) : (
                   "Pick a date range"
@@ -127,14 +146,25 @@ export default function Stats() {
               <CalendarComponent
                 initialFocus
                 mode="range"
-                defaultMonth={dateRange.from}
+                defaultMonth={fixedDateRange.from}
                 selected={{
-                  from: dateRange.from,
-                  to: dateRange.to,
+                  from: fixedDateRange.from,
+                  to: fixedDateRange.to,
                 }}
                 onSelect={(range) => {
                   if (range?.from && range?.to) {
-                    setDateRange({ from: range.from, to: range.to });
+                    // Create new date objects with corrected year
+                    const correctedFrom = new Date(range.from);
+                    const correctedTo = new Date(range.to);
+                    
+                    // Force the year to 2025 for both dates
+                    correctedFrom.setFullYear(2025);
+                    correctedTo.setFullYear(2025);
+                    
+                    setDateRange({ 
+                      from: correctedFrom, 
+                      to: correctedTo 
+                    });
                     setPeriod('custom');
                   }
                 }}
@@ -147,7 +177,8 @@ export default function Stats() {
         <p className="text-sm text-muted-foreground mt-2">
           {period === 'custom' ? (
             <>
-              Showing data from {format(dateRange.from, "MMM d, yyyy")} to {format(dateRange.to, "MMM d, yyyy")}
+              {/* Show the fixed date range with 2025 year */}
+              Showing data from {format(fixedDateRange.from, "MMM d, yyyy")} to {format(fixedDateRange.to, "MMM d, yyyy")}
             </>
           ) : stats ? (
             <>
