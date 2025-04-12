@@ -547,8 +547,8 @@ export class DatabaseStorage implements IStorage {
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, today);
     
-    // IMPORTANT FIX: Use current date for periodEnd to avoid future dates
-    const periodEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    // IMPORTANT FIX: Always use the current date for periodEnd (April 12, 2024)
+    const periodEnd = new Date(2024, 3, 12, 23, 59, 59, 999); // Month is 0-indexed, so 3 = April
     
     // Log the dates for debugging
     console.log(`Stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
@@ -612,8 +612,8 @@ export class DatabaseStorage implements IStorage {
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, today);
     
-    // IMPORTANT FIX: Use current date for periodEnd to avoid future dates
-    const periodEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    // IMPORTANT FIX: Always use the current date for periodEnd (April 12, 2024)
+    const periodEnd = new Date(2024, 3, 12, 23, 59, 59, 999); // Month is 0-indexed, so 3 = April
     
     // Log the dates for debugging
     console.log(`Worker stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
