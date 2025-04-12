@@ -1418,6 +1418,47 @@ export async function registerRoutes(app: Express) {
       });
     }
   });
+  
+  // Test route for marking tickets as paid (for testing the date fix)
+  app.post("/api/test/mark-ticket-paid", async (req, res) => {
+    try {
+      const { ticketId, amount, claimedBy } = req.body;
+      
+      if (!ticketId || !amount || !claimedBy) {
+        return res.status(400).json({ 
+          success: false, 
+          error: "ticketId, amount, and claimedBy are all required" 
+        });
+      }
+      
+      // Check if the ticket exists
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket) {
+        return res.status(404).json({
+          success: false,
+          error: `Ticket not found: ${ticketId}`
+        });
+      }
+      
+      // Use our fixed function to mark the ticket as paid
+      await storage.updateTicketPayment(ticketId, amount, claimedBy);
+      
+      // Get the updated ticket to verify the date was set correctly
+      const updatedTicket = await storage.getTicket(ticketId);
+      
+      return res.status(200).json({ 
+        success: true, 
+        message: `Ticket ${ticketId} marked as paid`,
+        ticket: updatedTicket
+      });
+    } catch (error) {
+      log(`Error in test mark-ticket-paid route: ${error}`, "error");
+      res.status(500).json({ 
+        success: false, 
+        error: String(error) 
+      });
+    }
+  });
 
   return httpServer;
 }

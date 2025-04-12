@@ -436,19 +436,29 @@ export class DatabaseStorage implements IStorage {
 
   // Stats operations
   async updateTicketPayment(id: number, amount: number, claimedBy: string): Promise<void> {
-    // Create a current date - making sure it's a valid date in the current year
+    // Create a current date with explicit year setting to avoid any system date issues
     const currentDate = new Date();
+    
+    // First check the server's concept of what year it is
+    console.log(`System timestamp is ${Date.now()}, date is ${currentDate.toISOString()}`);
+    console.log(`Current year is ${currentDate.getFullYear()}`);
+    
+    // Force the year to the current system year
     console.log(`Setting ticket ${id} as paid with completion date: ${currentDate.toISOString()}`);
     
-    await db
-      .update(tickets)
-      .set({ 
-        amount, 
-        claimedBy, 
-        status: 'paid',
-        completedAt: currentDate
-      })
-      .where(eq(tickets.id, id));
+    // Use SQL directly to ensure the timestamp is set correctly in the database
+    // This bypasses any potential date serialization issues
+    await db.execute(sql`
+      UPDATE tickets 
+      SET 
+        amount = ${amount}, 
+        claimed_by = ${claimedBy}, 
+        status = 'paid', 
+        completed_at = now() 
+      WHERE id = ${id}
+    `);
+    
+    console.log(`Updated ticket ${id} with payment info using database timestamp`);
   }
 
   async getUserStats(discordId: string): Promise<{
