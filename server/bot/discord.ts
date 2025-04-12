@@ -1238,25 +1238,45 @@ export class DiscordBot {
                     }
                   }
                   
-                  // Let the user know which ticket was closed vs which one they're viewing
+                  // Get the ticket's category information for better context
+                  const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
+                  const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
+
+                  // Let the user know which ticket was closed vs which one they're viewing with improved formatting
                   await this.bridge.getTelegramBot().sendMessage(
                     parseInt(user.telegramId),
-                    `📝 Ticket Update\n\nYour *other* ticket #${ticket.id} has been closed by ${staffName}.\n\nYou are currently in ${activeTicketInfo}, which is still active.`
+                    `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Closed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been closed by ${staffName}.\n\nYou are currently viewing ${activeTicketInfo}, which is still active.\n━━━━━━━━━━━━━━━━━━━━━━`
                   );
                 } else {
-                  // Standard message if they're viewing the ticket that was closed or no active ticket
+                  // Get the ticket's category information for better context
+                  const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
+                  const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
+                  
+                  // Enhanced standard message with service name and better formatting
+                  await this.bridge.getTelegramBot().sendMessage(
+                    parseInt(user.telegramId),
+                    `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Closed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been closed by ${staffName}.\n\nThank you for using our service. You can create a new ticket anytime.\n━━━━━━━━━━━━━━━━━━━━━━`
+                  );
+                }
+              } catch (stateError) {
+                // If error getting state, fall back to standard message but still get service info if possible
+                log(`Error checking user state for context-aware notification: ${stateError}`, "warn");
+                try {
+                  // Try to get category info even in error case
+                  const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
+                  const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
+                  
+                  await this.bridge.getTelegramBot().sendMessage(
+                    parseInt(user.telegramId),
+                    `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Closed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been closed by ${staffName}.\n\nThank you for using our service.\n━━━━━━━━━━━━━━━━━━━━━━`
+                  );
+                } catch (finalError) {
+                  // Ultimate fallback with minimal info
                   await this.bridge.getTelegramBot().sendMessage(
                     parseInt(user.telegramId),
                     `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
                   );
                 }
-              } catch (stateError) {
-                // If error getting state, fall back to standard message
-                log(`Error checking user state for context-aware notification: ${stateError}`, "warn");
-                await this.bridge.getTelegramBot().sendMessage(
-                  parseInt(user.telegramId),
-                  `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-                );
               }
             }
           }
