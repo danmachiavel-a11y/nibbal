@@ -540,7 +540,8 @@ export class DatabaseStorage implements IStorage {
     periodEnd: Date;
   }> {
     const now = new Date();
-    const periodEnd = now;
+    // Explicitly set to the current date, with time set to current time
+    const periodEnd = new Date();
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, now);
     
@@ -589,7 +590,7 @@ export class DatabaseStorage implements IStorage {
         ticketCount: stat.ticketCount
       })),
       periodStart,
-      periodEnd: now // Ensure we're using today's date, not future
+      periodEnd // Use the explicitly created periodEnd variable
     };
   }
 
@@ -602,7 +603,8 @@ export class DatabaseStorage implements IStorage {
     periodEnd: Date;
   }>> {
     const now = new Date();
-    const periodEnd = now;
+    // Explicitly create a new date object
+    const periodEnd = new Date();
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, now);
     
@@ -632,7 +634,7 @@ export class DatabaseStorage implements IStorage {
       totalEarnings: stat.earnings || 0,
       ticketCount: stat.count,
       periodStart,
-      periodEnd: now // Ensure we're using today's date, not future
+      periodEnd // Use explicitly created periodEnd variable
     }));
   }
 
