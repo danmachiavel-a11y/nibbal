@@ -578,7 +578,7 @@ export class DatabaseStorage implements IStorage {
         ticketCount: stat.ticketCount
       })),
       periodStart,
-      periodEnd
+      periodEnd: now // Ensure we're using today's date, not future
     };
   }
 
@@ -621,7 +621,7 @@ export class DatabaseStorage implements IStorage {
       totalEarnings: stat.earnings || 0,
       ticketCount: stat.count,
       periodStart,
-      periodEnd
+      periodEnd: now // Ensure we're using today's date, not future
     }));
   }
 
