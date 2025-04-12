@@ -802,7 +802,7 @@ export class DatabaseStorage implements IStorage {
     console.log(`[DB] Checking for active tickets for user ${userId}`);
     
     // Get all tickets for this user that are not in a finalized state
-    // This includes 'open', 'in-progress', 'pending', but not 'closed', 'deleted', etc.
+    // This includes 'open', 'in-progress', 'pending', 'paid', but not 'closed', 'deleted', etc.
     const [ticket] = await db
       .select()
       .from(tickets)
@@ -810,6 +810,7 @@ export class DatabaseStorage implements IStorage {
         and(
           eq(tickets.userId, userId),
           // Consider any ticket not in a finalized state as "active"
+          // Note: 'paid' status is included as active for user interaction purposes
           sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
         )
       )
@@ -830,6 +831,7 @@ export class DatabaseStorage implements IStorage {
     console.log(`[DB] Retrieving all active tickets for user ${userId}`);
     
     // Get all tickets for this user that are not in a finalized state
+    // This includes 'open', 'in-progress', 'pending', 'paid', but not 'closed', 'deleted', etc.
     const activeTickets = await db
       .select()
       .from(tickets)
@@ -837,6 +839,7 @@ export class DatabaseStorage implements IStorage {
         and(
           eq(tickets.userId, userId),
           // Consider any ticket not in a finalized state as "active"
+          // Note: 'paid' status is included as active for user interaction purposes
           sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
         )
       )
@@ -851,13 +854,15 @@ export class DatabaseStorage implements IStorage {
     console.log(`[DB] Checking for non-closed tickets for user ${userId} (for photo handling)`);
     
     // Get all non-closed tickets for this user
+    // This includes 'open', 'in-progress', 'pending', 'paid', but not 'closed', 'deleted', etc.
     const [ticket] = await db
       .select()
       .from(tickets)
       .where(
         and(
           eq(tickets.userId, userId),
-          // Consider any ticket not in a finalized state
+          // Consider any ticket not in a finalized state as "active"
+          // Note: 'paid' status is included as active for user interaction purposes
           sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
         )
       )
