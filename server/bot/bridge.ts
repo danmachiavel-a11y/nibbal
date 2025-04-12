@@ -1341,7 +1341,7 @@ export class BridgeManager {
    * @param telegramId The Telegram ID of the user to force switch
    * @param ticketId The ticket ID to switch to
    */
-  async forceUserTicketSwitch(telegramId: string, ticketId: number): Promise<void> {
+  async forceUserTicketSwitch(telegramId: string, ticketId: number): Promise<{ alreadyInTicket: boolean }> {
     try {
       log(`Force switching user ${telegramId} to ticket ${ticketId}`, "info");
       
@@ -1388,6 +1388,24 @@ export class BridgeManager {
         });
       }
       
+      // Check if user is already in this ticket
+      // First check memory state
+      const telegramIdNum = parseInt(telegramId);
+      if (isNaN(telegramIdNum)) {
+        throw new BridgeError(`Invalid Telegram ID format: ${telegramId}`, { 
+          context: "forceUserTicketSwitch" 
+        });
+      }
+      
+      // Get Telegram bot instance and check current user state
+      const telegramBot = this.getTelegramBot();
+      const currentState = telegramBot.getUserState(telegramIdNum);
+      
+      if (currentState && currentState.activeTicketId === ticketId) {
+        log(`User ${telegramId} is already in ticket ${ticketId}, skipping force switch`, "info");
+        return { alreadyInTicket: true };
+      }
+      
       // Create the user state for the switch
       const state = {
         activeTicketId: ticketId,
@@ -1399,18 +1417,8 @@ export class BridgeManager {
         fromSwitchCommand: true
       };
       
-      // Get the Telegram Bot instance
-      const telegramBot = this.getTelegramBot();
-      
       // Update state in memory 
       try {
-        const telegramIdNum = parseInt(telegramId);
-        if (isNaN(telegramIdNum)) {
-          throw new BridgeError(`Invalid Telegram ID format: ${telegramId}`, { 
-            context: "forceUserTicketSwitch" 
-          });
-        }
-        
         // Set the state in Telegram bot memory
         await telegramBot.setState(telegramIdNum, state);
         
@@ -1446,6 +1454,7 @@ export class BridgeManager {
         }
         
         log(`Successfully forced user ${telegramId} to switch to ticket ${ticketId}`, "info");
+        return { alreadyInTicket: false };
       } catch (error) {
         throw new BridgeError(`Failed to set user state: ${error}`, { 
           context: "forceUserTicketSwitch",

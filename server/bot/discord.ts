@@ -562,7 +562,14 @@ export class DiscordBot {
               
               try {
                 // Call bridge to handle the force switch
-                await this.bridge.forceUserTicketSwitch(telegramId, ticketId);
+                const result = await this.bridge.forceUserTicketSwitch(telegramId, ticketId);
+                
+                // Check if user was already in this ticket
+                if (result.alreadyInTicket) {
+                  // User was already in this ticket, just let the staff member know
+                  await interaction.editReply(`ℹ️ The user is already in this ticket.`);
+                  return;
+                }
                 
                 // Only send a reply to the user who clicked the button
                 await interaction.editReply(`✅ Action completed successfully`);
