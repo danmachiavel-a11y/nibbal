@@ -1020,7 +1020,7 @@ export class TelegramBot {
         
         // Notify the user they already have a ticket in this category, with specific category name
         const categoryName = category ? category.name : "this category";
-        await ctx.reply(`⚠️ You already have an active ${categoryName} ticket (#${existingTicket.id}).
+        await ctx.reply(`⚠️ You already have an active ${categoryName} ticket (#${existingTicketInCategory.id}).
 
 You have two options:
 1️⃣ Use /close to close your existing ${categoryName} ticket first
@@ -1299,11 +1299,16 @@ You have two options:
         state.activeTicketId = existingTicketInCategory.id;
         this.setState(userId, state);
         
-        // Notify the user they already have a ticket in this category
-        await ctx.reply(`ℹ️ You already have an active ticket in this category. Only one ticket per category is allowed.`);
+        // Notify the user they already have a ticket in this category with specific category name
+        const categoryName = category ? category.name : "this category";
+        await ctx.reply(`⚠️ You already have an active ${categoryName} ticket (#${existingTicketInCategory.id}).
+
+You have two options:
+1️⃣ Use /close to close your existing ${categoryName} ticket first
+2️⃣ Choose a different category to create a new ticket`);
         
         // Provide context about using /switch
-        await ctx.reply("You can use /switch to select this ticket or create a ticket in a different category.");
+        await ctx.reply("Use /switch to see all your active tickets and choose which one to continue.");
         
         return;
       }
