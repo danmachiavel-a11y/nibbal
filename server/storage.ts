@@ -726,7 +726,7 @@ export class DatabaseStorage implements IStorage {
     .where(
       and(
         eq(tickets.claimedBy, discordId),
-        eq(tickets.status, 'paid'),
+        gt(tickets.amount, 0), // Check for positive amount instead of paid status
         sql`DATE(${tickets.completedAt}) >= DATE(${startDate})`,
         sql`DATE(${tickets.completedAt}) <= DATE(${adjustedEndDate})`
       )
@@ -777,7 +777,7 @@ export class DatabaseStorage implements IStorage {
     .where(
       and(
         sql`${tickets.claimedBy} is not null`,
-        eq(tickets.status, 'paid'),
+        gt(tickets.amount, 0), // Check for positive amount instead of paid status
         sql`DATE(${tickets.completedAt}) >= DATE(${startDate})`,
         sql`DATE(${tickets.completedAt}) <= DATE(${adjustedEndDate})`
       )
