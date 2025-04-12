@@ -24,10 +24,13 @@ function calculatePeriodStart(period: 'week' | 'month' | 'all', now: Date): Date
     periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
     periodStart.setHours(0, 0, 0, 0);
   } else {
-    // For all: show from one year ago in the past (not future)
-    periodStart = new Date(now);
-    periodStart.setFullYear(now.getFullYear() - 1);
+    // For all: show from one year ago from today
+    periodStart = new Date();
+    periodStart.setFullYear(periodStart.getFullYear() - 1);
     periodStart.setHours(0, 0, 0, 0);
+    
+    // Log the actual date we're using
+    console.log(`Using 'all' period start date: ${periodStart.toISOString()}`);
   }
   
   return periodStart;
