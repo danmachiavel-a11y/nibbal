@@ -770,29 +770,8 @@ export class DiscordBot {
 
           await interaction.reply({ embeds: [embed] });
           
-          // Send notification to the user that their ticket is marked as paid
-          try {
-            if (ticket.userId) {
-              const user = await storage.getUser(ticket.userId);
-              if (user && user.telegramId) {
-                // Get the Telegram bot to send a message to the user
-                log(`Notifying Telegram user ${user.telegramId} about payment for ticket #${ticket.id}`);
-                // Get the category for better context
-                const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
-                const categoryName = ticketCategory ? ticketCategory.name : "Unknown service";
-                
-                // Send improved format notification with service name
-                const telegramBot = this.bridge.getTelegramBot();
-                await telegramBot.sendMessage(
-                  parseInt(user.telegramId),
-                  `━━━━━━━━━━━━━━━━━━━━━━\n💰 *Payment Confirmed*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been marked as paid ($${amount}).\n\nYou can continue to use this ticket for any follow-up questions.\n━━━━━━━━━━━━━━━━━━━━━━`
-                );
-              }
-            }
-          } catch (notifyError) {
-            log(`Error notifying user about payment: ${notifyError}`, "warn");
-            // Don't block the overall flow if notification fails
-          }
+          // Notification to Telegram users about paid tickets has been removed as requested
+          // This keeps statistics and Discord notifications working while eliminating user-facing notifications
         } catch (error) {
           log(`Error processing payment: ${error}`, "error");
           await interaction.reply({

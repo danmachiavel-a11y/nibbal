@@ -774,10 +774,7 @@ export class TelegramBot {
       }
 
       // Process message
-      // Check if the ticket is in "paid" status and add an indicator if it is
-      if (ticket.status === 'paid') {
-        await ctx.reply("💰 Note: This ticket has been marked as paid, but you can continue to communicate if you have any follow-up questions.");
-      }
+      // Note: Removed the paid notification message as requested
       
       // Get user display name for the transcript
       const senderName = user.telegramName || user.telegramUsername || user.username || 'Telegram User';
