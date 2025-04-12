@@ -542,11 +542,12 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }> {
-    const now = new Date();
-    // Explicitly set to the current date, with time set to current time
+    // Set end date to now with current date/time
+    const today = new Date();
+    // Create a new Date object for end date to avoid reference issues
     const periodEnd = new Date();
     // Use our helper function to calculate the appropriate start date
-    const periodStart = calculatePeriodStart(period, now);
+    const periodStart = calculatePeriodStart(period, today);
     
     // Log the dates for debugging
     console.log(`Stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
@@ -605,11 +606,12 @@ export class DatabaseStorage implements IStorage {
     periodStart: Date;
     periodEnd: Date;
   }>> {
-    const now = new Date();
-    // Explicitly create a new date object
+    // Set end date to now with current date/time
+    const today = new Date();
+    // Create a new Date object for end date to avoid reference issues
     const periodEnd = new Date();
     // Use our helper function to calculate the appropriate start date
-    const periodStart = calculatePeriodStart(period, now);
+    const periodStart = calculatePeriodStart(period, today);
     
     // Log the dates for debugging
     console.log(`Worker stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
