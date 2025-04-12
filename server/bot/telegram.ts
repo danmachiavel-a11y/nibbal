@@ -1981,6 +1981,20 @@ Images/photos are also supported.
         
         console.log(`Found active ticket to close: ${JSON.stringify(ticketToClose)}`);
         
+        // First, send a notification to Discord that the user is closing the ticket
+        if (ticketToClose.discordChannelId) {
+          try {
+            console.log(`Sending notification to Discord channel ${ticketToClose.discordChannelId} about ticket being closed by user`);
+            await this.bridge.sendSystemMessageToDiscord(
+              ticketToClose.discordChannelId,
+              "**Note:** The user has closed this ticket."
+            );
+          } catch (notifyError) {
+            // Don't block the main flow if notification fails
+            console.error(`Error sending close notification to Discord: ${notifyError}`);
+          }
+        }
+        
         // Close the ticket
         console.log(`Attempting to update ticket status to 'closed' for ticket ID ${ticketToClose.id}`);
         await storage.updateTicketStatus(ticketToClose.id, "closed");
@@ -2059,6 +2073,18 @@ Images/photos are also supported.
         }
         
         await ctx.reply(`🔍 Found ticket #${ticket.id} with status '${ticket.status}' for user ID: ${ticket.userId}`);
+        
+        // Send notification to Discord if possible
+        if (ticket.discordChannelId) {
+          try {
+            await this.bridge.sendSystemMessageToDiscord(
+              ticket.discordChannelId,
+              "**❗ EMERGENCY NOTICE:** This ticket has been forcibly closed by an administrator."
+            );
+          } catch (notifyError) {
+            log(`Error sending emergency close notification to Discord: ${notifyError}`, "warn");
+          }
+        }
         
         // Close the ticket
         await storage.updateTicketStatus(ticket.id, "closed");
@@ -2257,6 +2283,19 @@ Images/photos are also supported.
             if (ticket.userId !== user.id) {
               await ctx.answerCbQuery(`Ticket #${ticketId} does not belong to you`);
               return;
+            }
+            
+            // Send notification to Discord about user closing the ticket
+            if (ticket.discordChannelId) {
+              try {
+                await this.bridge.sendSystemMessageToDiscord(
+                  ticket.discordChannelId,
+                  "**Note:** The user has closed this ticket."
+                );
+              } catch (notifyError) {
+                // Don't block the main flow if notification fails
+                log(`Error sending close notification to Discord: ${notifyError}`, "warn");
+              }
             }
             
             // Close the ticket
