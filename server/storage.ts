@@ -532,6 +532,9 @@ export class DatabaseStorage implements IStorage {
     const periodEnd = now;
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, now);
+    
+    // Log the dates for debugging
+    console.log(`Stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
 
     const result = await db.select({
       earnings: sql<number>`sum(${tickets.amount})::int`,
@@ -591,6 +594,9 @@ export class DatabaseStorage implements IStorage {
     const periodEnd = now;
     // Use our helper function to calculate the appropriate start date
     const periodStart = calculatePeriodStart(period, now);
+    
+    // Log the dates for debugging
+    console.log(`Worker stats period for ${period}: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
 
     const stats = await db.select({
       discordId: tickets.claimedBy,
