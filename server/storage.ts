@@ -326,12 +326,19 @@ export class DatabaseStorage implements IStorage {
       console.log(`[DB] Found ticket: ${JSON.stringify(ticketBefore)}`);
 
       // Execute update
+      const currentDate = new Date();
+      
+      // Log the current date to ensure it's correct
+      if (['closed', 'deleted', 'transcript', 'completed'].includes(status)) {
+        console.log(`Setting ticket ${id} with status ${status} and completion date: ${currentDate.toISOString()}`);
+      }
+      
       await db
         .update(tickets)
         .set({ 
           status, 
           claimedBy: claimedBy || null,
-          ...(['closed', 'deleted', 'transcript', 'completed'].includes(status) ? { completedAt: new Date() } : {})
+          ...(['closed', 'deleted', 'transcript', 'completed'].includes(status) ? { completedAt: currentDate } : {})
         })
         .where(eq(tickets.id, id));
       
@@ -426,13 +433,17 @@ export class DatabaseStorage implements IStorage {
 
   // Stats operations
   async updateTicketPayment(id: number, amount: number, claimedBy: string): Promise<void> {
+    // Create a current date - making sure it's a valid date in the current year
+    const currentDate = new Date();
+    console.log(`Setting ticket ${id} as paid with completion date: ${currentDate.toISOString()}`);
+    
     await db
       .update(tickets)
       .set({ 
         amount, 
         claimedBy, 
         status: 'paid',
-        completedAt: new Date()
+        completedAt: currentDate
       })
       .where(eq(tickets.id, id));
   }
