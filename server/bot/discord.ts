@@ -777,8 +777,8 @@ export class DiscordBot {
               if (user && user.telegramId) {
                 // Get the Telegram bot to send a message to the user
                 log(`Notifying Telegram user ${user.telegramId} about payment for ticket #${ticket.id}`);
-                await this.bridge.sendToTelegram(
-                  user.telegramId,
+                await this.bridge.getTelegramBot().sendMessage(
+                  parseInt(user.telegramId),
                   `💰 Your ticket #${ticket.id} has been marked as paid ($${amount}).\n\nYou can continue to use this ticket for any follow-up questions.`
                 );
               }
