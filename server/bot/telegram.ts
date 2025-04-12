@@ -1296,6 +1296,29 @@ export class TelegramBot {
       state.activeTicketId = ticket.id;
       this.setState(userId, state);
       
+      // Check if user has other active tickets and notify in those channels
+      try {
+        const otherTickets = await storage.getActiveTicketsByUserId(user.id);
+        for (const otherTicket of otherTickets) {
+          if (otherTicket.id !== ticket.id && otherTicket.discordChannelId) {
+            // Send notification to other active ticket channels
+            await this.bridge.sendSystemMessageToDiscord(
+              otherTicket.discordChannelId, 
+              `**Note:** User has created a new ticket #${ticket.id} in the ${(await storage.getCategory(state.categoryId))?.name || "unknown"} category.`,
+              {
+                showForceButton: true,
+                telegramId: user.telegramId,
+                ticketId: otherTicket.id, // Button to force back to THIS ticket
+                username: user.telegramName || user.username
+              }
+            );
+          }
+        }
+      } catch (error) {
+        log(`Failed to send notifications to other tickets: ${error}`, "error");
+        // Continue even if notifications fail
+      }
+      
       // Try to create Discord channel
       try {
         await this.bridge.createTicketChannel(ticket);
