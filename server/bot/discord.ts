@@ -1174,10 +1174,45 @@ export class DiscordBot {
               }
   
               // Send notification only if ticket wasn't already closed
-              await this.bridge.getTelegramBot().sendMessage(
-                parseInt(user.telegramId),
-                `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-              );
+              // Check if the user is currently viewing a different ticket before notifying
+              try {
+                // Get user state from Telegram bot to check currently active ticket
+                const telegramBot = this.bridge.getTelegramBot();
+                const userState = telegramBot.getUserState(parseInt(user.telegramId));
+                
+                // If user is viewing a different ticket, include that context in the message
+                if (userState && userState.activeTicketId && userState.activeTicketId !== ticket.id) {
+                  // Get the category of the active ticket for better user context
+                  const activeTicket = await storage.getTicket(userState.activeTicketId);
+                  let activeTicketInfo = `#${userState.activeTicketId}`;
+                  
+                  if (activeTicket && activeTicket.categoryId) {
+                    const activeCategory = await storage.getCategory(activeTicket.categoryId);
+                    if (activeCategory) {
+                      activeTicketInfo = `${activeCategory.name} (#${userState.activeTicketId})`;
+                    }
+                  }
+                  
+                  // Let the user know which ticket was closed vs which one they're viewing
+                  await this.bridge.getTelegramBot().sendMessage(
+                    parseInt(user.telegramId),
+                    `📝 Ticket Update\n\nYour *other* ticket #${ticket.id} has been closed by ${staffName}.\n\nYou are currently in ${activeTicketInfo}, which is still active.`
+                  );
+                } else {
+                  // Standard message if they're viewing the ticket that was closed or no active ticket
+                  await this.bridge.getTelegramBot().sendMessage(
+                    parseInt(user.telegramId),
+                    `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
+                  );
+                }
+              } catch (stateError) {
+                // If error getting state, fall back to standard message
+                log(`Error checking user state for context-aware notification: ${stateError}`, "warn");
+                await this.bridge.getTelegramBot().sendMessage(
+                  parseInt(user.telegramId),
+                  `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
+                );
+              }
             }
           }
 
@@ -1527,12 +1562,46 @@ export class DiscordBot {
                     const user = await storage.getUser(ticket.userId!);
                     if (user?.telegramId) {
                       try {
-                        await this.bridge.getTelegramBot().sendMessage(
-                          parseInt(user.telegramId),
-                          `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
-                        );
+                        // Check if the user is currently viewing a different ticket
+                        const telegramBot = this.bridge.getTelegramBot();
+                        const userState = telegramBot.getUserState(parseInt(user.telegramId));
+                        
+                        // If user is viewing a different ticket, include that context in the message
+                        if (userState && userState.activeTicketId && userState.activeTicketId !== ticket.id) {
+                          // Get the category of the active ticket for better user context
+                          const activeTicket = await storage.getTicket(userState.activeTicketId);
+                          let activeTicketInfo = `#${userState.activeTicketId}`;
+                          
+                          if (activeTicket && activeTicket.categoryId) {
+                            const activeCategory = await storage.getCategory(activeTicket.categoryId);
+                            if (activeCategory) {
+                              activeTicketInfo = `${activeCategory.name} (#${userState.activeTicketId})`;
+                            }
+                          }
+                          
+                          // Let the user know which ticket was closed vs which one they're viewing
+                          await this.bridge.getTelegramBot().sendMessage(
+                            parseInt(user.telegramId),
+                            `📝 Ticket Update\n\nYour *other* ticket #${ticket.id} has been closed by ${staffName}.\n\nYou are currently in ${activeTicketInfo}, which is still active.`
+                          );
+                        } else {
+                          // Standard message if they're viewing the ticket that was closed or no active ticket
+                          await this.bridge.getTelegramBot().sendMessage(
+                            parseInt(user.telegramId),
+                            `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
+                          );
+                        }
                       } catch (notifyError) {
                         log(`Error notifying Telegram user for ticket ${ticket.id}: ${notifyError}`, "warn");
+                        // Fall back to standard message on error
+                        try {
+                          await this.bridge.getTelegramBot().sendMessage(
+                            parseInt(user.telegramId),
+                            `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
+                          );
+                        } catch (fallbackError) {
+                          log(`Failed to send fallback notification: ${fallbackError}`, "error");
+                        }
                       }
                     }
                   } else {
