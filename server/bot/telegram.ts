@@ -2472,24 +2472,16 @@ Images/photos are also supported.
                     // Create message content without the command instruction
                     const messageContent = `**Note:** The user has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.`;
                     
-                    // Use specialized method to send message with button
-                    await this.bridge.getDiscordBot().sendMessage(
+                    // Use our updated system message method with Force Back button
+                    await this.bridge.sendSystemMessageToDiscord(
                       otherTicket.discordChannelId,
+                      messageContent,
                       {
-                        content: messageContent,
-                        username: "System",
-                        avatarURL: "https://cdn.discordapp.com/embed/avatars/0.png",
-                        components: [{
-                          type: 1, // Action row type
-                          components: [{
-                            type: 2, // Button type
-                            style: 1, // Primary button style
-                            label: "Force Back", // Shortened label as requested
-                            custom_id: buttonId
-                          }]
-                        }]
-                      },
-                      "System"
+                        showForceButton: true,
+                        telegramId: user.telegramId,
+                        ticketId: otherTicket.id, // Button to force back to THIS ticket
+                        username: displayName
+                      }
                     );
                   }
                 }
@@ -2630,6 +2622,9 @@ Images/photos are also supported.
               return;
             }
             
+            // Get current active ticket ID before switching
+            const previousTicketId = userState.activeTicketId;
+            
             // Switch to this ticket
             userState.activeTicketId = ticketId;
             userState.categoryId = ticket.categoryId!;
@@ -2640,6 +2635,41 @@ Images/photos are also supported.
             const categoryName = category ? category.name : "Unknown category";
             
             await ctx.reply(`✅ Switched to ticket #${ticketId} (${categoryName}). You can now continue your conversation here.`);
+            
+            // Send notification to Discord channels
+            try {
+              // Send system message to the channel they switched to
+              if (ticket.discordChannelId) {
+                await this.bridge.sendSystemMessageToDiscord(
+                  ticket.discordChannelId,
+                  `**Note:** The user has switched back to this ticket.`
+                );
+              }
+              
+              // If they had a previous ticket, notify that channel too
+              if (previousTicketId && previousTicketId !== ticketId) {
+                const previousTicket = await storage.getTicket(previousTicketId);
+                if (previousTicket?.discordChannelId) {
+                  const displayName = user.telegramName || user.username || 'User';
+                  
+                  // Send notification with Force Back button to previous channel
+                  await this.bridge.sendSystemMessageToDiscord(
+                    previousTicket.discordChannelId,
+                    `**Note:** The user has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.`,
+                    {
+                      showForceButton: true,
+                      telegramId: user.telegramId || "",
+                      ticketId: previousTicketId, // Button to force back to previous ticket
+                      username: displayName
+                    }
+                  );
+                }
+              }
+            } catch (error) {
+              log(`Error sending Discord notification for manual ticket switch: ${error}`, "warn");
+              // Don't block the main flow if Discord notification fails
+            }
+            
             return;
           } catch (error) {
             log(`Error switching tickets: ${error}`, "error");
