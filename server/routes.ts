@@ -1144,7 +1144,22 @@ export async function registerRoutes(app: Express) {
     try {
       let stats;
       if (startDate && endDate) {
-        // For custom date range queries
+        // Get full date information for debugging
+        const startInfo = `${startDate.getFullYear()}-${startDate.getMonth()+1}-${startDate.getDate()}`;
+        const endInfo = `${endDate.getFullYear()}-${endDate.getMonth()+1}-${endDate.getDate()}`;
+        
+        // For debugging with full date details
+        console.log(`Using custom date range: ${startDate.toISOString()} (${startInfo}) to ${endDate.toISOString()} (${endInfo})`);
+        
+        // Make sure our client side date filtering is using the current year
+        if (startDate.getFullYear() !== 2025 || endDate.getFullYear() !== 2025) {
+          console.log("⚠️ WARNING: Date filters are not using the current year 2025! Fixing this...");
+          // Force the dates to use 2025 to match our system date
+          startDate.setFullYear(2025);
+          endDate.setFullYear(2025);
+          console.log(`Corrected date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+        }
+        
         stats = await storage.getUserStatsByDateRange(discordId, startDate, endDate);
       } else {
         // For predefined period queries
@@ -1170,6 +1185,22 @@ export async function registerRoutes(app: Express) {
     try {
       let stats;
       if (startDate && endDate) {
+        // Get full date information for debugging
+        const startInfo = `${startDate.getFullYear()}-${startDate.getMonth()+1}-${startDate.getDate()}`;
+        const endInfo = `${endDate.getFullYear()}-${endDate.getMonth()+1}-${endDate.getDate()}`;
+        
+        // For debugging with full date details
+        console.log(`Using workers custom date range: ${startDate.toISOString()} (${startInfo}) to ${endDate.toISOString()} (${endInfo})`);
+        
+        // Make sure our client side date filtering is using the current year
+        if (startDate.getFullYear() !== 2025 || endDate.getFullYear() !== 2025) {
+          console.log("⚠️ WARNING: Date filters are not using the current year 2025! Fixing this...");
+          // Force the dates to use 2025 to match our system date
+          startDate.setFullYear(2025);
+          endDate.setFullYear(2025);
+          console.log(`Corrected workers date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+        }
+        
         stats = await storage.getAllWorkerStatsByDateRange(startDate, endDate);
       } else {
         stats = await storage.getAllWorkerStatsByPeriod(period || 'all');
