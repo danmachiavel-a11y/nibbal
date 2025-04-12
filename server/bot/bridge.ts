@@ -630,7 +630,16 @@ export class BridgeManager {
    * @param channelId The Discord channel ID to send the message to
    * @param content The message content
    */
-  async sendSystemMessageToDiscord(channelId: string, content: string): Promise<void> {
+  async sendSystemMessageToDiscord(
+    channelId: string, 
+    content: string, 
+    options?: { 
+      showForceButton?: boolean, 
+      telegramId?: string,
+      ticketId?: number,
+      username?: string
+    }
+  ): Promise<void> {
     try {
       if (!channelId) {
         throw new BridgeError("Missing Discord channel ID", { context: "sendSystemMessageToDiscord" });
@@ -646,14 +655,32 @@ export class BridgeManager {
         throw new BridgeError(`Invalid Discord channel: ${channelId}`, { context: "sendSystemMessageToDiscord" });
       }
 
+      // Prepare components if showForceButton is true and we have telegramId and ticketId
+      const components = (options?.showForceButton && options?.telegramId && options?.ticketId) 
+        ? [
+            {
+              type: 1, // Action Row
+              components: [
+                {
+                  type: 2, // Button
+                  style: 1, // Primary
+                  label: "Force Back to This Ticket",
+                  custom_id: `force_ticket:${options.telegramId}:${options.ticketId}:${options.username || 'User'}`
+                }
+              ]
+            }
+          ] 
+        : undefined;
+
       // Send the message using discord bot's sendMessage method with system webhook appearance
       await this.discordBot.sendMessage(channelId, {
         content: content,
         username: "System",
-        avatarURL: "https://cdn.discordapp.com/embed/avatars/0.png" // Default system avatar
+        avatarURL: "https://cdn.discordapp.com/embed/avatars/0.png", // Default system avatar
+        components
       } as any, "System");
 
-      log(`System message sent to Discord channel ${channelId}`);
+      log(`System message sent to Discord channel ${channelId}${components ? ' (with Force button)' : ''}`);
     } catch (error) {
       handleBridgeError(error as BridgeError, "sendSystemMessageToDiscord");
       // Don't throw the error to avoid disrupting the main flow
@@ -1248,34 +1275,12 @@ export class BridgeManager {
         }
       } else {
         // Regular text message (no photo)
-        // Get the ticket user info to add Force Switch button
+        // Get the ticket user info
         const user = await storage.getUser(ticket.userId!);
         
-        // Get all user's tickets to check for multi-ticket scenario
-        let allTickets: Ticket[] = [];
-        if (user) {
-          allTickets = await storage.getTicketsByUserId(user.id);
-        }
-        
-        // Only add the button if user has more than one ticket and we have the telegramId
-        const showForceButton = allTickets.length > 1 && (telegramId || user?.telegramId);
-        
-        // Prepare components array if we need to add the button
-        const components = showForceButton 
-          ? [
-              {
-                type: 1, // Action Row
-                components: [
-                  {
-                    type: 2, // Button
-                    style: 1, // Primary
-                    label: "Force Back to This Ticket",
-                    custom_id: `force_ticket:${telegramId || user?.telegramId}:${ticketId}:${displayName}`
-                  }
-                ]
-              }
-            ]
-          : undefined;
+        // Don't add a Force Switch button to regular messages
+        // The button will only be added to specific system messages about ticket switching
+        const components = undefined;
           
         await this.discordBot.sendMessage(
           ticket.discordChannelId,
@@ -1431,9 +1436,16 @@ export class BridgeManager {
         const otherTickets = await storage.getActiveTicketsByUserId(user.id);
         for (const otherTicket of otherTickets) {
           if (otherTicket.id !== ticketId && otherTicket.discordChannelId) {
+            // In other channels, add the Force button to allow staff to force user back
             await this.sendSystemMessageToDiscord(
               otherTicket.discordChannelId,
-              `**Note:** The user has been forced to switch to ticket #${ticketId} by staff.`
+              `**Note:** The user has been forced to switch to ticket #${ticketId} by staff.`,
+              {
+                showForceButton: true,
+                telegramId: telegramId,
+                ticketId: otherTicket.id, // Allow forcing back to THIS ticket
+                username: user.telegramName || user.username
+              }
             );
           }
         }
