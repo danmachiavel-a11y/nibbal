@@ -2604,8 +2604,7 @@ Images/photos are also supported.
                 }
               }
               
-              // Send confirmation message
-              await ctx.reply(`✅ Switched to ticket #${ticketId} (${categoryName}). You can now continue your conversation here.`);
+              // No need for a second confirmation message, already showing the formatted one above
               
               // Send notification to Discord
               try {
@@ -2814,7 +2813,10 @@ Images/photos are also supported.
             const category = await storage.getCategory(ticket.categoryId!);
             const categoryName = category ? category.name : "Unknown category";
             
-            await ctx.reply(`✅ Switched to ticket #${ticketId} (${categoryName}). You can now continue your conversation here.`);
+            // Send a formatted confirmation message with visual separator
+            await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n✅ *You are now in:* *${categoryName}* (#${ticketId})\n\n⚠️ *All your messages will be sent to this ticket.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
+              parse_mode: 'Markdown'
+            });
             
             // Send notification to Discord channels
             try {
