@@ -29,7 +29,48 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey[0] as string, {
+    // Extract URL and params
+    const url = queryKey[0] as string;
+    const params = queryKey[1] as Record<string, any> | undefined;
+    
+    // Construct URL with query params if needed
+    let finalUrl = url;
+    if (params) {
+      // For custom dates, force the year to 2025 to match server expectations
+      if (params.startDate && params.endDate) {
+        const startDate = new Date(params.startDate);
+        const endDate = new Date(params.endDate);
+        
+        // Force the year to 2025
+        if (startDate.getFullYear() !== 2025) {
+          startDate.setFullYear(2025);
+        }
+        if (endDate.getFullYear() !== 2025) {
+          endDate.setFullYear(2025);
+        }
+        
+        // Create URLSearchParams with corrected dates
+        const searchParams = new URLSearchParams();
+        searchParams.append('startDate', startDate.toISOString());
+        searchParams.append('endDate', endDate.toISOString());
+        finalUrl = `${url}?${searchParams.toString()}`;
+        
+        console.log('Making API request with CORRECTED dates:', {
+          url: finalUrl,
+          correctedStartDate: startDate.toISOString(),
+          correctedEndDate: endDate.toISOString()
+        });
+      } else {
+        // Standard query params handling
+        const searchParams = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+          searchParams.append(key, String(value));
+        });
+        finalUrl = `${url}?${searchParams.toString()}`;
+      }
+    }
+    
+    const res = await fetch(finalUrl, {
       credentials: "include",
     });
 

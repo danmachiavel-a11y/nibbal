@@ -56,12 +56,26 @@ export default function Stats() {
     fixedDateRange.to.setFullYear(2025);
   }
   
+  // Debug information for date ranges - log to console
+  if (period === 'custom') {
+    console.log('Date range selected in UI:', {
+      originalFrom: dateRange.from.toISOString(),
+      originalTo: dateRange.to.toISOString(),
+      correctedFrom: fixedDateRange.from.toISOString(),
+      correctedTo: fixedDateRange.to.toISOString()
+    });
+  }
+  
+  // Construct query params with explicit debugging
   const queryParams = period === 'custom' 
     ? { 
         startDate: fixedDateRange.from.toISOString(), 
         endDate: fixedDateRange.to.toISOString() 
       }
     : { period };
+    
+  // Log the parameters we're actually using for API requests
+  console.log('API request parameters:', queryParams);
 
   const { data: stats, isLoading } = useQuery<UserStats>({
     queryKey: [`/api/users/${discordId}/stats`, queryParams]
