@@ -1396,10 +1396,11 @@ export class BridgeManager {
         console.log(`[PING] No state found for user`);
       }
       
-      // Always format username if available, making sure to include @ mention
-      // This ensures the user gets a notification in Telegram
-      const usernamePrefix = user.telegramUsername ? `@${user.telegramUsername} ` : '';
-      const usernameText = user.telegramUsername ? ` (${usernamePrefix})` : '';
+      // We're only sending this notification to the Telegram user, so it's OK to include their username for @ mentions
+      // The mention ensures they get notified in Telegram's UI
+      const telegramMention = user.telegramUsername ? `@${user.telegramUsername}` : '';
+      // We add the mention in the message for Telegram notifications only - this is NEVER sent to Discord
+      const usernameText = telegramMention ? ` ${telegramMention}` : '';
       
       // Different message format based on whether user is in a different ticket
       let message: string;

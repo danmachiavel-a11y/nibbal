@@ -1590,7 +1590,26 @@ Only one active ticket per service is allowed.`);
         
         if (!ticket || (!validStatuses.includes(ticket.status) && !isPaidTicket)) {
           console.log(`[PING CMD] Ticket check failed, returning error message`);
-          await ctx.reply("❌ Your active ticket was not found or is closed. Use /start to create a new one.");
+          
+          // Get all other active tickets for this user to provide better guidance
+          const userId = user?.id;
+          if (userId) {
+            const activeTickets = await storage.getActiveTicketsByUserId(userId);
+            
+            if (activeTickets.length > 0) {
+              // User has other active tickets they can switch to
+              await ctx.reply(
+                "❌ The current ticket is not available for pinging.\n\n" +
+                "You have other active tickets though. Use /switch to select a different ticket, " +
+                "or /start to create a new one."
+              );
+            } else {
+              // No active tickets at all
+              await ctx.reply("❌ You don't have any active tickets. Use /start to create a new one.");
+            }
+          } else {
+            await ctx.reply("❌ Your active ticket was not found or is closed. Use /start to create a new one.");
+          }
           return;
         }
         
