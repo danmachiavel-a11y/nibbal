@@ -65,6 +65,14 @@ export class BridgeManager {
   private readonly messageDedupWindow: number = 180000; // 3 minutes (increased from 60s)
   private readonly MAX_DEDUP_CACHE_SIZE = 1000; // Maximum number of cached entries
   
+  // Deployment-aware fields for robust initialization
+  private isDisabled: boolean = false;
+  private disabledReason: string | null = null;
+  private startTimestamp: number | null = null;
+  private lastTelegramReconnectAttempt: number = 0;
+  private lastDiscordReconnectAttempt: number = 0; 
+  private readonly MIN_RECONNECT_INTERVAL = 15000; // 15 seconds between reconnection attempts
+  
   // Enable extra deduplication logging to debug duplicate messages
   private readonly ENABLE_DEDUP_LOGGING = true;
   private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB per image

@@ -112,16 +112,148 @@ export async function registerRoutes(app: Express) {
     res.sendFile("emergency-close.html", { root: "." });
   });
   
-  // Initialize bridge after routes are registered
-  process.nextTick(async () => {
-    log("Initializing bot bridge...");
-    bridge = new BridgeManager();
-    try {
-      await bridge.start();
-      log("Bot bridge initialized successfully");
-    } catch (error: any) {
-      log(`Error initializing bots: ${error.message}`, "error");
+  // Enhanced bridge initialization with retry logic for deployment scenarios
+  const MAX_BRIDGE_INIT_RETRIES = 5;
+  const INITIAL_RETRY_DELAY_MS = 3000; // 3 seconds
+  const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
+  
+  // Initialize bridge with automatic retry logic
+  async function initializeBridge() {
+    let bridgeInitAttempt = 0;
+    let retryDelay = INITIAL_RETRY_DELAY_MS;
+    let bridgeStarted = false;
+    
+    // Record start time for reporting
+    const startTime = Date.now();
+    
+    log("Starting bridge initialization process...", "info");
+    
+    // Loop until bridge starts or we reach maximum attempts
+    while (!bridgeStarted && bridgeInitAttempt < MAX_BRIDGE_INIT_RETRIES) {
+      bridgeInitAttempt++;
+      
+      try {
+        // Create new bridge instance if needed
+        if (!bridge) {
+          log(`Creating new bridge instance (attempt ${bridgeInitAttempt})`, "info");
+          bridge = new BridgeManager();
+        }
+        
+        // Attempt to start bridge
+        log(`Starting bridge (attempt ${bridgeInitAttempt}/${MAX_BRIDGE_INIT_RETRIES})`, "info");
+        await bridge.start();
+        
+        // Bridge started successfully!
+        bridgeStarted = true;
+        const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        log(`Bridge initialized successfully after ${bridgeInitAttempt} attempt(s) (${elapsedTime}s)`, "info");
+        
+        // In production, add additional checks after startup
+        if (process.env.NODE_ENV === 'production') {
+          log("Running bridge health validation in production mode...", "info");
+          setTimeout(async () => {
+            try {
+              const health = await bridge?.healthCheck();
+              log(`Bridge health check after 10s: Telegram=${health?.telegram}, Discord=${health?.discord}`, "info");
+              
+              // If either bot is not connected, attempt recovery
+              if (!health?.telegram || !health?.discord) {
+                log("Detected disconnected bot after startup, attempting recovery", "warn");
+                
+                if (!health?.telegram) {
+                  log("Telegram bot disconnected, attempting restart", "warn");
+                  await bridge?.restartTelegramBot().catch(e => 
+                    log(`Failed to restart Telegram bot: ${e}`, "error")
+                  );
+                }
+                
+                if (!health?.discord) {
+                  log("Discord bot disconnected, attempting restart", "warn");
+                  await bridge?.restartDiscordBot().catch(e => 
+                    log(`Failed to restart Discord bot: ${e}`, "error")
+                  );
+                }
+              }
+            } catch (healthError) {
+              log(`Bridge health validation failed: ${healthError}`, "error");
+            }
+          }, 10000); // Check health after 10 seconds
+        }
+        
+      } catch (error: any) {
+        // Only run cleanup after initial attempt
+        if (bridgeInitAttempt === 1) {
+          try {
+            // Try to fix the "409: Conflict" error by forcibly cleaning up old connections
+            if (error.message?.includes("409: Conflict") || error.message?.includes("terminated by other getUpdates")) {
+              log("Detected Telegram 409 Conflict error - this means another instance is running", "warn");
+              log("Attempting to clean up old Telegram connections...", "info");
+              
+              // Try to forcibly close and restart the Telegram client
+              if (bridge) {
+                try {
+                  await bridge.cleanupTelegramConnections();
+                  log("Telegram cleanup completed, will retry after delay", "info");
+                } catch (cleanupError) {
+                  log(`Telegram cleanup failed: ${cleanupError}`, "error");
+                }
+              }
+            }
+          } catch (cleanupError) {
+            log(`Error during cleanup: ${cleanupError}`, "error");
+          }
+        }
+        
+        // Log the error
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorDetails = {
+          context: `startBridge-${bridgeInitAttempt}`,
+          timestamp: new Date().toISOString(),
+          attempt: bridgeInitAttempt,
+          errorType: error.constructor?.name || typeof error
+        };
+        
+        log(`Bridge initialization failed (attempt ${bridgeInitAttempt}): ${errorMessage}`, "error");
+        log(`Error details: ${JSON.stringify(errorDetails)}`, "error");
+        
+        // If we have more attempts remaining, retry after delay
+        if (bridgeInitAttempt < MAX_BRIDGE_INIT_RETRIES) {
+          log(`Retrying bridge initialization in ${retryDelay}ms...`, "info");
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          
+          // Calculate next retry delay with exponential backoff
+          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY_MS);
+          
+          // Add jitter to prevent thundering herd problem
+          const jitter = retryDelay * 0.1; // ±10%
+          retryDelay = Math.floor(retryDelay - jitter + Math.random() * jitter * 2);
+        } else {
+          log(`Bridge initialization failed after ${MAX_BRIDGE_INIT_RETRIES} attempts`, "error");
+          
+          // Even though initialization failed, create a disabled bridge to ensure 
+          // the API doesn't crash when bridge operations are attempted
+          if (!bridge) {
+            log("Creating disabled bridge instance for API stability", "warn");
+            bridge = new BridgeManager();
+            bridge.markAsDisabled(`Initialization failed: ${errorMessage}`);
+          }
+        }
+      }
     }
+    
+    // Final report
+    if (bridgeStarted) {
+      log("Bridge is fully operational ✓", "info");
+    } else {
+      log("Bridge initialization failed! Some functionality will be limited.", "error");
+    }
+  }
+  
+  // Start bridge initialization using process.nextTick to ensure all routes are registered first
+  process.nextTick(() => {
+    initializeBridge().catch(error => {
+      log(`Unexpected error during bridge initialization: ${error}`, "error");
+    });
   });
 
   // Bot Config Routes
