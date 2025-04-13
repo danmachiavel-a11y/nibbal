@@ -410,23 +410,88 @@ export class TelegramBot {
 
   async setState(userId: number, state: UserState) {
     try {
+      // Make a deep copy of the state to protect against race conditions
+      const stateCopy = JSON.parse(JSON.stringify(state));
+      
+      // Update state with lastUpdated timestamp
+      stateCopy.lastUpdated = Date.now();
+      
+      // Add a unique transaction ID to help track state changes
+      stateCopy.transactionId = `${userId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
       // Clear existing timeout if any
       if (this.stateCleanups.has(userId)) {
         clearTimeout(this.stateCleanups.get(userId)!.timeout);
       }
       
-      // Update state with lastUpdated timestamp
-      state.lastUpdated = Date.now();
+      // FIRST - validate user exists in database before setting state
+      let user;
       
-      // Set the state in memory
-      this.userStates.set(userId, state);
+      try {
+        // Try first with the userId from memory which is faster
+        user = await storage.getUser(userId);
+        
+        // If not found, try to look up by telegramId as string
+        if (!user || !user.telegramId) {
+          log(`User not found by ID ${userId}, trying to look up by Telegram ID`, "debug");
+          user = await storage.getUserByTelegramId(userId.toString());
+        }
+        
+        if (!user || !user.telegramId) {
+          log(`Could not persist state: User ${userId} not found in database or missing telegramId`, "warn");
+          return;
+        }
+      } catch (userLookupError) {
+        log(`Error looking up user ${userId}: ${userLookupError}`, "error");
+        // Continue with memory state update but don't try database persistence
+        user = null;
+      }
       
-      // Set up a timeout to clear the state
+      // SECOND - Set the state in memory
+      this.userStates.set(userId, stateCopy);
+      
+      // THIRD - Setup cleanup timeout
       const timeout = setTimeout(() => {
-        this.userStates.delete(userId);
-        this.stateCleanups.delete(userId);
-        this.activeUsers.delete(userId);
-        log(`Auto-cleared state for inactive user ${userId}`, "debug");
+        // Before auto-clearing, check if ticket is active in DB
+        (async () => {
+          try {
+            if (stateCopy.activeTicketId && user) {
+              const ticket = await storage.getTicket(stateCopy.activeTicketId);
+              // Only clear state if ticket is inactive or closed
+              if (!ticket || ticket.status === "closed") {
+                this.userStates.delete(userId);
+                this.stateCleanups.delete(userId);
+                this.activeUsers.delete(userId);
+                log(`Auto-cleared state for inactive user ${userId} - ticket ${stateCopy.activeTicketId} is closed or deleted`, "debug");
+                
+                // Also deactivate state in database
+                if (user.telegramId) {
+                  await storage.deactivateUserState(user.telegramId);
+                }
+              } else {
+                // Ticket still active, extend timeout
+                log(`Not clearing state for user ${userId} - ticket ${stateCopy.activeTicketId} is still active (${ticket.status})`, "debug");
+                
+                // Refresh the timeout
+                this.setState(userId, stateCopy);
+              }
+            } else {
+              // No active ticket, go ahead and clear
+              this.userStates.delete(userId);
+              this.stateCleanups.delete(userId);
+              this.activeUsers.delete(userId);
+              log(`Auto-cleared state for inactive user ${userId}`, "debug");
+              
+              // Also deactivate state in database if we have user info
+              if (user && user.telegramId) {
+                await storage.deactivateUserState(user.telegramId);
+              }
+            }
+          } catch (error) {
+            log(`Error in state cleanup check: ${error}`, "error");
+            // Default to keeping the state when in doubt
+          }
+        })();
       }, this.STATE_TIMEOUT);
       
       // Save the cleanup info
@@ -435,44 +500,42 @@ export class TelegramBot {
         createdAt: Date.now()
       });
       
-      // Persist state to database
-      // Find user by Telegram ID first
-      const user = await storage.getUserByTelegramId(userId.toString());
-      if (user) {
-        // Serialize state to JSON
-        const stateJson = JSON.stringify(state);
-        // Save to database
-        await storage.saveUserState(user.id, userId.toString(), stateJson);
-        log(`Persisted state to database for user ${userId}`, "debug");
-      } else {
-        log(`Could not persist state: user ${userId} not found in database`, "warning");
+      // FOURTH - If user exists, persist state to database
+      if (user && user.telegramId) {
+        try {
+          // Convert state to JSON string
+          const stateStr = JSON.stringify(stateCopy);
+          await storage.saveUserState(user.id, user.telegramId, stateStr);
+          log(`Persisted state for user ${userId} (telegramId: ${user.telegramId}, tx: ${stateCopy.transactionId})`, "debug");
+        } catch (dbError) {
+          log(`Error persisting state to database: ${dbError}`, "error");
+          
+          // Attempt one retry with minimized state if the state is too large
+          if (dbError.toString().includes("too large") || dbError.toString().includes("exceeded")) {
+            try {
+              // Create a minimal state with just the critical fields
+              const minimalState = {
+                activeTicketId: stateCopy.activeTicketId,
+                categoryId: stateCopy.categoryId,
+                inQuestionnaire: stateCopy.inQuestionnaire,
+                lastUpdated: stateCopy.lastUpdated,
+                transactionId: stateCopy.transactionId
+              };
+              
+              const minimalStateStr = JSON.stringify(minimalState);
+              await storage.saveUserState(user.id, user.telegramId, minimalStateStr);
+              log(`Persisted minimal state for user ${userId} after size error`, "debug");
+            } catch (retryError) {
+              log(`Failed to persist even minimal state: ${retryError}`, "error");
+            }
+          }
+        }
       }
+      
+      log(`State updated for user ${userId} (tx: ${stateCopy.transactionId})`, "debug");
     } catch (error) {
       log(`Error in setState: ${error}`, "error");
-      // Still keep memory state updated even if DB persistence fails
-    }
-    
-    // Persist to database for recovery after restart
-    try {
-      // Try first with the userId from memory
-      let user = await storage.getUser(userId);
-      
-      // If not found, try to look up by telegramId as string
-      if (!user || !user.telegramId) {
-        log(`User not found by ID ${userId}, trying to look up by Telegram ID`, "debug");
-        user = await storage.getUserByTelegramId(userId.toString());
-      }
-      
-      if (user && user.telegramId) {
-        // Convert state to JSON string
-        const stateStr = JSON.stringify(state);
-        await storage.saveUserState(user.id, user.telegramId, stateStr);
-        log(`Persisted state for user ${userId} (telegramId: ${user.telegramId}) to database`, "debug");
-      } else {
-        log(`Could not persist state: User ${userId} not found in database or missing telegramId`, "warn");
-      }
-    } catch (error) {
-      log(`Error persisting state to database: ${error}`, "error");
+      // State may be partially updated - we prioritize memory state integrity
     }
     
     log(`Set state for user ${userId}: ${JSON.stringify(state)}`, "debug");
@@ -1413,46 +1476,114 @@ Only one active ticket per service is allowed.`);
    */
   private async restoreUserStates(): Promise<void> {
     try {
-      // We need to query all active users from the database
+      log("Starting user state restoration process...", "info");
+      
+      // Step 1: Track metrics for debugging
+      let restoredCount = 0;
+      let failedCount = 0;
+      let recoveredFromTicketCount = 0;
+      let recoveredFromStateCount = 0;
+      
+      // Step 2: First check if the database is accessible
+      try {
+        // Simple query to verify DB connection
+        const users = await storage.getUsers();
+        log(`Database connection verified, found ${users.length} users`, "info");
+      } catch (dbError) {
+        log(`Critical error: Cannot connect to database during state restoration: ${dbError}`, "error");
+        log("Will retry state restoration in 10 seconds...", "warn");
+        
+        // Schedule a retry
+        setTimeout(() => {
+          this.restoreUserStates().catch(e => {
+            log(`Retry of state restoration also failed: ${e}`, "error");
+          });
+        }, 10000);
+        return;
+      }
+      
+      // Step 3: Query all users with active state to minimize database queries
+      log("Querying all active states from the database", "debug");
+      
+      // First collect all active states by telegramId
+      const activeStates = new Map<string, { user: any, stateString: string }>();
       const users = await storage.getUsers();
+      
       if (!users || users.length === 0) {
         log(`No users found to restore states for`, "info");
         return;
       }
-
-      let restoredCount = 0;
-      let failedCount = 0;
-
+      
+      // Step 4: Process all users with active tickets or states
+      log(`Processing ${users.length} users for state restoration`, "debug");
+      
       for (const user of users) {
-        if (!user.telegramId) continue;
+        if (!user.telegramId) {
+          log(`Skipping user ${user.id} with no telegramId`, "debug");
+          continue;
+        }
         
         try {
-          // Get the most recent active state from the database
-          let stateString = await storage.getUserStateByTelegramId(user.telegramId);
-          let state: UserState | null = null;
-          let hasRestoredFromState = false;
+          // Step 4a: Get persisted state and check for active tickets in a single step
+          log(`[DB] Checking for active tickets for user ${user.id}`);
           
-          // First try to restore from saved state
+          // Track restore status for this user
+          let stateRestored = false;
+          
+          // Get the last persisted state from the database
+          const stateString = await storage.getUserStateByTelegramId(user.telegramId);
+          
+          // Initialize empty state
+          let state: UserState | null = null;
+          
+          // Step 4b: First priority - restore from saved database state if available
           if (stateString) {
             try {
               // Parse the state
               state = JSON.parse(stateString) as UserState;
               
-              // Check if the state has lastUpdated timestamp
+              // Check if the state is still valid
               const lastUpdateTime = state.lastUpdated || 0;
               const stateAgeMinutes = (Date.now() - lastUpdateTime) / (1000 * 60);
+              const maxStateAgeMinutes = state.inQuestionnaire ? 30 : 120; // 30 mins for questionnaire, 2 hours for active tickets
               
-              // Only restore state if either:
-              // 1. It has a valid activeTicketId
-              // 2. It's in questionnaire mode AND was updated within the last 30 minutes
-              if (state.activeTicketId || (state.inQuestionnaire && stateAgeMinutes < 30)) {
-                log(`State age: ${stateAgeMinutes.toFixed(2)} minutes (max 30 minutes)`, "debug");
-                hasRestoredFromState = true;
-              } else if (state.inQuestionnaire && stateAgeMinutes >= 30) {
-                log(`[DB] Found expired questionnaire state for telegramId: ${user.telegramId} (${stateAgeMinutes.toFixed(2)} minutes old)`, "debug");
-                state = null;
+              // Validate state freshness
+              if (stateAgeMinutes < maxStateAgeMinutes) {
+                // Check if the referenced ticket still exists/is active
+                if (state.activeTicketId) {
+                  const ticketExists = await storage.getTicket(state.activeTicketId);
+                  
+                  if (ticketExists) {
+                    // Check if status is still active
+                    const validStatuses = ['pending', 'open', 'in-progress'];
+                    const isPaidTicket = ticketExists.amount && ticketExists.amount > 0;
+                    
+                    if (validStatuses.includes(ticketExists.status) || isPaidTicket) {
+                      log(`[DB] Validated active ticket #${state.activeTicketId} (${ticketExists.status}) for user ${user.id}`, "debug");
+                      stateRestored = true;
+                      recoveredFromStateCount++;
+                    } else {
+                      log(`[DB] Found ticket #${state.activeTicketId} but status '${ticketExists.status}' is not active`, "debug");
+                      // Only reset activeTicketId but keep other state info in case user was in questionnaire
+                      if (!state.inQuestionnaire) {
+                        state.activeTicketId = undefined;
+                      }
+                    }
+                  } else {
+                    log(`[DB] Referenced ticket #${state.activeTicketId} no longer exists`, "debug");
+                    // Only reset activeTicketId but keep other state info
+                    state.activeTicketId = undefined;
+                  }
+                }
+                
+                // If in questionnaire and recent enough, restore state
+                if (state.inQuestionnaire) {
+                  log(`[DB] Restoring questionnaire state for user ${user.id} (age: ${stateAgeMinutes.toFixed(1)} minutes)`, "debug");
+                  stateRestored = true;
+                  recoveredFromStateCount++;
+                }
               } else {
-                log(`[DB] Found user state for telegramId: ${user.telegramId} but it has no active ticket or questionnaire`, "debug");
+                log(`[DB] Found expired state for telegramId: ${user.telegramId} (${stateAgeMinutes.toFixed(1)} minutes old, max ${maxStateAgeMinutes})`, "debug");
                 state = null;
               }
             } catch (parseError) {
@@ -1463,56 +1594,102 @@ Only one active ticket per service is allowed.`);
             log(`[DB] No active user state found for telegramId: ${user.telegramId}`);
           }
           
-          // If we couldn't restore from saved state, check if the user has an active ticket in the database
-          if (!hasRestoredFromState) {
-            // Look for active tickets for this user
-            const activeTicket = await storage.getActiveTicketByUserId(user.id);
-            if (activeTicket) {
-              log(`Found active ticket ${activeTicket.id} for user ${user.id} with telegramId ${user.telegramId} but no saved state. Reconstructing state...`, "info");
+          // Step 4c: Second priority - check for active tickets in database if we couldn't restore state
+          if (!stateRestored) {
+            // Find active tickets for this user even if state wasn't restored
+            log(`[DB] Checking for active tickets for user ${user.id}`);
+            
+            const activeTickets = await storage.getActiveTicketsByUserId(user.id);
+            log(`[DB] Found ${activeTickets.length} potential active tickets for user ${user.id}`);
+            
+            // Filter tickets that are truly active
+            const validTickets = activeTickets.filter(ticket => {
+              const validStatuses = ['pending', 'open', 'in-progress'];
+              const isPaidTicket = ticket.amount && ticket.amount > 0;
+              return validStatuses.includes(ticket.status) || isPaidTicket;
+            });
+            
+            if (validTickets.length > 0) {
+              // Sort by latest activity first - use completedAt as fallback for timing
+              validTickets.sort((a, b) => {
+                const aDate = a.completedAt || new Date(0);
+                const bDate = b.completedAt || new Date(0);
+                return bDate.getTime() - aDate.getTime();
+              });
+              
+              // Pick the most recent active ticket
+              const mostRecentTicket = validTickets[0];
+              log(`[DB] Found active ticket ${mostRecentTicket.id} for user ${user.id}, reconstructing state`, "info");
               
               // Recreate state from the active ticket
               state = {
-                activeTicketId: activeTicket.id,
-                categoryId: activeTicket.categoryId || 1, // Default to category 1 if not set
+                activeTicketId: mostRecentTicket.id,
+                categoryId: mostRecentTicket.categoryId || 1, // Default to category 1 if not set
                 currentQuestion: 0,
                 answers: [],
                 inQuestionnaire: false,
                 lastUpdated: Date.now()
+                // No transactionId needed, handled internally
               };
+              
+              stateRestored = true;
+              recoveredFromTicketCount++;
+            } else {
+              log(`[DB] No active tickets found for user ${user.id}`);
             }
           }
           
-          // If we have a state to restore (either from saved state or active ticket)
-          if (state) {
+          // Step 4d: Register state in memory if restored
+          if (stateRestored && state) {
             try {
-              // Use BigInt to safely handle large Telegram IDs
+              // Use BigInt for proper ID handling
               const telegramUserIdBig = BigInt(user.telegramId);
-              // Convert to number for internal use, but safely handle large numbers
               let telegramUserId: number;
               
-              // If the ID is too large for a safe integer, use a hash of the original string
+              // Handle large Telegram IDs safely
               if (telegramUserIdBig > BigInt(Number.MAX_SAFE_INTEGER)) {
-                // Create a stable number representation of large IDs using hash
                 const hash = require('crypto')
                   .createHash('md5')
                   .update(user.telegramId)
                   .digest('hex');
-                // Use first 8 chars of hash converted to an integer
                 telegramUserId = parseInt(hash.substring(0, 8), 16);
                 log(`Using hash representation for large Telegram ID ${user.telegramId}: ${telegramUserId}`, "debug");
               } else {
                 telegramUserId = Number(telegramUserIdBig);
               }
               
-              // Store the state in memory
+              // Set state in memory
               this.userStates.set(telegramUserId, state);
               
-              // Also setup cleanup for this state
+              // Also setup cleanup with verification of DB state
               const timeout = setTimeout(() => {
-                this.userStates.delete(telegramUserId);
-                this.stateCleanups.delete(telegramUserId);
-                this.activeUsers.delete(telegramUserId);
-                log(`Auto-cleared state for inactive user ${telegramUserId} (Telegram ID: ${user.telegramId})`, "debug");
+                (async () => {
+                  try {
+                    // Before expiring, check if still active in DB
+                    if (state?.activeTicketId) {
+                      const ticket = await storage.getTicket(state.activeTicketId);
+                      const validStatuses = ['pending', 'open', 'in-progress'];
+                      const isPaidTicket = ticket?.amount && ticket.amount > 0;
+                      
+                      if (ticket && (validStatuses.includes(ticket.status) || isPaidTicket)) {
+                        // Still active, extend timeout
+                        log(`Not clearing state for user ${telegramUserId} - ticket ${state.activeTicketId} is still active`, "debug");
+                        
+                        // Refresh the timeout by recreating the state
+                        this.setState(telegramUserId, state);
+                        return;
+                      }
+                    }
+                    
+                    // Otherwise clear as normal
+                    this.userStates.delete(telegramUserId);
+                    this.stateCleanups.delete(telegramUserId);
+                    this.activeUsers.delete(telegramUserId);
+                    log(`Auto-cleared state for inactive user ${telegramUserId} (Telegram ID: ${user.telegramId})`, "debug");
+                  } catch (error) {
+                    log(`Error in state cleanup: ${error}`, "error");
+                  }
+                })();
               }, this.STATE_TIMEOUT);
               
               this.stateCleanups.set(telegramUserId, {
@@ -1523,7 +1700,10 @@ Only one active ticket per service is allowed.`);
               this.activeUsers.add(telegramUserId);
               restoredCount++;
               
-              log(`Restored state for user ${user.id} (Telegram ID: ${user.telegramId}): ${JSON.stringify(state)}`, "info");
+              // Persist the updated state to ensure consistency
+              await storage.saveUserState(user.id, user.telegramId, JSON.stringify(state));
+              
+              log(`Restored state for user ${user.id} (Telegram ID: ${user.telegramId})`, "info");
             } catch (idError) {
               failedCount++;
               log(`Error processing Telegram ID ${user.telegramId}: ${idError}`, "error");
@@ -1535,7 +1715,9 @@ Only one active ticket per service is allowed.`);
         }
       }
       
+      // Step 5: Summarize results
       log(`Restored ${restoredCount} user states, ${failedCount} failed`, "info");
+      log(`Recovery sources: ${recoveredFromStateCount} from saved states, ${recoveredFromTicketCount} from active tickets`, "info");
     } catch (error) {
       log(`Error in restoreUserStates: ${error}`, "error");
     }
