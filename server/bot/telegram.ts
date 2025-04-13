@@ -1564,7 +1564,13 @@ Only one active ticket per service is allowed.`);
         
         // Get the ticket
         const ticket = await storage.getTicket(userState.activeTicketId);
-        if (!ticket || ticket.status !== 'pending') {
+        
+        // Check if ticket exists and is in an active state (pending, open, in-progress)
+        // Also allow paid tickets (even if closed) to be pinged
+        const validStatuses = ['pending', 'open', 'in-progress'];
+        const isPaidTicket = ticket?.amount && ticket.amount > 0;
+        
+        if (!ticket || (!validStatuses.includes(ticket.status) && !isPaidTicket)) {
           await ctx.reply("❌ Your active ticket was not found or is closed. Use /start to create a new one.");
           return;
         }
