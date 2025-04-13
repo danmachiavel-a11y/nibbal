@@ -2968,6 +2968,17 @@ export class DiscordBot {
     }
   }
 
+  // Create a new Discord client with necessary intents
+  private setupClient(): Client {
+    return new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+      ]
+    });
+  }
+
   async start() {
     try {
       // Clear any existing timeouts and reset last error
@@ -2975,6 +2986,8 @@ export class DiscordBot {
         clearTimeout(this.connectionTimeout);
       }
       this.lastError = null;
+      this.isConnecting = true;
+      this.isConnected = false;
 
       // Validate Discord token
       const token = process.env.DISCORD_BOT_TOKEN;
@@ -2982,6 +2995,7 @@ export class DiscordBot {
         const errorMessage = "Discord bot token is missing. Please set DISCORD_BOT_TOKEN in your environment variables or .env file.";
         log(errorMessage, "error");
         this.lastError = new Error(errorMessage);
+        this.isConnecting = false;
         throw this.lastError;
       }
 
@@ -2989,6 +3003,7 @@ export class DiscordBot {
         const errorMessage = "Discord bot token appears to be invalid or a placeholder. Please set a valid token.";
         log(errorMessage, "error");
         this.lastError = new Error(errorMessage);
+        this.isConnecting = false;
         throw this.lastError;
       }
 
@@ -2997,6 +3012,7 @@ export class DiscordBot {
         const errorMessage = "Discord bot token has invalid format. Tokens should be in the format 'XXXX.YYYY.ZZZZ'.";
         log(errorMessage, "error");
         this.lastError = new Error(errorMessage);
+        this.isConnecting = false;
         throw this.lastError;
       }
 
@@ -3004,6 +3020,9 @@ export class DiscordBot {
       this.connectionTimeout = setTimeout(() => {
         log("Connection timeout reached, destroying client...", "warn");
         this.lastError = new Error("Connection timeout reached");
+        this.isConnecting = false;
+        this.isConnected = false;
+        this.connectionError = "Connection timeout reached";
         this.client.destroy()
           .catch(error => log(`Error destroying client: ${error}`, "error"));
       }, this.wsCleanupConfig.connectionTimeout);
@@ -3017,6 +3036,10 @@ export class DiscordBot {
         this.connectionTimeout = null;
       }
 
+      // Update connection status
+      this.isConnecting = false;
+      this.isConnected = true;
+      this.connectionError = null;
       log("Discord bot started successfully");
     } catch (error) {
       let errorMessage = error instanceof Error ? error.message : String(error);
@@ -3033,6 +3056,9 @@ export class DiscordBot {
       }
       
       this.lastError = new Error(errorMessage);
+      this.isConnecting = false;
+      this.isConnected = false;
+      this.connectionError = errorMessage;
       log(`Error starting Discord bot: ${errorMessage}`, "error");
       throw this.lastError;
     }

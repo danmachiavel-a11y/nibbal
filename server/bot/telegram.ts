@@ -507,11 +507,12 @@ export class TelegramBot {
           const stateStr = JSON.stringify(stateCopy);
           await storage.saveUserState(user.id, user.telegramId, stateStr);
           log(`Persisted state for user ${userId} (telegramId: ${user.telegramId}, tx: ${stateCopy.transactionId})`, "debug");
-        } catch (dbError) {
-          log(`Error persisting state to database: ${dbError}`, "error");
+        } catch (dbError: unknown) {
+          log(`Error persisting state to database: ${String(dbError)}`, "error");
           
           // Attempt one retry with minimized state if the state is too large
-          if (dbError.toString().includes("too large") || dbError.toString().includes("exceeded")) {
+          const errorStr = String(dbError);
+          if (errorStr.includes("too large") || errorStr.includes("exceeded")) {
             try {
               // Create a minimal state with just the critical fields
               const minimalState = {
