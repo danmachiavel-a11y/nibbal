@@ -803,27 +803,41 @@ export class DatabaseStorage implements IStorage {
     
     // Get all tickets for this user that are not in a finalized state
     // This includes 'open', 'in-progress', 'pending', 'paid', but not 'closed', 'deleted', etc.
-    const [ticket] = await db
-      .select()
-      .from(tickets)
-      .where(
-        and(
-          eq(tickets.userId, userId),
-          // Consider any ticket not in a finalized state as "active"
-          // Note: 'paid' status is included as active for user interaction purposes
-          sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
+    try {
+      // First, let's retrieve all active tickets to debug multiple ticket scenarios
+      const activeTickets = await db
+        .select()
+        .from(tickets)
+        .where(
+          and(
+            eq(tickets.userId, userId),
+            // Consider any ticket not in a finalized state as "active"
+            // Note: 'paid' status is included as active for user interaction purposes
+            sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
+          )
         )
-      )
-      .orderBy(desc(tickets.id)) // Get the most recent ticket if multiple exist
-      .limit(1);
-    
-    if (ticket) {
-      console.log(`[DB] Found active ticket ${ticket.id} with status '${ticket.status}' for user ${userId}`);
-    } else {
-      console.log(`[DB] No active tickets found for user ${userId}`);
+        .orderBy(desc(tickets.id)); // Most recent first
+      
+      console.log(`[DB] Found ${activeTickets.length} potential active tickets for user ${userId}`);
+      
+      // Log all active tickets for debugging
+      if (activeTickets.length > 0) {
+        activeTickets.forEach(t => {
+          console.log(`[DB] Active ticket candidate: #${t.id}, status: "${t.status}", category: ${t.categoryId}, channelId: ${t.discordChannelId || 'none'}`);
+        });
+        
+        // Return the most recent ticket
+        const [mostRecentTicket] = activeTickets;
+        console.log(`[DB] Selected most recent active ticket #${mostRecentTicket.id} with status '${mostRecentTicket.status}' for user ${userId}`);
+        return mostRecentTicket;
+      } else {
+        console.log(`[DB] No active tickets found for user ${userId}`);
+        return undefined;
+      }
+    } catch (error) {
+      console.error(`[DB] Error retrieving active ticket for user ${userId}:`, error);
+      return undefined;
     }
-    
-    return ticket;
   }
   
   // Get all active tickets for a user
@@ -845,7 +859,14 @@ export class DatabaseStorage implements IStorage {
       )
       .orderBy(desc(tickets.id)); // Most recent first
     
+    // Log each active ticket for debugging purposes
     console.log(`[DB] Found ${activeTickets.length} active tickets for user ${userId}`);
+    if (activeTickets.length > 0) {
+      activeTickets.forEach(ticket => {
+        console.log(`[DB] Active ticket: #${ticket.id}, status: ${ticket.status}, category: ${ticket.categoryId}, channelId: ${ticket.discordChannelId || 'none'}`);
+      });
+    }
+    
     return activeTickets;
   }
 

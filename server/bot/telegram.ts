@@ -1786,6 +1786,7 @@ Images/photos are also supported.
       
       try {
         const userState = this.userStates.get(userId);
+        console.log(`[SWITCH CMD] Current user state: ${JSON.stringify(userState || {})}`);
         
         // Check if user is in a questionnaire
         if (userState?.inQuestionnaire) {
@@ -2473,6 +2474,8 @@ Images/photos are also supported.
           const switchOption = data.substring(7);
           const userId = ctx.from.id;
           
+          console.log(`[SWITCH_CALLBACK] User ${userId} clicked switch menu option: ${switchOption}`);
+          
           // Get user from database
           const user = await storage.getUserByTelegramId(userId.toString());
           if (!user) {
@@ -2480,6 +2483,13 @@ Images/photos are also supported.
             await ctx.answerCbQuery("Error: User not found");
             return;
           }
+          
+          console.log(`[SWITCH_CALLBACK] Found user ${user.id} (telegramId: ${user.telegramId})`);
+          
+          // Get all active tickets for debugging
+          const activeTickets = await storage.getActiveTicketsByUserId(user.id);
+          console.log(`[SWITCH_CALLBACK] User has ${activeTickets.length} active tickets: ${JSON.stringify(activeTickets.map(t => ({id: t.id, status: t.status})))}`);
+          
           
           // Get current user state
           let userState = this.userStates.get(userId);
@@ -2533,7 +2543,13 @@ Images/photos are also supported.
               
               // Check if the ticket is active
               const validStatuses = ["open", "in-progress", "pending", "paid"];
+              
+              console.log(`[SWITCH DEBUG] Checking ticket #${ticketId} status: "${ticket.status}"`);
+              console.log(`[SWITCH DEBUG] Valid statuses: ${JSON.stringify(validStatuses)}`);
+              console.log(`[SWITCH DEBUG] Is valid status: ${validStatuses.includes(ticket.status)}`);
+              
               if (!validStatuses.includes(ticket.status)) {
+                console.log(`[SWITCH DEBUG] Ticket #${ticketId} has invalid status "${ticket.status}"`);
                 await ctx.answerCbQuery(`Ticket #${ticketId} is not active (status: ${ticket.status})`);
                 await ctx.reply(`❌ Cannot switch to ticket #${ticketId} because it has status "${ticket.status}". Only tickets with status "open", "in-progress", "pending", or "paid" are accessible.`);
                 return;
@@ -2703,6 +2719,8 @@ Images/photos are also supported.
       if (!ctx.from?.id || !ctx.message?.text) return;
       
       const userId = ctx.from.id;
+      console.log(`[TEXT_MESSAGE] Received text message from user ${userId}: "${ctx.message.text.substring(0, 30)}${ctx.message.text.length > 30 ? '...' : ''}"`);
+      
       
       // First check if this is a critical command using the raw processor
       // This is a fallback mechanism for commands like /close that might fail
