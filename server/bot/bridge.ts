@@ -1379,6 +1379,15 @@ export class BridgeManager {
         });
       }
       
+      // Check if the ticket is active
+      const validStatuses = ["open", "in-progress", "pending", "paid"];
+      if (!validStatuses.includes(ticket.status)) {
+        throw new BridgeError(`Ticket ${ticketId} is not active (status: ${ticket.status})`, { 
+          context: "forceUserTicketSwitch", 
+          code: "INVALID_TICKET_STATUS"
+        });
+      }
+      
       // Fetch ticket category
       const category = await storage.getCategory(ticket.categoryId!);
       if (!category) {

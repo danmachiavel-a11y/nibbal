@@ -2524,13 +2524,24 @@ Images/photos are also supported.
                 return;
               }
               
-              // Check if the ticket is active (pending or paid)
-              if (ticket.status !== "pending" && ticket.status !== "paid") {
+              // Check if the ticket is active
+              const validStatuses = ["open", "in-progress", "pending", "paid"];
+              if (!validStatuses.includes(ticket.status)) {
                 await ctx.answerCbQuery(`Ticket #${ticketId} is not active (status: ${ticket.status})`);
+                await ctx.reply(`❌ Cannot switch to ticket #${ticketId} because it has status "${ticket.status}". Only tickets with status "open", "in-progress", "pending", or "paid" are accessible.`);
+                return;
+              }
+              
+              // Check if user is already viewing this ticket
+              if (userState.activeTicketId === ticketId) {
+                // User is already in this ticket, no need to switch
+                await ctx.answerCbQuery(`You are already viewing ticket #${ticketId}`);
+                await ctx.reply(`ℹ️ You're already viewing ticket #${ticketId}, no need to switch.`);
                 return;
               }
               
               // Switch to this ticket
+              const previousTicketId = userState.activeTicketId;
               userState.activeTicketId = ticketId;
               userState.categoryId = ticket.categoryId || 0;
               await this.setState(userId, userState);
@@ -2792,9 +2803,17 @@ Images/photos are also supported.
               return;
             }
             
-            // Check if the ticket is active (pending or paid)
-            if (ticket.status !== "pending" && ticket.status !== "paid") {
-              await ctx.reply(`❌ Ticket #${ticketId} is not active (status: ${ticket.status}).`);
+            // Check if the ticket is active - support all valid active statuses
+            const validStatuses = ["open", "in-progress", "pending", "paid"];
+            if (!validStatuses.includes(ticket.status)) {
+              await ctx.reply(`❌ Cannot switch to ticket #${ticketId} because it has status "${ticket.status}". Only tickets with status "open", "in-progress", "pending", or "paid" are accessible.`);
+              return;
+            }
+            
+            // Check if user is already viewing this ticket
+            if (userState.activeTicketId === ticketId) {
+              // User is already in this ticket, no need to switch
+              await ctx.reply(`ℹ️ You're already viewing ticket #${ticketId}, no need to switch.`);
               return;
             }
             
