@@ -1777,6 +1777,8 @@ Images/photos are also supported.
       if (!ctx.from?.id) return;
       const userId = ctx.from.id;
       
+      console.log(`[SWITCH CMD] User ${userId} executed /switch command`);
+      
       if (!this.checkRateLimit(userId, 'command', 'switch')) {
         await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
         return;
@@ -2509,9 +2511,14 @@ Images/photos are also supported.
             // User wants to switch to an existing ticket
             const ticketId = parseInt(switchOption);
             
+            // Add comprehensive debug logging
+            console.log(`[SWITCH DEBUG] User ${userId} attempting to switch to ticket #${ticketId}`);
+            console.log(`[SWITCH DEBUG] Current user state: ${JSON.stringify(userState)}`);
+            
             try {
               // Check if the ticket exists and belongs to this user
               const ticket = await storage.getTicket(ticketId);
+              console.log(`[SWITCH DEBUG] Retrieved ticket: ${JSON.stringify(ticket)}`);
               
               if (!ticket) {
                 await ctx.answerCbQuery(`Ticket #${ticketId} not found`);
