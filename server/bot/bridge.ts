@@ -924,8 +924,23 @@ export class BridgeManager {
 
   async forwardToTelegram(content: string, ticketId: number, username: string, attachments?: any[]) {
     try {
-      // Create a more robust deduplication key using content hash and context
-      // For short content, use the full content, otherwise use a limited substring to avoid key size issues
+      // Clean Discord mentions from the content before sending to Telegram
+      // This prevents <@1234567890> format mentions from being forwarded
+      let cleanedContent = content;
+      
+      // Replace Discord user mentions (<@1234567890>)
+      cleanedContent = cleanedContent.replace(/<@!?(\d+)>/g, "@discord_user");
+      
+      // Replace Discord role mentions (<@&1234567890>)
+      cleanedContent = cleanedContent.replace(/<@&(\d+)>/g, "@role");
+      
+      // Replace Discord channel mentions (<#1234567890>)
+      cleanedContent = cleanedContent.replace(/<#(\d+)>/g, "#channel");
+      
+      console.log(`[FORWARD_TO_TG] Original content: "${content}"`);
+      console.log(`[FORWARD_TO_TG] Cleaned content: "${cleanedContent}"`);
+      
+      // Use the cleaned content for the message, but keep original for deduplication
       const contentForKey = content.length <= 50 ? content : content.substring(0, 50);
       
       // Remove timestamp from deduplication key to better catch duplicates sent rapidly
@@ -1014,7 +1029,7 @@ export class BridgeManager {
 
         // Send text content if any
         if (content?.trim()) {
-          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
+          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${cleanedContent}`);
         }
 
         // Process each attachment
@@ -1071,7 +1086,13 @@ export class BridgeManager {
 
         // Send text if any
         if (textContent) {
-          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${textContent}`);
+          // Clean Discord mentions from the content
+          let cleanedTextContent = textContent
+            .replace(/<@!?(\d+)>/g, "@discord_user")
+            .replace(/<@&(\d+)>/g, "@role")
+            .replace(/<#(\d+)>/g, "#channel");
+          
+          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${cleanedTextContent}`);
         }
 
         // Process and send the image
@@ -1112,7 +1133,13 @@ export class BridgeManager {
           timestamp: new Date(),
           senderName: username
         });
-        await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${content}`);
+        // Clean Discord mentions in the content
+        let cleanedContent = content
+          .replace(/<@!?(\d+)>/g, "@discord_user")
+          .replace(/<@&(\d+)>/g, "@role")
+          .replace(/<#(\d+)>/g, "#channel");
+          
+        await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${cleanedContent}`);
       }
 
       log(`Successfully sent message to Telegram user: ${user.username}`);
