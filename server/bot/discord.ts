@@ -711,11 +711,9 @@ export class DiscordBot {
             return;
           }
 
-          // Send notification to Telegram user
-          await this.bridge.sendMessageToTelegram(
-            parseInt(user.telegramId),
-            `🔔 *Important:* A staff member is requesting your attention in ticket #${ticket.id}`
-          );
+          // Send notification to Telegram user with improved format
+          // Using forwardPingToTelegram for consistent format
+          await this.bridge.forwardPingToTelegram(ticket.id, interaction.user.username);
           
           // Update the response
           await interaction.editReply({
