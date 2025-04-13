@@ -1577,9 +1577,9 @@ Only one active ticket per service is allowed.`);
         const ticket = await storage.getTicket(userState.activeTicketId);
         console.log(`[PING CMD] Ticket from user state activeTicketId: ${JSON.stringify(ticket || {})}`);
         
-        // Check if ticket exists and is in an active state (pending, open, in-progress)
-        // Also allow paid tickets (even if closed) to be pinged
-        const validStatuses = ['pending', 'open', 'in-progress'];
+        // Check if ticket exists and is in an active state (pending, open, in-progress, paid)
+        // Also allow tickets with amount > 0 to be pinged (even if status field doesn't say 'paid')
+        const validStatuses = ['pending', 'open', 'in-progress', 'paid'];
         const isPaidTicket = ticket?.amount && ticket.amount > 0;
         
         console.log(`[PING CMD] Valid statuses: ${JSON.stringify(validStatuses)}`);
