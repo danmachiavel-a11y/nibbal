@@ -1303,6 +1303,8 @@ export class BridgeManager {
 
   async forwardPingToTelegram(ticketId: number, discordUsername: string) {
     try {
+      console.log(`[PING] Processing ping from ${discordUsername} for ticket #${ticketId}`);
+      
       const ticket = await storage.getTicket(ticketId);
       if (!ticket?.userId) {
         throw new BridgeError("Invalid ticket or missing user ID", { code: "INVALID_TICKET", context: "forwardPingToTelegram" });
@@ -1314,18 +1316,69 @@ export class BridgeManager {
       }
       
       // Get category info for the message
-      let categoryInfo = "";
+      let categoryName = "Unknown service";
+      let serviceName = "";
       if (ticket.categoryId) {
         const category = await storage.getCategory(ticket.categoryId);
         if (category) {
-          categoryInfo = ` in the *${category.name}* category`;
+          categoryName = category.name;
+          serviceName = ` in *${categoryName}*`;
         }
       }
+      
+      // Check if user is currently viewing a different ticket
+      console.log(`[PING] Getting user state for telegramId: ${user.telegramId}`);
+      let stateJson = await storage.getUserStateByTelegramId(user.telegramId);
+      let userInDifferentTicket = false;
+      let currentTicketId: number | undefined = undefined;
+      let currentServiceName = "";
+      
+      if (stateJson) {
+        try {
+          const state = JSON.parse(stateJson);
+          console.log(`[PING] User state: ${JSON.stringify(state)}`);
+          
+          // Check if user is in a different ticket
+          if (state.activeTicketId && state.activeTicketId !== ticketId) {
+            userInDifferentTicket = true;
+            currentTicketId = state.activeTicketId;
+            
+            // Get current ticket category name
+            if (state.categoryId) {
+              const currentCategory = await storage.getCategory(state.categoryId);
+              if (currentCategory) {
+                currentServiceName = currentCategory.name;
+              }
+            }
+            
+            console.log(`[PING] User is currently in ticket #${currentTicketId} (${currentServiceName})`);
+          } else if (state.activeTicketId === ticketId) {
+            console.log(`[PING] User is already in this ticket #${ticketId}`);
+          } else {
+            console.log(`[PING] User doesn't have an active ticket in their state`);
+          }
+        } catch (stateError) {
+          console.error(`[PING] Error parsing state: ${stateError}`);
+        }
+      } else {
+        console.log(`[PING] No state found for user`);
+      }
+      
+      // Format username if available
+      const usernamePrefix = user.telegramUsername ? `@${user.telegramUsername} ` : '';
+      
+      // Different message format based on whether user is in a different ticket
+      let message: string;
+      if (userInDifferentTicket) {
+        message = `🔔 *Important:* ${usernamePrefix}A staff member is requesting your attention in ${categoryName} #${ticketId}\n\nYou are currently in ${currentServiceName} #${currentTicketId}. Use /switch to change tickets.`;
+      } else {
+        message = `🔔 *Important:* ${usernamePrefix}A staff member is requesting your attention in ticket #${ticketId}${serviceName}.`;
+      }
 
-      // Send message without showing the username
+      // Send the message
       await this.telegramBot.sendMessage(
         parseInt(user.telegramId),
-        `🔔 *Important:* A staff member has requested your attention in ticket #${ticketId}${categoryInfo}.`
+        message
       );
 
       log(`Successfully sent ping to Telegram user ${user.telegramId} for ticket #${ticketId}`);
@@ -1379,13 +1432,25 @@ export class BridgeManager {
         });
       }
       
-      // Check if the ticket is active
+      // Check if the ticket is active or paid
       const validStatuses = ["open", "in-progress", "pending", "paid"];
-      if (!validStatuses.includes(ticket.status)) {
-        throw new BridgeError(`Ticket ${ticketId} is not active (status: ${ticket.status})`, { 
+      const isPaidTicket = ticket.amount && ticket.amount > 0;
+      
+      console.log(`[FORCE_SWITCH] Checking ticket #${ticketId} status: "${ticket.status}" and amount: ${ticket.amount}`);
+      
+      // Ticket is considered active if:
+      // 1. It has a valid status OR
+      // 2. It's a paid ticket (amount > 0)
+      if (!validStatuses.includes(ticket.status) && !isPaidTicket) {
+        throw new BridgeError(`Ticket ${ticketId} is not active (status: ${ticket.status}) and is not paid`, { 
           context: "forceUserTicketSwitch", 
           code: "INVALID_TICKET_STATUS"
         });
+      }
+      
+      // If this is a paid ticket, log that we're allowing access despite status
+      if (isPaidTicket && !validStatuses.includes(ticket.status)) {
+        console.log(`[FORCE_SWITCH] Allowing access to paid ticket #${ticketId} despite status "${ticket.status}"`);
       }
       
       // Fetch ticket category
