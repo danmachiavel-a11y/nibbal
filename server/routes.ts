@@ -572,64 +572,143 @@ export async function registerRoutes(app: Express) {
   // Add new route to fetch Discord roles
   app.get("/api/discord/roles", async (req, res) => {
     try {
-      if (!bridge) {
-        return res.status(503).json({ 
-          message: "Bot bridge not initialized",
-          error: "BOT_BRIDGE_UNAVAILABLE" 
-        });
+      // Track retry state
+      let retryCount = 0;
+      const maxRetries = 3;
+      const retryDelayMs = 1500; // 1.5 seconds between retries
+      const forceReconnect = req.query.reconnect === 'true';
+      
+      // Function to attempt getting roles with retry logic
+      async function attemptGetRoles() {
+        if (!bridge) {
+          return res.status(503).json({ 
+            message: "Bot bridge not initialized",
+            error: "BOT_BRIDGE_UNAVAILABLE" 
+          });
+        }
+        
+        const discordBot = bridge.getDiscordBot();
+        if (!discordBot) {
+          return res.status(503).json({ 
+            message: "Discord bot not initialized. The bot could not be started.",
+            error: "DISCORD_BOT_UNAVAILABLE"
+          });
+        }
+
+        // Check if we need to force reconnect
+        if (forceReconnect && retryCount === 0) {
+          console.log("Forcing Discord bot reconnection due to client request");
+          try {
+            await discordBot.reconnect();
+            // Give it a moment to connect
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } catch (reconnectError) {
+            console.error("Error during forced reconnection:", reconnectError);
+          }
+        }
+
+        // If bot is not ready, wait for it with timeout
+        if (!discordBot.isReady()) {
+          console.log(`Discord bot not ready (attempt ${retryCount + 1}/${maxRetries})`);
+          
+          // Special handling for the case where user might not have set token
+          if (!process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_BOT_TOKEN.length < 10) {
+            return res.status(503).json({
+              message: "Discord bot token is missing or invalid.",
+              error: "INVALID_BOT_TOKEN",
+              details: "Please set a valid Discord bot token in your environment variables."
+            });
+          }
+          
+          // For other cases, attempt to reconnect if not already starting
+          if (!discordBot.isStartingProcess() && retryCount === 0) {
+            console.log("Attempting to restart Discord bot connection...");
+            try {
+              // Start an async reconnect attempt 
+              discordBot.reconnect().catch(e => console.error("Reconnect error:", e));
+            } catch (err) {
+              console.error("Error starting Discord reconnect:", err);
+            }
+          }
+          
+          // If we have more retries available
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`Waiting ${retryDelayMs}ms before retry ${retryCount}/${maxRetries}`);
+            
+            // Wait for specified delay before retry
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+            return attemptGetRoles(); // Recursively retry
+          }
+          
+          // We've exhausted retries, return error with connection details
+          const lastError = discordBot.getLastError();
+          const statusInfo = {
+            isReady: discordBot.isReady(),
+            isConnecting: discordBot.isStartingProcess(),
+            lastError: lastError || "Unknown",
+            retryAttempts: retryCount
+          };
+          
+          return res.status(503).json({
+            message: "Discord bot is not connected after multiple attempts.",
+            error: "DISCORD_BOT_NOT_READY",
+            details: lastError || "No additional error details available. Check that your token is valid and properly configured.",
+            status: statusInfo,
+            help: "Try refreshing the page. If the problem persists, verify your Discord bot token and server permissions."
+          });
+        }
+
+        try {
+          // Bot is ready, try to get roles
+          console.log("Fetching Discord roles...");
+          const roles = await discordBot.getRoles();
+          console.log(`Successfully fetched ${roles.length} Discord roles`);
+          return res.json(roles);
+        } catch (error: any) {
+          // Special case for no servers
+          if (error.message?.includes("No guild found") || error.message?.includes("Bot is not in any servers")) {
+            return res.status(503).json({
+              message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
+              error: "NO_SERVER_CONNECTED",
+              details: "The Discord bot token is valid but the bot hasn't been invited to any servers. Use the Discord Developer Portal to generate an invite link."
+            });
+          }
+          
+          // Special case for permissions issues
+          if (error.message?.includes("Missing Permissions") || error.message?.includes("Missing Access")) {
+            return res.status(503).json({
+              message: "The bot doesn't have enough permissions in your Discord server.",
+              error: "INSUFFICIENT_PERMISSIONS",
+              details: "Make sure the bot has the 'View Channels' and 'Manage Roles' permissions at the server level."
+            });
+          }
+          
+          // For rate limit errors, retry after a delay
+          if (error.message?.includes("rate limit") && retryCount < maxRetries) {
+            retryCount++;
+            console.log(`Rate limited, waiting ${retryDelayMs * 2}ms before retry ${retryCount}/${maxRetries}`);
+            
+            // Wait for specified delay before retry (longer for rate limits)
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs * 2));
+            return attemptGetRoles(); // Recursively retry
+          }
+          
+          // Special case for rate limits that we can't retry
+          if (error.message?.includes("rate limit")) {
+            return res.status(429).json({
+              message: "Discord API rate limit reached. Please try again in a few moments.",
+              error: "RATE_LIMITED",
+              details: error.message
+            });
+          }
+          
+          throw error; // Re-throw to be caught by the outer catch
+        }
       }
       
-      const discordBot = bridge.getDiscordBot();
-      if (!discordBot) {
-        return res.status(503).json({ 
-          message: "Discord bot not initialized. The bot could not be started.",
-          error: "DISCORD_BOT_UNAVAILABLE"
-        });
-      }
-
-      // Check if the bot is ready
-      if (!discordBot.isReady()) {
-        const lastError = discordBot.getLastError();
-        return res.status(503).json({
-          message: "Discord bot is not connected.",
-          error: "DISCORD_BOT_NOT_READY",
-          details: lastError || "No additional error details available. Check that your token is valid and properly configured."
-        });
-      }
-
-      try {
-        const roles = await discordBot.getRoles();
-        res.json(roles);
-      } catch (error: any) {
-        // Special case for no servers
-        if (error.message?.includes("No guild found") || error.message?.includes("Bot is not in any servers")) {
-          return res.status(503).json({
-            message: "Bot is not connected to any Discord servers. Please invite the bot to your server.",
-            error: "NO_SERVER_CONNECTED",
-            details: "The Discord bot token is valid but the bot hasn't been invited to any servers. Use the Discord Developer Portal to generate an invite link."
-          });
-        }
-        
-        // Special case for permissions issues
-        if (error.message?.includes("Missing Permissions") || error.message?.includes("Missing Access")) {
-          return res.status(503).json({
-            message: "The bot doesn't have enough permissions in your Discord server.",
-            error: "INSUFFICIENT_PERMISSIONS",
-            details: "Make sure the bot has the 'View Channels' and 'Manage Roles' permissions at the server level."
-          });
-        }
-
-        // Special case for rate limits
-        if (error.message?.includes("rate limit")) {
-          return res.status(429).json({
-            message: "Discord API rate limit reached. Please try again later.",
-            error: "RATE_LIMITED",
-            details: error.message
-          });
-        }
-        
-        throw error; // Re-throw to be caught by the outer catch
-      }
+      // Start the process with retry logic
+      return await attemptGetRoles();
     } catch (error: any) {
       log(`Error fetching Discord roles: ${error}`, "error");
       res.status(500).json({ 

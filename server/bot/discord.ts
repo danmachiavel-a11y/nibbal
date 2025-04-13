@@ -77,6 +77,9 @@ export class DiscordBot {
   private cleanupInterval: NodeJS.Timeout | null = null;
   private connectionTimeout: NodeJS.Timeout | null = null;
   private lastError: Error | null = null;
+  private isConnecting: boolean = false;
+  private isConnected: boolean = false;
+  private connectionError: string | null = null;
 
   // Rate limit configurations
   private readonly LIMITS = {
@@ -3066,11 +3069,87 @@ export class DiscordBot {
   }
 
   isReady() {
-    return this.client.isReady();
+    return this.client && this.client.isReady();
+  }
+  
+  // Check if bot is in the process of starting/connecting
+  isStartingProcess() {
+    return this.isConnecting;
   }
   
   // Get the last error that occurred
   getLastError(): string | undefined {
     return this.lastError?.message;
+  }
+  
+  // Reconnect the bot with retry logic
+  async reconnect() {
+    try {
+      console.log("Starting Discord bot reconnection...");
+      this.isConnecting = true;
+      
+      try {
+        // Try to destroy current client if it exists
+        if (this.client) {
+          await this.client.destroy();
+          console.log("Successfully destroyed previous Discord client");
+        }
+      } catch (destroyError) {
+        // Just log but continue with reconnection
+        console.error("Error while destroying previous Discord client:", destroyError);
+      }
+
+      // Setup new client with retry logic
+      const maxLoginAttempts = 3;
+      let loginAttempt = 0;
+      let lastLoginError = null;
+      
+      while (loginAttempt < maxLoginAttempts) {
+        try {
+          console.log(`Discord login attempt ${loginAttempt + 1}/${maxLoginAttempts}`);
+          this.client = this.setupClient();
+          
+          // Basic validation of token
+          if (!process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_BOT_TOKEN.length < 20) {
+            throw new Error("Discord token appears to be invalid or missing");
+          }
+          
+          // Try to login
+          await this.client.login(process.env.DISCORD_BOT_TOKEN!);
+          
+          // If we get here, login succeeded
+          this.isConnecting = false;
+          this.isConnected = true;
+          this.connectionError = null;
+          this.lastError = null;
+          
+          console.log("Discord bot reconnected successfully");
+          return;
+        } catch (loginError) {
+          // Save the error and try again
+          lastLoginError = loginError;
+          loginAttempt++;
+          
+          if (loginAttempt < maxLoginAttempts) {
+            // Wait with increasing delay before retrying
+            const delayMs = 2000 * loginAttempt;
+            console.log(`Login failed, retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          }
+        }
+      }
+      
+      // If we get here, all login attempts failed
+      this.lastError = lastLoginError instanceof Error ? 
+        lastLoginError : 
+        new Error("Failed to reconnect Discord bot after multiple attempts");
+      throw this.lastError;
+    } catch (error) {
+      this.isConnecting = false;
+      this.isConnected = false;
+      this.connectionError = error instanceof Error ? error.message : String(error);
+      console.error("Discord bot reconnection failed:", error);
+      throw error;
+    }
   }
 }
