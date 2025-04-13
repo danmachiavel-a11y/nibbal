@@ -1592,9 +1592,8 @@ Only one active ticket per service is allowed.`);
           console.log(`[PING CMD] Ticket check failed, returning error message`);
           
           // Get all other active tickets for this user to provide better guidance
-          const userId = user?.id;
-          if (userId) {
-            const activeTickets = await storage.getActiveTicketsByUserId(userId);
+          if (user && user.id) {
+            const activeTickets = await storage.getActiveTicketsByUserId(user.id);
             
             if (activeTickets.length > 0) {
               // User has other active tickets they can switch to
