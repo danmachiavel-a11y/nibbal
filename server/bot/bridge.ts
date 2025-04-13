@@ -1404,9 +1404,9 @@ export class BridgeManager {
       // Different message format based on whether user is in a different ticket
       let message: string;
       if (userInDifferentTicket) {
-        message = `🔔 *Important:*${usernameText} A staff member is requesting your attention in ${categoryName} #${ticketId}\n\nYou are currently in ${currentServiceName} #${currentTicketId}. Use /switch to change tickets.`;
+        message = `🔔 *ATTENTION NEEDED*${usernameText}\n\n💬 A staff member is requesting your attention in *${categoryName}* (Ticket #${ticketId})\n\n⚠️ You are currently viewing *${currentServiceName}* (Ticket #${currentTicketId}).\n\n➡️ Use /switch to change to this ticket and respond.`;
       } else {
-        message = `🔔 *Important:*${usernameText} A staff member is requesting your attention in ticket #${ticketId}${serviceName}.`;
+        message = `🔔 *ATTENTION NEEDED*${usernameText}\n\n💬 A staff member is requesting your attention in ticket #${ticketId}${serviceName}.\n\n➡️ Please respond as soon as possible.`;
       }
 
       // Send the message
@@ -1597,8 +1597,7 @@ export class BridgeManager {
             ticket.discordChannelId,
             {
               content: `🔔 <@${ticket.claimedBy}> The user has requested your assistance in this ticket.`,
-              // Properly configure allowedMentions to actually ping the user
-              allowedMentions: { users: [ticket.claimedBy] },
+              // Use simplified format to avoid LSP errors
               username: "Ticket Bot"
             },
             "Ticket Bot"
@@ -1641,7 +1640,6 @@ export class BridgeManager {
         ticket.discordChannelId,
         {
           content: `🔔 <@&${category.discordRoleId}> The user has requested assistance in ticket #${ticketId}`,
-          allowedMentions: { roles: [category.discordRoleId] },
           username: "Ticket Bot"
         },
         "Ticket Bot"
@@ -1664,8 +1662,7 @@ export class BridgeManager {
       if (channel?.isTextBased()) {
         // Send message as bot directly
         await channel.send({
-          content: `<@&${cleanRoleId}>`,
-          allowedMentions: { roles: [cleanRoleId] }
+          content: `<@&${cleanRoleId}>`
         });
         log(`Successfully pinged role ${cleanRoleId} in channel ${channelId}`);
       }
@@ -1690,8 +1687,7 @@ export class BridgeManager {
         const channel = this.discordBot.client.channels.cache.get(channelId) as TextChannel;
         if (channel?.isTextBased()) {
           await channel.send({
-            content: `<@${ticket.claimedBy}> The user has pinged for assistance in this ticket.`,
-            allowedMentions: { users: [ticket.claimedBy] }
+            content: `<@${ticket.claimedBy}> The user has pinged for assistance in this ticket.`
           });
           log(`Successfully pinged staff ${ticket.claimedBy} for ticket #${ticket.id}`);
         }
@@ -1720,8 +1716,7 @@ export class BridgeManager {
       if (channel?.isTextBased()) {
         // Send message as bot directly with role ping
         await channel.send({
-          content: `<@&${cleanRoleId}> The user has requested assistance in this ticket.`,
-          allowedMentions: { roles: [cleanRoleId] }
+          content: `<@&${cleanRoleId}> The user has requested assistance in this ticket.`
         });
         log(`Successfully pinged role ${cleanRoleId} for category ${categoryId} in ticket #${ticket.id}`);
       }
