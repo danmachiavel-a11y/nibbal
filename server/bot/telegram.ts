@@ -409,30 +409,48 @@ export class TelegramBot {
   }
 
   async setState(userId: number, state: UserState) {
-    // Clear existing timeout if any
-    if (this.stateCleanups.has(userId)) {
-      clearTimeout(this.stateCleanups.get(userId)!.timeout);
+    try {
+      // Clear existing timeout if any
+      if (this.stateCleanups.has(userId)) {
+        clearTimeout(this.stateCleanups.get(userId)!.timeout);
+      }
+      
+      // Update state with lastUpdated timestamp
+      state.lastUpdated = Date.now();
+      
+      // Set the state in memory
+      this.userStates.set(userId, state);
+      
+      // Set up a timeout to clear the state
+      const timeout = setTimeout(() => {
+        this.userStates.delete(userId);
+        this.stateCleanups.delete(userId);
+        this.activeUsers.delete(userId);
+        log(`Auto-cleared state for inactive user ${userId}`, "debug");
+      }, this.STATE_TIMEOUT);
+      
+      // Save the cleanup info
+      this.stateCleanups.set(userId, {
+        timeout,
+        createdAt: Date.now()
+      });
+      
+      // Persist state to database
+      // Find user by Telegram ID first
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (user) {
+        // Serialize state to JSON
+        const stateJson = JSON.stringify(state);
+        // Save to database
+        await storage.saveUserState(user.id, userId.toString(), stateJson);
+        log(`Persisted state to database for user ${userId}`, "debug");
+      } else {
+        log(`Could not persist state: user ${userId} not found in database`, "warning");
+      }
+    } catch (error) {
+      log(`Error in setState: ${error}`, "error");
+      // Still keep memory state updated even if DB persistence fails
     }
-    
-    // Update state with lastUpdated timestamp
-    state.lastUpdated = Date.now();
-    
-    // Set the state in memory
-    this.userStates.set(userId, state);
-    
-    // Set up a timeout to clear the state
-    const timeout = setTimeout(() => {
-      this.userStates.delete(userId);
-      this.stateCleanups.delete(userId);
-      this.activeUsers.delete(userId);
-      log(`Auto-cleared state for inactive user ${userId}`, "debug");
-    }, this.STATE_TIMEOUT);
-    
-    // Save the cleanup info
-    this.stateCleanups.set(userId, {
-      timeout,
-      createdAt: Date.now()
-    });
     
     // Persist to database for recovery after restart
     try {
