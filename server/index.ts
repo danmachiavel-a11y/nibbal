@@ -56,13 +56,13 @@ app.use((req, res, next) => {
     if (isProduction) {
       log("Setting longer timeouts for production environment", "info");
       // Increase default Node.js timeouts for production stability
-      import * as http from 'http';
-      import * as https from 'https';
+      const http = await import('http');
+      const https = await import('https');
       
-      http.globalAgent.keepAlive = true;
-      http.globalAgent.keepAliveMsecs = 60000; // 1 minute
-      https.globalAgent.keepAlive = true;
-      https.globalAgent.keepAliveMsecs = 60000; // 1 minute
+      http.default.globalAgent.keepAlive = true;
+      http.default.globalAgent.keepAliveMsecs = 60000; // 1 minute
+      https.default.globalAgent.keepAlive = true;
+      https.default.globalAgent.keepAliveMsecs = 60000; // 1 minute
     }
     
     // Verify essential environment variables
