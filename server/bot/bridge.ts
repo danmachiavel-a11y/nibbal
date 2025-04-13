@@ -67,7 +67,7 @@ export class BridgeManager {
   
   // Deployment-aware fields for robust initialization
   private isDisabled: boolean = false;
-  private disabledReason: string | null = null;
+  private disabledReason: string = '';
   private startTimestamp: number | null = null;
   private lastTelegramReconnectAttempt: number = 0;
   private lastDiscordReconnectAttempt: number = 0; 
@@ -465,7 +465,15 @@ export class BridgeManager {
   async start() {
     log("Starting bots...");
     try {
-      await Promise.allSettled([
+      // Reset the disabled state when attempting to start
+      this.isDisabled = false;
+      this.disabledReason = null;
+      
+      // Record start timestamp for uptime tracking
+      this.startTimestamp = Date.now();
+      
+      // Start both bots with Promise.allSettled to continue even if one fails
+      const results = await Promise.allSettled([
         this.startBotWithRetry(
           () => this.telegramBot.start(),
           "Telegram"
@@ -475,9 +483,29 @@ export class BridgeManager {
           "Discord"
         )
       ]);
+      
+      // Check for failures and log them
+      const failures = results.filter(result => result.status === 'rejected');
+      if (failures.length > 0) {
+        log(`${failures.length} bot(s) failed to start`, "warn");
+        
+        // Log each failure
+        failures.forEach((failure, index) => {
+          if (failure.status === 'rejected') {
+            log(`Bot startup failure ${index + 1}: ${failure.reason}`, "error");
+          }
+        });
+        
+        // If all bots failed, throw an error
+        if (failures.length === results.length) {
+          throw new Error("All bots failed to start");
+        }
+      }
+      
       log("Bots initialization completed");
     } catch (error) {
       handleBridgeError(error as BridgeError, "start");
+      throw error; // Re-throw to allow caller to handle
     }
   }
 
@@ -615,20 +643,93 @@ export class BridgeManager {
   async healthCheck(): Promise<{
     telegram: boolean;
     discord: boolean;
+    disabled?: boolean;
+    disabledReason?: string;
+    uptime?: number;
   }> {
     try {
-      // Add delay to prevent rate limiting
+      // Return early if bridge is disabled
+      if (this.isDisabled) {
+        return {
+          telegram: false,
+          discord: false,
+          disabled: true,
+          disabledReason: this.disabledReason || "Bridge is disabled"
+        };
+      }
+      
+      // Calculate uptime if available
+      let uptime = undefined;
+      if (this.startTimestamp) {
+        uptime = Math.floor((Date.now() - this.startTimestamp) / 1000);
+      }
+      
+      // Add slight delay to prevent rate limiting
       await new Promise(resolve => setTimeout(resolve, 1000));
+      
       return {
         telegram: this.telegramBot.getIsConnected(),
-        discord: this.discordBot.isReady()
+        discord: this.discordBot.isReady(),
+        uptime
       };
     } catch (error) {
       handleBridgeError(error as BridgeError, "healthCheck");
       return {
         telegram: false,
-        discord: false
+        discord: false,
+        disabled: this.isDisabled,
+        disabledReason: this.isDisabled ? this.disabledReason : "Health check error"
       };
+    }
+  }
+  
+  /**
+   * Mark this bridge as disabled with a reason
+   * This is used when the bridge fails to initialize after multiple attempts
+   * to ensure the API doesn't crash when bridge operations are attempted
+   */
+  markAsDisabled(reason: string): void {
+    this.isDisabled = true;
+    this.disabledReason = reason;
+    log(`Bridge has been marked as disabled: ${reason}`, "warn");
+  }
+  
+  /**
+   * Cleanup Telegram connections when we detect a 409 Conflict error
+   * This can happen during deployment when multiple instances are running
+   */
+  async cleanupTelegramConnections(): Promise<void> {
+    try {
+      log("Attempting to clean up Telegram connections...", "info");
+      
+      // Safely stop the Telegram bot if it exists
+      if (this.telegramBot) {
+        try {
+          await this.telegramBot.stop();
+          log("Telegram bot stopped successfully during cleanup", "info");
+        } catch (stopError) {
+          log(`Error stopping Telegram bot during cleanup: ${stopError}`, "error");
+        }
+      }
+      
+      // Force garbage collection if available (Node.js with --expose-gc flag)
+      if (global.gc) {
+        try {
+          global.gc();
+          log("Forced garbage collection to clean up stale connections", "info");
+        } catch (gcError) {
+          log(`Error during forced garbage collection: ${gcError}`, "error");
+        }
+      }
+      
+      // Add a delay to allow external connections to terminate
+      log("Waiting for external connections to terminate...", "info");
+      await new Promise(resolve => setTimeout(resolve, 10000)); // 10 second delay
+      
+      log("Telegram connection cleanup completed", "info");
+    } catch (error) {
+      log(`Error during Telegram connection cleanup: ${error}`, "error");
+      throw error;
     }
   }
 
