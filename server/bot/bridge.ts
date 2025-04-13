@@ -85,6 +85,8 @@ export class BridgeManager {
     log("Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
+    // Create RevoltBot instance but don't auto-start it
+    this.revoltBot = new RevoltBot({ bridge: this });
     this.startHealthCheck();
     this.startImageCacheCleanup();
   }

@@ -45,6 +45,11 @@ export class RevoltBot {
     return this.disconnectReason;
   }
   
+  // Helper method to check connection status
+  private isConnected(): boolean {
+    return !!this.client && !!this.client.user;
+  }
+  
   public async getReady() {
     if (this.ready) return;
     
@@ -138,11 +143,14 @@ export class RevoltBot {
     });
     
     // Handle disconnection
-    // Note: In revolt.js we use 'disconnect' event instead of 'dropped'
-    this.client.on('disconnect', () => {
-      log("Revolt bot disconnected", "warn");
-      this.handleDisconnect("WebSocket connection disconnected");
-    });
+    // Note: In revolt.js, disconnection is handled via ready flag
+    // We'll use a periodic check instead of an event
+    setInterval(() => {
+      if (this.client && this.ready && !this.isConnected()) {
+        log("Revolt bot disconnected", "warn");
+        this.handleDisconnect("WebSocket connection disconnected");
+      }
+    }, 15000); // Check every 15 seconds
     
     // Handle messages - use 'messageCreate' event
     this.client.on('messageCreate', async (message) => {
@@ -266,7 +274,7 @@ export class RevoltBot {
       const formattedContent = `*${senderName}*: ${content}`;
       
       // Send to Telegram
-      await this.bridge.sendMessageToTelegram(user.telegramId, formattedContent, ticket.id);
+      await this.bridge.sendMessageToTelegram(parseInt(user.telegramId), formattedContent);
       
       log(`Sent message from Revolt to Telegram for ticket #${ticket.id}`);
     } catch (error) {
@@ -327,8 +335,9 @@ export class RevoltBot {
     
     try {
       // Find the server
-      const servers = this.client.servers; 
-      if (servers.size === 0) {
+      const servers = this.client.servers;
+      // Check if there are any servers - using the correct property
+      if (!servers || Array.from(servers.values()).length <= 0) {
         log("No Revolt servers found for the bot", "error");
         return null;
       }
