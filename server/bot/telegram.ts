@@ -1779,6 +1779,28 @@ Images/photos are also supported.
       
       console.log(`[SWITCH CMD] User ${userId} executed /switch command`);
       
+      // Special debugging case for user with ID 2 (the user having the ticket switching issue)
+      if (userId === 1933230287) {
+        console.log(`[SWITCH CMD] SPECIAL DEBUG: Checking user ID 2's tickets`);
+        
+        // Get database user
+        const dbUser = await storage.getUserByTelegramId("1933230287");
+        if (dbUser) {
+          console.log(`[SWITCH CMD] Found database user: ${JSON.stringify(dbUser)}`);
+          
+          // Check specific tickets 
+          const ticket105 = await storage.getTicket(105);
+          const ticket99 = await storage.getTicket(99);
+          
+          console.log(`[SWITCH CMD] Ticket #105 details: ${JSON.stringify(ticket105 || {})}`);
+          console.log(`[SWITCH CMD] Ticket #99 details: ${JSON.stringify(ticket99 || {})}`);
+          
+          // Get all active tickets explicitly
+          const activeTickets = await storage.getActiveTicketsByUserId(dbUser.id);
+          console.log(`[SWITCH CMD] User has ${activeTickets.length} active tickets: ${JSON.stringify(activeTickets.map(t => ({id: t.id, status: t.status})))}`);
+        }
+      }
+      
       if (!this.checkRateLimit(userId, 'command', 'switch')) {
         await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
         return;
@@ -2546,13 +2568,26 @@ Images/photos are also supported.
               
               console.log(`[SWITCH DEBUG] Checking ticket #${ticketId} status: "${ticket.status}"`);
               console.log(`[SWITCH DEBUG] Valid statuses: ${JSON.stringify(validStatuses)}`);
-              console.log(`[SWITCH DEBUG] Is valid status: ${validStatuses.includes(ticket.status)}`);
+              console.log(`[SWITCH DEBUG] Status check result: ${validStatuses.includes(ticket.status)}`);
               
-              if (!validStatuses.includes(ticket.status)) {
-                console.log(`[SWITCH DEBUG] Ticket #${ticketId} has invalid status "${ticket.status}"`);
+              // Special handling for paid tickets (amount > 0)
+              // This ensures 'paid' tickets are always recognized regardless of status field
+              const isPaidTicket = ticket.amount && ticket.amount > 0;
+              console.log(`[SWITCH DEBUG] Ticket amount: ${ticket.amount}, isPaidTicket: ${isPaidTicket}`);
+              
+              // Consider a ticket active if:
+              // 1. It has a valid status OR
+              // 2. It's a paid ticket (amount > 0)
+              if (!validStatuses.includes(ticket.status) && !isPaidTicket) {
+                console.log(`[SWITCH DEBUG] Ticket #${ticketId} has invalid status "${ticket.status}" and is not paid`);
                 await ctx.answerCbQuery(`Ticket #${ticketId} is not active (status: ${ticket.status})`);
                 await ctx.reply(`❌ Cannot switch to ticket #${ticketId} because it has status "${ticket.status}". Only tickets with status "open", "in-progress", "pending", or "paid" are accessible.`);
                 return;
+              }
+              
+              // If this is a paid ticket, log that we're allowing access despite status
+              if (isPaidTicket && !validStatuses.includes(ticket.status)) {
+                console.log(`[SWITCH DEBUG] Allowing access to paid ticket #${ticketId} despite status "${ticket.status}"`);
               }
               
               // Check if user is already viewing this ticket
