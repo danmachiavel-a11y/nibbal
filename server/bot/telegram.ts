@@ -2865,9 +2865,26 @@ Images/photos are also supported.
             
             // Check if the ticket is active - support all valid active statuses
             const validStatuses = ["open", "in-progress", "pending", "paid"];
-            if (!validStatuses.includes(ticket.status)) {
+            
+            console.log(`[TEXT_SWITCH] Checking ticket #${ticketId} status: "${ticket.status}"`);
+            
+            // Special handling for paid tickets (amount > 0)
+            // This ensures 'paid' tickets are always recognized regardless of status field
+            const isPaidTicket = ticket.amount && ticket.amount > 0;
+            console.log(`[TEXT_SWITCH] Ticket amount: ${ticket.amount}, isPaidTicket: ${isPaidTicket}`);
+            
+            // Consider a ticket active if:
+            // 1. It has a valid status OR
+            // 2. It's a paid ticket (amount > 0)
+            if (!validStatuses.includes(ticket.status) && !isPaidTicket) {
+              console.log(`[TEXT_SWITCH] Ticket #${ticketId} has invalid status "${ticket.status}" and is not paid`);
               await ctx.reply(`❌ Cannot switch to ticket #${ticketId} because it has status "${ticket.status}". Only tickets with status "open", "in-progress", "pending", or "paid" are accessible.`);
               return;
+            }
+            
+            // If this is a paid ticket, log that we're allowing access despite status
+            if (isPaidTicket && !validStatuses.includes(ticket.status)) {
+              console.log(`[TEXT_SWITCH] Allowing access to paid ticket #${ticketId} despite status "${ticket.status}"`);
             }
             
             // Check if user is already viewing this ticket
@@ -2946,15 +2963,29 @@ Images/photos are also supported.
           // Define valid active statuses explicitly - this should match the statuses used in ticket switching
           const validStatuses = ["open", "in-progress", "pending", "paid"];
           
-          // Check if ticket exists and has a valid active status
-          if (ticket && validStatuses.includes(ticket.status)) {
-            console.log(`[MESSAGE HANDLER] Processing message for active ticket #${ticket.id} with status "${ticket.status}"`);
-            await this.handleTicketMessage(ctx, user, ticket);
-            return;
-          } else if (ticket) {
-            console.log(`[MESSAGE HANDLER] Ticket #${ticket.id} has inactive status "${ticket.status}", rejecting message`);
-            await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active. Use /start to create a new ticket or /switch to view your active tickets.`);
-            return;
+          if (ticket) {
+            console.log(`[MESSAGE HANDLER] Checking ticket #${ticket.id} status: "${ticket.status}"`);
+            
+            // Special handling for paid tickets (amount > 0)
+            // This ensures 'paid' tickets are always recognized regardless of status field
+            const isPaidTicket = ticket.amount && ticket.amount > 0;
+            console.log(`[MESSAGE HANDLER] Ticket amount: ${ticket.amount}, isPaidTicket: ${isPaidTicket}`);
+            
+            // Check if ticket exists and has a valid active status OR is a paid ticket
+            if (validStatuses.includes(ticket.status) || isPaidTicket) {
+              // If this is a paid ticket, log that we're allowing access despite status
+              if (isPaidTicket && !validStatuses.includes(ticket.status)) {
+                console.log(`[MESSAGE HANDLER] Allowing access to paid ticket #${ticket.id} despite status "${ticket.status}"`);
+              }
+              
+              console.log(`[MESSAGE HANDLER] Processing message for active ticket #${ticket.id} with status "${ticket.status}"`);
+              await this.handleTicketMessage(ctx, user, ticket);
+              return;
+            } else {
+              console.log(`[MESSAGE HANDLER] Ticket #${ticket.id} has inactive status "${ticket.status}" and is not paid, rejecting message`);
+              await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active. Use /start to create a new ticket or /switch to view your active tickets.`);
+              return;
+            }
           } else {
             console.log(`[MESSAGE HANDLER] Active ticket #${userState.activeTicketId} not found in database`);
           }
@@ -3050,10 +3081,26 @@ Images/photos are also supported.
         // Double-check the ticket status - define valid active statuses explicitly
         // This should match the statuses used in ticket switching
         const validStatuses = ["open", "in-progress", "pending", "paid"];
-        if (!validStatuses.includes(ticket.status)) {
-          console.log(`[PHOTO HANDLER] Ticket #${ticket.id} has invalid status "${ticket.status}" for photo handling`);
+        
+        console.log(`[PHOTO HANDLER] Checking ticket #${ticket.id} status: "${ticket.status}"`);
+        
+        // Special handling for paid tickets (amount > 0)
+        // This ensures 'paid' tickets are always recognized regardless of status field
+        const isPaidTicket = ticket.amount && ticket.amount > 0;
+        console.log(`[PHOTO HANDLER] Ticket amount: ${ticket.amount}, isPaidTicket: ${isPaidTicket}`);
+        
+        // Consider a ticket active if:
+        // 1. It has a valid status OR
+        // 2. It's a paid ticket (amount > 0)
+        if (!validStatuses.includes(ticket.status) && !isPaidTicket) {
+          console.log(`[PHOTO HANDLER] Ticket #${ticket.id} has invalid status "${ticket.status}" and is not paid`);
           await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active. Use /start to create a new ticket or /switch to view your active tickets.`);
           return;
+        }
+        
+        // If this is a paid ticket, log that we're allowing access despite status
+        if (isPaidTicket && !validStatuses.includes(ticket.status)) {
+          console.log(`[PHOTO HANDLER] Allowing access to paid ticket #${ticket.id} despite status "${ticket.status}"`);
         }
         
         console.log(`[PHOTO HANDLER] Processing photo for active ticket #${ticket.id} with status "${ticket.status}"`);
