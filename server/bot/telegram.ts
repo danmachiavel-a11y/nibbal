@@ -2903,11 +2903,25 @@ Images/photos are also supported.
         
         // If active ticket, handle that
         if (userState.activeTicketId) {
+          console.log(`[MESSAGE HANDLER] User ${userId} has active ticket ID ${userState.activeTicketId} in state`);
+          
           const ticket = await storage.getTicket(userState.activeTicketId);
-          // Allow handling messages for both pending and paid tickets
-          if (ticket && ticket.status !== 'closed' && ticket.status !== 'deleted' && ticket.status !== 'transcript') {
+          console.log(`[MESSAGE HANDLER] Retrieved ticket details: ${JSON.stringify(ticket || {})}`);
+          
+          // Define valid active statuses explicitly - this should match the statuses used in ticket switching
+          const validStatuses = ["open", "in-progress", "pending", "paid"];
+          
+          // Check if ticket exists and has a valid active status
+          if (ticket && validStatuses.includes(ticket.status)) {
+            console.log(`[MESSAGE HANDLER] Processing message for active ticket #${ticket.id} with status "${ticket.status}"`);
             await this.handleTicketMessage(ctx, user, ticket);
             return;
+          } else if (ticket) {
+            console.log(`[MESSAGE HANDLER] Ticket #${ticket.id} has inactive status "${ticket.status}", rejecting message`);
+            await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active. Use /start to create a new ticket or /switch to view your active tickets.`);
+            return;
+          } else {
+            console.log(`[MESSAGE HANDLER] Active ticket #${userState.activeTicketId} not found in database`);
           }
         }
       } catch (error) {
@@ -2993,9 +3007,22 @@ Images/photos are also supported.
         // Get the specific ticket
         const ticket = activeTickets.find(t => t.id === activeTicketId);
         if (!ticket) {
+          console.log(`[PHOTO HANDLER] Selected ticket #${activeTicketId} not found in active tickets list`);
           await ctx.reply("❌ The selected ticket is no longer active. Use /start to create a new one or /switch to select another.");
           return;
         }
+        
+        // Double-check the ticket status - define valid active statuses explicitly
+        // This should match the statuses used in ticket switching
+        const validStatuses = ["open", "in-progress", "pending", "paid"];
+        if (!validStatuses.includes(ticket.status)) {
+          console.log(`[PHOTO HANDLER] Ticket #${ticket.id} has invalid status "${ticket.status}" for photo handling`);
+          await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active. Use /start to create a new ticket or /switch to view your active tickets.`);
+          return;
+        }
+        
+        console.log(`[PHOTO HANDLER] Processing photo for active ticket #${ticket.id} with status "${ticket.status}"`);
+        
         
         // Get largest photo
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
