@@ -1396,15 +1396,17 @@ export class BridgeManager {
         console.log(`[PING] No state found for user`);
       }
       
-      // Format username if available
+      // Always format username if available, making sure to include @ mention
+      // This ensures the user gets a notification in Telegram
       const usernamePrefix = user.telegramUsername ? `@${user.telegramUsername} ` : '';
+      const usernameText = user.telegramUsername ? ` (${usernamePrefix})` : '';
       
       // Different message format based on whether user is in a different ticket
       let message: string;
       if (userInDifferentTicket) {
-        message = `🔔 *Important:* ${usernamePrefix}A staff member is requesting your attention in ${categoryName} #${ticketId}\n\nYou are currently in ${currentServiceName} #${currentTicketId}. Use /switch to change tickets.`;
+        message = `🔔 *Important:*${usernameText} A staff member is requesting your attention in ${categoryName} #${ticketId}\n\nYou are currently in ${currentServiceName} #${currentTicketId}. Use /switch to change tickets.`;
       } else {
-        message = `🔔 *Important:* ${usernamePrefix}A staff member is requesting your attention in ticket #${ticketId}${serviceName}.`;
+        message = `🔔 *Important:*${usernameText} A staff member is requesting your attention in ticket #${ticketId}${serviceName}.`;
       }
 
       // Send the message
