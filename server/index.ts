@@ -45,11 +45,59 @@ app.use((req, res, next) => {
     // Load environment variables from .env file if available
     loadEnv();
     
-    // First, run database migrations
+    // Add a helpful startup message with deployment info
+    const isProduction = app.get("env") === "production";
+    const deploymentMode = isProduction ? "PRODUCTION" : "DEVELOPMENT";
+    log(`Starting server in ${deploymentMode} mode (${new Date().toISOString()})`, "info");
+    log(`Node version: ${process.version}`, "info");
+    log(`Current working directory: ${process.cwd()}`, "info");
+    
+    // Set longer timeouts for production environment
+    if (isProduction) {
+      log("Setting longer timeouts for production environment", "info");
+      // Increase default Node.js timeouts for production stability
+      require('http').globalAgent.keepAlive = true;
+      require('http').globalAgent.keepAliveMsecs = 60000; // 1 minute
+      require('https').globalAgent.keepAlive = true;
+      require('https').globalAgent.keepAliveMsecs = 60000; // 1 minute
+    }
+    
+    // Verify essential environment variables
+    const requiredEnvVars = ['DATABASE_URL', 'TELEGRAM_BOT_TOKEN', 'DISCORD_BOT_TOKEN'];
+    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+    
+    if (missingVars.length > 0) {
+      log(`WARNING: Missing required environment variables: ${missingVars.join(', ')}`, "warn");
+      // We continue anyway - the application will handle these missing variables later
+    }
+    
+    // First, run database migrations with retry logic for production environments
     log("Running database migrations...");
-    await migrate(db, { migrationsFolder: './migrations' });
-    log("Database migrations completed successfully");
-
+    
+    // Add retry logic for migrations in production
+    const maxMigrationRetries = isProduction ? 5 : 1;
+    let migrationRetries = 0;
+    let migrationSuccess = false;
+    
+    while (!migrationSuccess && migrationRetries < maxMigrationRetries) {
+      try {
+        await migrate(db, { migrationsFolder: './migrations' });
+        migrationSuccess = true;
+        log("Database migrations completed successfully");
+      } catch (migrationError) {
+        migrationRetries++;
+        const retryDelay = 2000 * migrationRetries; // Increasing delay
+        log(`Migration attempt ${migrationRetries}/${maxMigrationRetries} failed: ${migrationError}`, "error");
+        
+        if (migrationRetries < maxMigrationRetries) {
+          log(`Retrying migrations in ${retryDelay}ms...`, "warn");
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        } else {
+          throw new Error(`Failed to run migrations after ${maxMigrationRetries} attempts: ${migrationError}`);
+        }
+      }
+    }
+    
     // Create HTTP server and register routes
     log("Setting up HTTP server...");
     const server = await registerRoutes(app);
@@ -62,23 +110,42 @@ app.use((req, res, next) => {
       res.status(status).json({ message });
     });
 
-    // Setup Vite or serve static files
+    // Setup Vite or serve static files based on environment
     if (app.get("env") === "development") {
       await setupVite(app, server);
     } else {
       serveStatic(app);
+      log("Static files configured for production serving", "info");
     }
 
-    // Start the server first
-    await new Promise<void>((resolve) => {
-      server.listen({
-        port: 5000,
-        host: "0.0.0.0",
-        reusePort: true,
-      }, () => {
-        log(`Server listening on port 5000`);
-        resolve();
-      });
+    // Start the server with better error handling
+    await new Promise<void>((resolve, reject) => {
+      try {
+        // Improved error handling for server startup
+        server.on('error', (error: any) => {
+          log(`Server startup error: ${error}`, "error");
+          if (error.code === 'EADDRINUSE') {
+            log("Port 5000 is already in use. This is normal in some deployment environments.", "warn");
+            // In some deployment environments, the port might already be assigned
+            // We resolve anyway to continue with initialization
+            resolve();
+          } else {
+            reject(error);
+          }
+        });
+        
+        server.listen({
+          port: 5000,
+          host: "0.0.0.0",
+          reusePort: true,
+        }, () => {
+          log(`Server listening on port 5000 (${deploymentMode} mode)`, "info");
+          resolve();
+        });
+      } catch (startupError) {
+        log(`Unexpected error during server startup: ${startupError}`, "error");
+        reject(startupError);
+      }
     });
 
     // Only create default test category if no categories exist

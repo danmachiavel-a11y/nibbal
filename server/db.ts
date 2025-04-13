@@ -7,10 +7,16 @@ import { log } from "./vite";
 // Configure Neon to use WebSockets
 neonConfig.webSocketConstructor = ws;
 
-// Retry configuration
-const DB_MAX_RETRIES = 5;
-const DB_INITIAL_RETRY_DELAY_MS = 250; // Start with 250ms
-const DB_MAX_RETRY_DELAY_MS = 10000; // Max 10s between retries
+// Determine if we're in production deployment
+const isProduction = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'prod';
+
+// Retry configuration - more aggressive for production
+const DB_MAX_RETRIES = isProduction ? 10 : 5;
+const DB_INITIAL_RETRY_DELAY_MS = isProduction ? 500 : 250; // Start with 500ms in production
+const DB_MAX_RETRY_DELAY_MS = isProduction ? 30000 : 10000; // Max 30s between retries in production
+
+// Log deployment mode
+log(`Database retry configuration: mode=${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}, maxRetries=${DB_MAX_RETRIES}, maxDelay=${DB_MAX_RETRY_DELAY_MS}ms`, "info");
 
 // Configure secure connection (if supported by Neon version)
 try {
@@ -27,14 +33,20 @@ if (!process.env.DATABASE_URL) {
 }
 
 // Create connection pool with better error handling and performance settings
+// Use more aggressive settings for production environments
 export const pool = new Pool({ 
   connectionString: process.env.DATABASE_URL,
-  max: 15, // Maximum number of clients in the pool (increased for better throughput)
-  idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
-  connectionTimeoutMillis: 15000, // How long to wait before timing out when connecting a new client
-  maxUses: 10000, // Maximum number of times a client can be used before being recycled
-  keepAlive: true, // Use TCP keepalive to detect dead connections
-  keepAliveInitialDelayMillis: 30000 // Initial delay before sending keepalive probes
+  max: isProduction ? 20 : 15, // Larger pool in production
+  idleTimeoutMillis: isProduction ? 60000 : 30000, // Keep idle connections longer in production
+  connectionTimeoutMillis: isProduction ? 30000 : 15000, // Longer timeouts for production
+  maxUses: isProduction ? 20000 : 10000, // More reuse in production before recycling
+  keepAlive: true, // Always use TCP keepalive to detect dead connections
+  keepAliveInitialDelayMillis: isProduction ? 20000 : 30000, // Send keepalive probes sooner in production
+  // Additional configuration for production
+  allowExitOnIdle: !isProduction, // In production, don't exit when idle
+  ssl: { 
+    rejectUnauthorized: false // Allow self-signed certs in some environments
+  },
 });
 
 // Track database health
