@@ -1536,21 +1536,32 @@ Only one active ticket per service is allowed.`);
       }
       
       try {
-        log(`Received ping command from user ${ctx.from.id}`);
+        console.log(`[PING CMD] Received ping command from user ${ctx.from.id}`);
         
         // Get user and check active ticket
         const user = await storage.getUserByTelegramId(ctx.from.id.toString());
+        console.log(`[PING CMD] User lookup result: ${JSON.stringify(user || {})}`);
+        
         if (!user) {
           await ctx.reply("❌ You need to use /start first to create a user account.");
           return;
         }
         
-        // Check if user has an active ticket
+        // Check if user has an active ticket in memory
         const userState = this.userStates.get(ctx.from.id);
+        console.log(`[PING CMD] Current user state: ${JSON.stringify(userState || {})}`);
+        
+        // Debug - check all active tickets for this user
+        const allActiveTickets = await storage.getActiveTicketsByUserId(user.id);
+        console.log(`[PING CMD] All active tickets: ${JSON.stringify(allActiveTickets.map(t => ({id: t.id, status: t.status, amount: t.amount})))}`);
         
         if (!userState?.activeTicketId) {
+          console.log(`[PING CMD] No active ticket ID in user state`);
+          
           // Check if we can find their active ticket in the database
           const activeTicket = await storage.getActiveTicketByUserId(user.id);
+          console.log(`[PING CMD] Active ticket from database: ${JSON.stringify(activeTicket || {})}`);
+          
           if (!activeTicket) {
             await ctx.reply("❌ You don't have an active ticket. Use /start to create one first.");
             return;
@@ -1564,13 +1575,21 @@ Only one active ticket per service is allowed.`);
         
         // Get the ticket
         const ticket = await storage.getTicket(userState.activeTicketId);
+        console.log(`[PING CMD] Ticket from user state activeTicketId: ${JSON.stringify(ticket || {})}`);
         
         // Check if ticket exists and is in an active state (pending, open, in-progress)
         // Also allow paid tickets (even if closed) to be pinged
         const validStatuses = ['pending', 'open', 'in-progress'];
         const isPaidTicket = ticket?.amount && ticket.amount > 0;
         
+        console.log(`[PING CMD] Valid statuses: ${JSON.stringify(validStatuses)}`);
+        console.log(`[PING CMD] Current ticket status: ${ticket?.status}`);
+        console.log(`[PING CMD] Is status valid: ${ticket && validStatuses.includes(ticket.status)}`);
+        console.log(`[PING CMD] Is paid ticket: ${isPaidTicket}`);
+        console.log(`[PING CMD] Status check result: ${ticket && (validStatuses.includes(ticket.status) || isPaidTicket)}`);
+        
         if (!ticket || (!validStatuses.includes(ticket.status) && !isPaidTicket)) {
+          console.log(`[PING CMD] Ticket check failed, returning error message`);
           await ctx.reply("❌ Your active ticket was not found or is closed. Use /start to create a new one.");
           return;
         }
