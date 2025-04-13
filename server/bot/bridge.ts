@@ -928,14 +928,17 @@ export class BridgeManager {
       // This prevents <@1234567890> format mentions from being forwarded
       let cleanedContent = content;
       
-      // Replace Discord user mentions (<@1234567890>)
-      cleanedContent = cleanedContent.replace(/<@!?(\d+)>/g, "@discord_user");
+      // Remove Discord user mentions (<@1234567890>) completely
+      cleanedContent = cleanedContent.replace(/<@!?(\d+)>/g, "");
       
-      // Replace Discord role mentions (<@&1234567890>)
-      cleanedContent = cleanedContent.replace(/<@&(\d+)>/g, "@role");
+      // Remove Discord role mentions (<@&1234567890>) completely
+      cleanedContent = cleanedContent.replace(/<@&(\d+)>/g, "");
       
-      // Replace Discord channel mentions (<#1234567890>)
-      cleanedContent = cleanedContent.replace(/<#(\d+)>/g, "#channel");
+      // Remove Discord channel mentions (<#1234567890>) completely  
+      cleanedContent = cleanedContent.replace(/<#(\d+)>/g, "");
+      
+      // Trim any extra whitespace that might be left after removing mentions
+      cleanedContent = cleanedContent.replace(/\s+/g, " ").trim();
       
       console.log(`[FORWARD_TO_TG] Original content: "${content}"`);
       console.log(`[FORWARD_TO_TG] Cleaned content: "${cleanedContent}"`);
@@ -1086,11 +1089,12 @@ export class BridgeManager {
 
         // Send text if any
         if (textContent) {
-          // Clean Discord mentions from the content
+          // Clean Discord mentions from the content - remove completely
           let cleanedTextContent = textContent
-            .replace(/<@!?(\d+)>/g, "@discord_user")
-            .replace(/<@&(\d+)>/g, "@role")
-            .replace(/<#(\d+)>/g, "#channel");
+            .replace(/<@!?(\d+)>/g, "")
+            .replace(/<@&(\d+)>/g, "")
+            .replace(/<#(\d+)>/g, "")
+            .replace(/\s+/g, " ").trim();
           
           await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${cleanedTextContent}`);
         }
@@ -1133,11 +1137,12 @@ export class BridgeManager {
           timestamp: new Date(),
           senderName: username
         });
-        // Clean Discord mentions in the content
+        // Clean Discord mentions in the content - remove completely
         let cleanedContent = content
-          .replace(/<@!?(\d+)>/g, "@discord_user")
-          .replace(/<@&(\d+)>/g, "@role")
-          .replace(/<#(\d+)>/g, "#channel");
+          .replace(/<@!?(\d+)>/g, "")
+          .replace(/<@&(\d+)>/g, "")
+          .replace(/<#(\d+)>/g, "")
+          .replace(/\s+/g, " ").trim();
           
         await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${cleanedContent}`);
       }
@@ -1581,21 +1586,24 @@ export class BridgeManager {
       
       // Check if the ticket is claimed by a staff member
       if (ticket.claimedBy) {
-        // Send notification to the staff member who claimed the ticket
+        // Send notification to the staff member who claimed the ticket with proper mention
         try {
+          console.log(`[PING] Pinging staff member ${ticket.claimedBy} for ticket #${ticketId}`);
+          
+          // Create a message that will properly ping the staff member
           await this.discordBot.sendMessage(
             ticket.discordChannelId,
             {
               content: `🔔 <@${ticket.claimedBy}> The user has requested your assistance in this ticket.`,
-              // Fix the allowedMentions property type to match Discord.js expectations
-              allowedMentions: { roles: [] } as { roles: string[] },
+              // Properly configure allowedMentions to actually ping the user
+              allowedMentions: { users: [ticket.claimedBy] },
               username: "Ticket Bot"
             },
             "Ticket Bot"
           );
         } catch (error) {
           log(`Error sending ping to staff member: ${error}`, "error");
-          // Fallback with a simpler message that should work even if there's a property issue
+          // Fallback with a simpler message
           await this.discordBot.sendMessage(
             ticket.discordChannelId,
             {
@@ -1681,7 +1689,7 @@ export class BridgeManager {
         if (channel?.isTextBased()) {
           await channel.send({
             content: `<@${ticket.claimedBy}> The user has pinged for assistance in this ticket.`,
-            allowedMentions: { users: [] } as { users: string[] }
+            allowedMentions: { users: [ticket.claimedBy] }
           });
           log(`Successfully pinged staff ${ticket.claimedBy} for ticket #${ticket.id}`);
         }
