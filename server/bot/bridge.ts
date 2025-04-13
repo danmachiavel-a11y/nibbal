@@ -2,6 +2,7 @@ import { storage } from "../storage";
 // Import the unified Telegram bot implementation
 import { TelegramBot } from "./telegram";
 import { DiscordBot } from "./discord";
+import { RevoltBot } from "./revolt";
 import type { Ticket, Message } from "@shared/schema";
 import { log } from "../vite";
 import fetch, { RequestInit } from 'node-fetch';
@@ -49,6 +50,7 @@ interface ImageCacheEntry {
 export class BridgeManager {
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
+  private revoltBot: RevoltBot | null = null;
   private retryAttempts: number = 0;
   private maxRetries: number = 3;
   private retryTimeout: number = 5000;
