@@ -2251,7 +2251,24 @@ Images/photos are also supported.
         }
         
         // Get the active ticket ID from user's memory state
-        const currentTicketId = userMemoryState?.activeTicketId;
+        let currentTicketId = userMemoryState?.activeTicketId;
+        
+        console.log(`Memory state activeTicketId: ${currentTicketId}`);
+        console.log(`User has ${activeTickets.length} active tickets`);
+        
+        // If there's only one active ticket and no selected ticket in memory, 
+        // automatically select that ticket for closing
+        if (activeTickets.length === 1 && !currentTicketId) {
+          currentTicketId = activeTickets[0].id;
+          console.log(`Automatically selected the only active ticket: ${currentTicketId}`);
+          
+          // Update user state for future use
+          if (userMemoryState) {
+            userMemoryState.activeTicketId = currentTicketId;
+            await this.setState(userId, userMemoryState);
+            console.log(`Updated user state with active ticket ID: ${currentTicketId}`);
+          }
+        }
         
         // If user has multiple active tickets and none is selected in state, ask them which one to close
         if (activeTickets.length > 1 && !currentTicketId) {
@@ -2367,6 +2384,7 @@ Images/photos are also supported.
         
         // Check if user has other active tickets after closing this one
         const remainingActiveTickets = await storage.getActiveTicketsByUserId(user.id);
+        console.log(`After closing ticket #${ticketToClose.id}, found ${remainingActiveTickets.length} remaining active tickets for user ${user.id}`);
         
         if (remainingActiveTickets.length > 0) {
           // Sort tickets by ID in descending order to get the most recent one first
@@ -2376,6 +2394,12 @@ Images/photos are also supported.
           // User has other active tickets, automatically switch to the most recent one
           const mostRecentTicket = remainingActiveTickets[0];
           console.log(`User has ${remainingActiveTickets.length} active tickets remaining, switching to most recent ticket #${mostRecentTicket.id}`);
+          
+          // Log the current user memory state for debugging
+          console.log(`User memory state before switching: ${JSON.stringify(userMemoryState || {})}`);
+          console.log(`Most recent ticket: ${JSON.stringify(mostRecentTicket)}`);
+          const existingTickets = await storage.getTicketsByUserId(user.id);
+          console.log(`All user tickets: ${existingTickets.length}, Active tickets: ${remainingActiveTickets.length}`);
           
           // Get category for the most recent active ticket to display name
           let categoryName = "Unknown service";

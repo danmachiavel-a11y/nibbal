@@ -68,7 +68,7 @@ export class BridgeManager {
   // Deployment-aware fields for robust initialization
   private isDisabled: boolean = false;
   private disabledReason: string = '';
-  private startTimestamp: number | null = null;
+  private startTimestamp: number | undefined = undefined;
   private lastTelegramReconnectAttempt: number = 0;
   private lastDiscordReconnectAttempt: number = 0; 
   private readonly MIN_RECONNECT_INTERVAL = 15000; // 15 seconds between reconnection attempts
@@ -467,7 +467,7 @@ export class BridgeManager {
     try {
       // Reset the disabled state when attempting to start
       this.isDisabled = false;
-      this.disabledReason = null;
+      this.disabledReason = "";
       
       // Record start timestamp for uptime tracking
       this.startTimestamp = Date.now();

@@ -10,8 +10,36 @@ import Transcripts from "@/pages/transcripts";
 import BannedUsers from "@/pages/banned-users";
 import NotFound from "@/pages/not-found";
 import { Navbar } from "@/components/Navbar";
+import { useEffect, useState } from "react";
 
 function Router() {
+  // Theme handling (moved here for better SSR compatibility)
+  const [mounted, setMounted] = useState(false);
+
+  // This effect runs once after component mounts to avoid hydration mismatch
+  useEffect(() => {
+    // Check if theme is stored in localStorage
+    const storedTheme = localStorage.getItem("theme") as "light" | "dark" | null;
+    
+    if (storedTheme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else if (storedTheme === "light") {
+      document.documentElement.classList.remove("dark");
+    } else {
+      // Check system preference
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (prefersDark) {
+        document.documentElement.classList.add("dark");
+      }
+    }
+    setMounted(true);
+  }, []);
+
+  // To avoid flash of incorrect theme, only render after mounted
+  if (!mounted) {
+    return <div className="min-h-screen bg-background"></div>;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
