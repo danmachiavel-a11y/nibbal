@@ -305,6 +305,8 @@ function SettingsPage() {
     defaultValues: {
       telegramToken: "",
       discordToken: "",
+      revoltToken: "",
+      activeProvider: "discord",
       welcomeMessage: "",
       welcomeImageUrl: "",
       adminTelegramIds: [],
@@ -325,6 +327,8 @@ function SettingsPage() {
         // Set form values with the loaded configuration
         botConfigForm.setValue("telegramToken", config.telegramToken || "");
         botConfigForm.setValue("discordToken", config.discordToken || "");
+        botConfigForm.setValue("revoltToken", config.revoltToken || "");
+        botConfigForm.setValue("activeProvider", config.activeProvider || "discord");
         botConfigForm.setValue("welcomeMessage", config.welcomeMessage || "");
         botConfigForm.setValue("welcomeImageUrl", config.welcomeImageUrl || "");
         botConfigForm.setValue("adminTelegramIds", config.adminTelegramIds || []);
