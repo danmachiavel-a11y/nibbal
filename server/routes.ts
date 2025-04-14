@@ -310,21 +310,13 @@ export async function registerRoutes(app: Express) {
         if (bridge) {
           log("Restarting bots with new configuration...");
           
-          // If activeProvider was changed, we need to stop the old provider first
+          // If activeProvider was changed, we need to switch platforms
           if (result.data.activeProvider) {
             log(`Switching active provider to ${result.data.activeProvider}`);
             
-            // Stop both secondary platforms and restart the correct one
+            // Use the public switchPlatform method to handle the platform change
             try {
-              if (result.data.activeProvider === "discord") {
-                // Restart with Discord as active provider
-                await bridge.stopRevoltBot();
-                setTimeout(() => bridge?.startDiscordBot(), 1000);
-              } else {
-                // Restart with Revolt as active provider
-                await bridge.stopDiscordBot();
-                setTimeout(() => bridge?.startRevoltBot(), 1000);
-              }
+              await bridge.switchPlatform(result.data.activeProvider);
             } catch (err) {
               log(`Error during platform switch: ${err}`, "error");
             }

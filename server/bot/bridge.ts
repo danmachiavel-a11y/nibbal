@@ -787,6 +787,43 @@ export class BridgeManager {
       throw error;
     }
   }
+  
+  // Restart only the Revolt bot
+  async restartRevoltBot() {
+    log("Restarting Revolt bot with new configuration...");
+    try {
+      // Get the config to check if token is available
+      const config = await storage.getBotConfig();
+      if (!config?.revoltToken) {
+        throw new BridgeError("Cannot restart RevoltBot: no token configured", { context: "restartRevoltBot" });
+      }
+      
+      // Gracefully stop the Revolt bot if it exists
+      if (this.revoltBot) {
+        try {
+          await this.revoltBot.stop();
+        } catch (stopError) {
+          log(`Error stopping existing Revolt bot: ${stopError}`, "warn");
+          // Continue anyway to recreate the bot
+        }
+      }
+      
+      // Add a small delay before creating a new instance
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Create a new instance with the latest token
+      const adminIds = config.adminRevoltIds || [];
+      this.revoltBot = new RevoltBot(config.revoltToken, adminIds);
+      
+      // Start the bot
+      await this.revoltBot.reconnect();
+      
+      log("Revolt bot restarted successfully");
+    } catch (error) {
+      handleBridgeError(error as BridgeError, "restartRevoltBot");
+      throw error;
+    }
+  }
 
   async restart() {
     log("Restarting all bots with new configuration...");
@@ -796,12 +833,44 @@ export class BridgeManager {
         clearInterval(this.healthCheckInterval);
         this.healthCheckInterval = null;
       }
+      
+      // Get the active provider configuration
+      const config = await storage.getBotConfig();
+      const activeProvider = config?.activeProvider || 'discord';
+      
+      // Set up stop promises
+      const stopPromises = [
+        this.telegramBot.stop()
+      ];
+      
+      // Add the active secondary platform bot
+      if (activeProvider === 'discord') {
+        stopPromises.push(this.discordBot.stop());
+        
+        // Also stop Revolt bot if it exists to ensure clean restart
+        if (this.revoltBot) {
+          try {
+            stopPromises.push(this.revoltBot.stop());
+          } catch (stopError) {
+            log(`Error stopping Revolt bot during restart: ${stopError}`, "warn");
+          }
+        }
+      } else {
+        // Stop Discord bot
+        stopPromises.push(this.discordBot.stop());
+        
+        // Stop Revolt bot if it exists
+        if (this.revoltBot) {
+          try {
+            stopPromises.push(this.revoltBot.stop());
+          } catch (stopError) {
+            log(`Error stopping Revolt bot during restart: ${stopError}`, "warn");
+          }
+        }
+      }
 
-      // Stop both bots with graceful shutdown
-      await Promise.allSettled([
-        this.telegramBot.stop(),
-        this.discordBot.stop()
-      ]);
+      // Stop all active bots with graceful shutdown
+      await Promise.allSettled(stopPromises);
 
       // Add longer delay before creating new instances
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -809,8 +878,14 @@ export class BridgeManager {
       // Create new instances with updated tokens
       this.telegramBot = new TelegramBot(this);
       this.discordBot = new DiscordBot(this);
+      
+      // Initialize RevoltBot if needed
+      if (activeProvider === 'revolt' && config?.revoltToken) {
+        const adminIds = config.adminRevoltIds || [];
+        this.revoltBot = new RevoltBot(config.revoltToken, adminIds);
+      }
 
-      // Start both bots with retry mechanism
+      // Start bots with retry mechanism (this will detect which platform should be active)
       await this.start();
 
       // Restart health check
