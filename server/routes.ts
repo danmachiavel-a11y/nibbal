@@ -753,11 +753,12 @@ export async function registerRoutes(app: Express) {
         });
       }
       
-      const revoltBot = bridge.getRevoltBot();
+      // Try to get the RevoltBot, with auto-initialization if needed
+      const revoltBot = bridge.getRevoltBot(true);
       if (!revoltBot) {
-        return res.status(503).json({ 
-          message: "Revolt bot not initialized. The bot could not be started.",
-          error: "REVOLT_BOT_UNAVAILABLE"
+        return res.status(202).json({ 
+          message: "Revolt bot is being initialized. Please try again in a moment.",
+          error: "REVOLT_BOT_INITIALIZING"
         });
       }
 
@@ -1740,6 +1741,127 @@ export async function registerRoutes(app: Express) {
     } catch (error: any) {
       log(`Error unbanning user: ${error}`, "error");
       res.status(500).json({ message: "Failed to unban user" });
+    }
+  });
+
+  // Platform Management Routes
+  app.post("/api/switch-platform", async (req, res) => {
+    try {
+      if (!bridge) {
+        return res.status(503).json({ 
+          success: false,
+          message: "Bot bridge not initialized",
+          error: "BOT_BRIDGE_UNAVAILABLE" 
+        });
+      }
+      
+      const schema = z.object({
+        platform: z.enum(['discord', 'revolt'])
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Invalid request body", 
+          errors: result.error.errors 
+        });
+      }
+
+      const { platform } = result.data;
+      
+      // Check if we have the right token for the platform
+      const config = await storage.getBotConfig();
+      if (platform === 'discord' && (!config?.discordToken || config.discordToken.length < 10)) {
+        return res.status(400).json({
+          success: false,
+          message: "Discord token is missing or invalid",
+          error: "INVALID_DISCORD_TOKEN"
+        });
+      }
+      
+      if (platform === 'revolt' && (!config?.revoltToken || config.revoltToken.length < 10)) {
+        return res.status(400).json({
+          success: false,
+          message: "Revolt token is missing or invalid",
+          error: "INVALID_REVOLT_TOKEN"
+        });
+      }
+      
+      log(`Attempting to switch platform to: ${platform}`);
+      const switchResult = await bridge.switchPlatform(platform);
+      
+      if (switchResult) {
+        res.json({ 
+          success: true, 
+          message: `Successfully switched to ${platform} platform`,
+          activeProvider: platform
+        });
+      } else {
+        res.status(500).json({ 
+          success: false, 
+          error: `Failed to switch to ${platform} platform` 
+        });
+      }
+    } catch (error: any) {
+      log(`Error switching platform: ${error}`, "error");
+      res.status(500).json({ 
+        success: false,
+        message: "Failed to switch platform", 
+        error: error.message || String(error)
+      });
+    }
+  });
+
+  // Get the active platform configuration
+  app.get("/api/active-platform", async (req, res) => {
+    try {
+      const config = await storage.getBotConfig();
+      const activeProvider = config?.activeProvider || 'discord';
+      
+      // Get platform status information
+      let discordStatus = { connected: false, error: null };
+      let revoltStatus = { connected: false, error: null };
+      
+      if (bridge) {
+        // Check Discord status
+        const discordBot = bridge.getDiscordBot();
+        if (discordBot) {
+          discordStatus.connected = discordBot.isReady();
+          if (!discordStatus.connected) {
+            discordStatus.error = discordBot.getLastError() || null;
+          }
+        }
+        
+        // Check Revolt status
+        const revoltBot = bridge.getRevoltBot();
+        if (revoltBot) {
+          revoltStatus.connected = revoltBot.isReady();
+          if (!revoltStatus.connected) {
+            revoltStatus.error = revoltBot.getDisconnectReason() || null;
+          }
+        }
+      }
+      
+      res.json({
+        activeProvider,
+        platforms: {
+          discord: {
+            available: !!(config?.discordToken),
+            ...discordStatus
+          },
+          revolt: {
+            available: !!(config?.revoltToken),
+            ...revoltStatus
+          }
+        }
+      });
+    } catch (error: any) {
+      log(`Error fetching active platform: ${error}`, "error");
+      res.status(500).json({ 
+        message: "Failed to fetch active platform", 
+        error: error.message || String(error)
+      });
     }
   });
 

@@ -2119,7 +2119,26 @@ export class BridgeManager {
     return this.discordBot;
   }
   
-  getRevoltBot(): RevoltBot | null {
+  /**
+   * Gets the RevoltBot instance, initializing it if necessary
+   * This is used by the API to get information about the Revolt integration
+   * If the RevoltBot is not initialized and autoInit is true, it will be initialized
+   * @param autoInit Whether to auto-initialize the RevoltBot if it's not already initialized
+   * @returns The RevoltBot instance, or null if it's not initialized and autoInit is false
+   */
+  getRevoltBot(autoInit: boolean = false): RevoltBot | null {
+    if (!this.revoltBot && autoInit) {
+      log("Auto-initializing RevoltBot");
+      
+      // Initialize the RevoltBot asynchronously
+      this.startRevoltBot().catch(err => {
+        log(`Error auto-initializing RevoltBot: ${err}`, "error");
+      });
+      
+      // We still return null on the first call as the initialization is asynchronous
+      return null;
+    }
+    
     return this.revoltBot;
   }
 }
