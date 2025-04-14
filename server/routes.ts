@@ -486,6 +486,107 @@ export async function registerRoutes(app: Express) {
     }
   });
   
+  // Platform switching API
+  app.post("/api/bot/platform/switch", async (req, res) => {
+    try {
+      const { platform } = req.body;
+      
+      // Validate platform parameter
+      if (platform !== 'discord' && platform !== 'revolt') {
+        return res.status(400).json({ 
+          success: false, 
+          error: "Invalid platform value. Must be 'discord' or 'revolt'" 
+        });
+      }
+      
+      // Check if bridge is initialized
+      if (!bridge) {
+        return res.status(500).json({ 
+          success: false, 
+          error: "Bridge not initialized" 
+        });
+      }
+      
+      // Perform platform switch
+      const result = await bridge.switchPlatform(platform);
+      
+      if (result) {
+        res.json({ 
+          success: true, 
+          message: `Successfully switched to ${platform} platform` 
+        });
+      } else {
+        res.status(500).json({ 
+          success: false, 
+          error: `Failed to switch to ${platform} platform` 
+        });
+      }
+    } catch (error) {
+      console.error(`Error switching platform: ${error}`);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+  
+  // API endpoint to update Revolt bot token
+  app.post("/api/bot/revolt/config", async (req, res) => {
+    try {
+      const { token } = req.body;
+      
+      if (!token) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Revolt token is required"
+        });
+      }
+      
+      // Update process environment variables
+      process.env.REVOLT_BOT_TOKEN = token;
+      
+      // Import and use the utility function from loadEnv.ts
+      const { updateEnvFile } = await import('../utilities/loadEnv.js');
+      
+      // Try to update .env file
+      const updated = await updateEnvFile({
+        REVOLT_BOT_TOKEN: token
+      });
+      
+      if (updated) {
+        log("Updated .env file with new Revolt token");
+      } else {
+        log("Failed to update .env file, but environment variable was set", "warn");
+      }
+      
+      // Update the configuration in the database
+      const updatedConfig = await storage.updateBotConfig({
+        revoltToken: token
+      });
+      
+      // Restart the bot if needed
+      if (bridge) {
+        try {
+          // Only restart if platform is current
+          const config = await storage.getBotConfig();
+          if (config?.activeProvider === 'revolt') {
+            await bridge.switchPlatform('revolt');
+          }
+        } catch (error) {
+          log(`Error restarting Revolt bot: ${error}`, "error");
+        }
+      }
+      
+      res.json({ 
+        success: true, 
+        message: "Revolt token updated successfully" 
+      });
+    } catch (error) {
+      log(`Error updating Revolt token: ${error}`, "error");
+      res.status(500).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+  });
+
   // API endpoint to update Discord bot token
   app.post("/api/bot/discord/config", async (req, res) => {
     try {
