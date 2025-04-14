@@ -242,10 +242,64 @@ export class RevoltBot {
           log(`Received command: ${message.content}`, "debug");
         }
         
-        // Check if this is in a ticket channel
+        // Check if this is in a ticket channel and should be forwarded to Telegram
         if (this.bridge) {
-          // Handle forwarding to Telegram (via Bridge)
-          // TODO: Implement message forwarding
+          try {
+            // Get current channel info
+            const channelId = message.channel?.id;
+            if (!channelId) return;
+            
+            // Check if this message is in a ticket channel by querying the database
+            const ticket = await storage.getTicketByRevoltChannel(channelId);
+            if (!ticket) return; // Not a ticket channel
+            
+            // Get the user who created the ticket
+            const ticketUser = await storage.getUser(ticket.userId);
+            if (!ticketUser) return; // Can't find user
+            
+            // Skip if no Telegram ID (shouldn't happen)
+            if (!ticketUser.telegramId) return;
+            
+            // Get message content
+            const content = message.content || '';
+            
+            // Get sender username (or nickname if available)
+            const sender = message.author?.username || 'Unknown User';
+            
+            // Format the message for Telegram
+            let formattedMessage = `💬 **${sender}**: ${content}`;
+            
+            // Add metadata about service
+            formattedMessage = `[Revolt] ${formattedMessage}`;
+            
+            // Forward the message to Telegram using the bridge
+            await this.bridge.forwardToTelegram(
+              formattedMessage,
+              ticket.id,
+              sender
+            );
+            
+            // Handle attachments if any
+            const attachments = (message as any).attachments;
+            if (attachments && attachments.length > 0) {
+              for (const attachment of attachments) {
+                // Get file URL
+                const fileUrl = attachment.url;
+                if (fileUrl) {
+                  // Queue the message with the attachment for processing
+                  // The bridge knows how to handle attachments in forwardToTelegram
+                  await this.bridge.forwardToTelegram(
+                    `[Revolt] 📎 File from **${sender}**`,
+                    ticket.id,
+                    sender,
+                    [{ url: fileUrl, filename: attachment.filename || 'file' }]
+                  );
+                }
+              }
+            }
+          } catch (error) {
+            log(`Error forwarding Revolt message to Telegram: ${error}`, "error");
+          }
         }
       } catch (error) {
         log(`Error handling Revolt message: ${error}`, "error");
@@ -756,13 +810,44 @@ export class RevoltBot {
   
   /**
    * Moves a channel to a different category
+   * Note: Revolt handles categories differently from Discord
+   * In Revolt, categories are just special channels that group other channels
    */
   public async moveChannel(channelId: string, categoryId: string): Promise<void> {
     if (!this.isReady()) {
       throw new Error("Revolt bot is not ready");
     }
     
-    log(`Would move Revolt channel ${channelId} to category ${categoryId}`, "info");
+    await this.checkRateLimit('channelEdit');
+    
+    try {
+      // Get the channel to be moved
+      const channel = this.client.channels.get(channelId);
+      if (!channel) {
+        throw new Error(`Channel with ID ${channelId} not found`);
+      }
+      
+      // Get the category channel
+      const categoryChannel = this.client.channels.get(categoryId);
+      if (!categoryChannel) {
+        throw new Error(`Category with ID ${categoryId} not found`);
+      }
+      
+      // In Revolt, we need to use the edit method to set the parent
+      const channelAny = channel as any;
+      
+      // Update the channel with the new parent
+      // Use type assertion to work around the TypeScript limitations
+      await (channel as any).edit({
+        // In Revolt, the parent field is used to link a channel to its category
+        parent: categoryId
+      });
+      
+      log(`Moved Revolt channel ${channelId} to category ${categoryId}`, "info");
+    } catch (error) {
+      log(`Error moving Revolt channel ${channelId} to category ${categoryId}: ${error}`, "error");
+      throw error;
+    }
   }
   
   /**
