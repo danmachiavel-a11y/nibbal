@@ -471,7 +471,7 @@ export class BridgeManager {
     try {
       // Reset the disabled state when attempting to start
       this.isDisabled = false;
-      this.disabledReason = null;
+      this.disabledReason = '';
       
       // Record start timestamp for uptime tracking
       this.startTimestamp = Date.now();

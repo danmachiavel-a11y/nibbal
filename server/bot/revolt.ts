@@ -336,14 +336,15 @@ export class RevoltBot {
     try {
       // Find the server
       const servers = this.client.servers;
-      // Check if there are any servers - using the correct property
-      if (!servers || Array.from(servers.values()).length <= 0) {
+      // Check if there are any servers
+      const serverArray = servers ? Array.from(servers.values()) : [];
+      if (serverArray.length === 0) {
         log("No Revolt servers found for the bot", "error");
         return null;
       }
       
       // Use the first server (assumption: the bot is in only one server)
-      const server = servers.values().next().value;
+      const server = serverArray[0];
       
       // Find or create the category
       const categoryId = category.revoltCategoryId || await this.createCategoryChannel(server, category);
@@ -455,13 +456,15 @@ export class RevoltBot {
       
       // Move the channel to the transcript category if available
       // Note: In revolt.js, moving channels to categories might work differently
-      const category = await storage.getCategory(ticket.categoryId);
-      if (category?.revoltTranscriptCategoryId) {
-        try {
-          // This is implementation-specific and may need adjustment
-          log(`Moved ticket #${ticketId} channel to transcript category`);
-        } catch (error) {
-          log(`Error moving ticket channel to transcript category: ${error}`, "warn");
+      if (ticket.categoryId) {
+        const category = await storage.getCategory(ticket.categoryId);
+        if (category?.revoltTranscriptCategoryId) {
+          try {
+            // This is implementation-specific and may need adjustment
+            log(`Moved ticket #${ticketId} channel to transcript category`);
+          } catch (error) {
+            log(`Error moving ticket channel to transcript category: ${error}`, "warn");
+          }
         }
       }
       
