@@ -274,6 +274,8 @@ export async function registerRoutes(app: Express) {
         welcomeImageUrl: z.string().nullable().optional(),
         telegramToken: z.string().optional(),
         discordToken: z.string().optional(),
+        revoltToken: z.string().optional(),
+        activeProvider: z.enum(["discord", "revolt"]).optional(),
         adminTelegramIds: z.array(z.string()).optional(),
         adminDiscordIds: z.array(z.string()).optional(),
       });
@@ -290,15 +292,47 @@ export async function registerRoutes(app: Express) {
       if (result.data.discordToken) {
         process.env.DISCORD_BOT_TOKEN = result.data.discordToken;
       }
+      if (result.data.revoltToken) {
+        process.env.REVOLT_BOT_TOKEN = result.data.revoltToken;
+      }
 
       // Update bot config in storage
       const config = await storage.updateBotConfig(result.data);
 
-      // If tokens were updated, restart the bridge
-      if (result.data.telegramToken || result.data.discordToken) {
+      // Check if we need to restart the bridge
+      const needsRestart = result.data.telegramToken || 
+                          result.data.discordToken || 
+                          result.data.revoltToken || 
+                          result.data.activeProvider;
+      
+      // If tokens or activeProvider were updated, restart the bridge
+      if (needsRestart) {
         if (bridge) {
           log("Restarting bots with new configuration...");
-          await bridge.restart();
+          
+          // If activeProvider was changed, we need to stop the old provider first
+          if (result.data.activeProvider) {
+            log(`Switching active provider to ${result.data.activeProvider}`);
+            
+            // Stop both secondary platforms and restart the correct one
+            try {
+              if (result.data.activeProvider === "discord") {
+                // Restart with Discord as active provider
+                await bridge.stopRevoltBot();
+                setTimeout(() => bridge?.startDiscordBot(), 1000);
+              } else {
+                // Restart with Revolt as active provider
+                await bridge.stopDiscordBot();
+                setTimeout(() => bridge?.startRevoltBot(), 1000);
+              }
+            } catch (err) {
+              log(`Error during platform switch: ${err}`, "error");
+            }
+          } else {
+            // Just restart the current configuration
+            await bridge.restart();
+          }
+          
           log("Bots restarted successfully");
         }
       }
@@ -357,6 +391,102 @@ export async function registerRoutes(app: Express) {
         error: {
           code: "INTERNAL_SERVER_ERROR",
           message: `Failed to check Telegram bot status: ${error.message}`
+        }
+      });
+    }
+  });
+
+  app.get("/api/bot/revolt/status", async (req, res) => {
+    try {
+      if (!bridge) {
+        return res.json({ 
+          connected: false,
+          error: {
+            code: "BOT_BRIDGE_UNAVAILABLE",
+            message: "Bot bridge not initialized"
+          },
+          environment: {
+            token_set: Boolean(process.env.REVOLT_BOT_TOKEN),
+            token_length: process.env.REVOLT_BOT_TOKEN ? process.env.REVOLT_BOT_TOKEN.length : 0,
+            using_env_file: fs.existsSync(path.resolve(process.cwd(), '.env'))
+          }
+        });
+      }
+      
+      const revoltBot = bridge.getRevoltBot();
+      const connected = !!revoltBot?.isReady();
+      
+      // Include more detailed information if Revolt is not connected
+      let errorDetails = null;
+      if (!connected && revoltBot) {
+        const disconnectReason = revoltBot.getDisconnectReason();
+        
+        // Initialize with a default error object
+        errorDetails = {
+          code: "REVOLT_BOT_UNAVAILABLE",
+          message: "Revolt bot failed to initialize or connect"
+        };
+        
+        // Override with bot's specific error if available
+        if (disconnectReason) {
+          errorDetails.message = disconnectReason;
+          
+          // Check for specific error messages
+          if (disconnectReason.includes("token")) {
+            errorDetails.code = "INVALID_TOKEN";
+            errorDetails = {
+              ...errorDetails,
+              hint: "The Revolt bot token appears to be invalid. Please check your token and try again."
+            };
+          }
+        }
+      }
+      
+      // Try to check for server access if connected
+      let serverConnected = false;
+      let serverError = null;
+      
+      if (connected && revoltBot) {
+        try {
+          const serverInfo = await revoltBot.getServerInfo();
+          if (serverInfo) {
+            serverConnected = true;
+          }
+        } catch (err) {
+          const error = err as Error;
+          if (error.message?.includes("not in any servers")) {
+            serverError = {
+              code: "NO_SERVER_CONNECTED",
+              message: "Bot is authenticated but not invited to any servers",
+              hint: "Invite the bot to your Revolt server"
+            };
+          } else {
+            serverError = {
+              code: "SERVER_ACCESS_ERROR",
+              message: error.message || "Unknown error accessing server resources"
+            };
+          }
+        }
+      }
+      
+      res.json({
+        connected,
+        server_connected: serverConnected,
+        error: errorDetails,
+        server_error: serverError,
+        environment: {
+          token_set: Boolean(process.env.REVOLT_BOT_TOKEN),
+          token_length: process.env.REVOLT_BOT_TOKEN ? process.env.REVOLT_BOT_TOKEN.length : 0,
+          using_env_file: fs.existsSync(path.resolve(process.cwd(), '.env'))
+        }
+      });
+    } catch (error: any) {
+      log(`Error checking Revolt bot status: ${error}`, "error");
+      res.status(500).json({ 
+        connected: false,
+        error: {
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Failed to check Revolt bot status: ${error.message}`
         }
       });
     }

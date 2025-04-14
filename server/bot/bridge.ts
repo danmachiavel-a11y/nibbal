@@ -844,16 +844,31 @@ export class BridgeManager {
   async healthCheck(): Promise<{
     telegram: boolean;
     discord: boolean;
+    revolt?: boolean;
+    activeProvider: string;
     disabled?: boolean;
     disabledReason?: string;
     uptime?: number;
   }> {
     try {
+      // Get the active provider from config
+      let activeProvider = 'discord';
+      try {
+        const config = await storage.getBotConfig();
+        if (config?.activeProvider) {
+          activeProvider = config.activeProvider;
+        }
+      } catch (configError) {
+        log(`Error getting active provider: ${configError}`, "warn");
+      }
+      
       // Return early if bridge is disabled
       if (this.isDisabled) {
         return {
           telegram: false,
           discord: false,
+          revolt: false,
+          activeProvider,
           disabled: true,
           disabledReason: this.disabledReason || "Bridge is disabled"
         };
@@ -868,9 +883,16 @@ export class BridgeManager {
       // Add slight delay to prevent rate limiting
       await new Promise(resolve => setTimeout(resolve, 1000));
       
+      // Check status of each platform
+      const telegramConnected = this.telegramBot.getIsConnected();
+      const discordConnected = this.discordBot.isReady();
+      const revoltConnected = this.revoltBot?.isReady() || false;
+      
       return {
-        telegram: this.telegramBot.getIsConnected(),
-        discord: this.discordBot.isReady(),
+        telegram: telegramConnected,
+        discord: discordConnected,
+        revolt: revoltConnected,
+        activeProvider,
         uptime
       };
     } catch (error) {
@@ -878,6 +900,8 @@ export class BridgeManager {
       return {
         telegram: false,
         discord: false,
+        revolt: false,
+        activeProvider: 'discord',
         disabled: this.isDisabled,
         disabledReason: this.isDisabled ? this.disabledReason : "Health check error"
       };
