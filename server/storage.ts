@@ -71,11 +71,9 @@ export interface IStorage {
   createTicket(ticket: InsertTicket): Promise<Ticket>;
   getTicket(id: number): Promise<Ticket | undefined>;
   getTicketByDiscordChannel(channelId: string): Promise<Ticket | undefined>;
-  getTicketByRevoltChannel(channelId: string): Promise<Ticket | undefined>;
   updateTicketStatus(id: number, status: string, claimedBy?: string): Promise<void>;
   updateTicketAmount(id: number, amount: number): Promise<void>;
   updateTicketDiscordChannel(id: number, channelId: string): Promise<void>;
-  updateTicketRevoltChannel(id: number, channelId: string): Promise<void>;
   getTicketsByCategory(categoryId: number): Promise<Ticket[]>;
   getTranscriptTickets(): Promise<Ticket[]>; // Added: Get all tickets in transcript status
   deleteTicket(id: number): Promise<void>; // Added: Delete a ticket and its messages
@@ -171,12 +169,8 @@ export class DatabaseStorage implements IStorage {
         welcomeImageUrl: null,
         telegramToken: null,
         discordToken: null,
-        revoltToken: null,
-        telegramRevoltToken: null,
         adminTelegramIds: [],
-        adminDiscordIds: [],
-        adminRevoltIds: [],
-        activeProvider: "discord"
+        adminDiscordIds: []
       };
     }
     return config;
@@ -196,14 +190,6 @@ export class DatabaseStorage implements IStorage {
       return false;
     }
     return config.adminDiscordIds.includes(discordId);
-  }
-  
-  async isRevoltAdmin(revoltId: string): Promise<boolean> {
-    const config = await this.getBotConfig();
-    if (!config?.adminRevoltIds || config.adminRevoltIds.length === 0) {
-      return false;
-    }
-    return config.adminRevoltIds.includes(revoltId);
   }
 
   async updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig> {
@@ -329,14 +315,6 @@ export class DatabaseStorage implements IStorage {
       .where(eq(tickets.discordChannelId, channelId));
     return ticket;
   }
-  
-  async getTicketByRevoltChannel(channelId: string): Promise<Ticket | undefined> {
-    const [ticket] = await db
-      .select()
-      .from(tickets)
-      .where(eq(tickets.revoltChannelId, channelId));
-    return ticket;
-  }
 
   async updateTicketStatus(id: number, status: string, claimedBy?: string): Promise<void> {
     try {
@@ -385,13 +363,6 @@ export class DatabaseStorage implements IStorage {
     await db
       .update(tickets)
       .set({ discordChannelId: channelId })
-      .where(eq(tickets.id, id));
-  }
-  
-  async updateTicketRevoltChannel(id: number, channelId: string): Promise<void> {
-    await db
-      .update(tickets)
-      .set({ revoltChannelId: channelId })
       .where(eq(tickets.id, id));
   }
 

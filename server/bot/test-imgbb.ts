@@ -417,20 +417,60 @@ Recommended approach: ${optimizedResult.successRate > firstResult.successRate ? 
   };
 }
 
-// Skip bridge comparison test as the uploadToImgbb function has been moved
-// This is a test file and not critical to the main application functionality
+// Run a comparison to test bridge.ts implementation 
 async function compareWithBridgeImplementation() {
   try {
+    // Import the bridge version
+    const bridgeModule = await import('./bridge');
+    const bridgeUploadToImgbb = bridgeModule.default?.uploadToImgbb || bridgeModule.uploadToImgbb;
+    
+    if (!bridgeUploadToImgbb) {
+      log('❌ Could not find uploadToImgbb function in bridge.ts', 'error');
+      return;
+    }
+    
     const testId = `bridge-comparison-${Date.now()}`;
-    log(`[${testId}] 🔄 Skipping bridge comparison test as the function structure has changed`);
-    log(`[${testId}] This is expected and won't impact the main application functionality`);
+    log(`[${testId}] 🔄 Comparing test-imgbb vs bridge implementations...`);
     
-    // Just run our own implementation test
+    // Run a single upload with each implementation
+    const testStartTime = Date.now();
+    
+    // Test function
     const testResult = await testSingleUpload(`${testId}-test`);
+    await asyncSetTimeout(2000);
     
-    log(`[${testId}] 📊 Test implementation: ${testResult.success ? '✅ Success' : '❌ Failure'} in ${testResult.elapsedMs}ms`);
+    // Bridge function
+    log(`[${testId}] Testing bridge.ts uploadToImgbb implementation...`);
+    const bridgeStartTime = Date.now();
+    let bridgeResult: any;
+    try {
+      const url = await bridgeUploadToImgbb(SMALL_TEST_IMAGE);
+      const elapsed = Date.now() - bridgeStartTime;
+      bridgeResult = {
+        success: !!url,
+        url,
+        elapsedMs: elapsed
+      };
+      log(`[${testId}] Bridge implementation ${bridgeResult.success ? 'succeeded' : 'failed'} in ${elapsed}ms`);
+    } catch (error) {
+      const elapsed = Date.now() - bridgeStartTime;
+      bridgeResult = { 
+        success: false, 
+        error: error instanceof Error ? error.message : String(error), 
+        elapsedMs: elapsed 
+      };
+      log(`[${testId}] Bridge implementation failed: ${bridgeResult.error}`, 'error');
+    }
+    
+    // Compare results
+    log(`
+[${testId}] 📊 Implementation Comparison:
+Test implementation: ${testResult.success ? '✅ Success' : '❌ Failure'} in ${testResult.elapsedMs}ms
+Bridge implementation: ${bridgeResult.success ? '✅ Success' : '❌ Failure'} in ${bridgeResult.elapsedMs}ms
+    `);
+    
   } catch (error) {
-    log(`❌ Error in test implementation: ${error}`, 'warn');
+    log(`❌ Failed to compare with bridge implementation: ${error}`, 'error');
   }
 }
 

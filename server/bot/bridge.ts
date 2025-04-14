@@ -2,7 +2,6 @@ import { storage } from "../storage";
 // Import the unified Telegram bot implementation
 import { TelegramBot } from "./telegram";
 import { DiscordBot } from "./discord";
-import { RevoltBot } from "./revolt";
 import type { Ticket, Message } from "@shared/schema";
 import { log } from "../vite";
 import fetch, { RequestInit } from 'node-fetch';
@@ -50,7 +49,6 @@ interface ImageCacheEntry {
 export class BridgeManager {
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
-  private revoltBot: RevoltBot | null = null;
   private retryAttempts: number = 0;
   private maxRetries: number = 3;
   private retryTimeout: number = 5000;
@@ -85,207 +83,8 @@ export class BridgeManager {
     log("Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
-    // RevoltBot will be initialized later when needed
-    this.revoltBot = null;
     this.startHealthCheck();
     this.startImageCacheCleanup();
-    
-    // Check active platform on startup
-    this.detectActivePlatform().catch(err => {
-      log(`Error detecting active platform: ${err}`, "error");
-    });
-  }
-  
-  /**
-   * Detects which platform (Discord or Revolt) should be active based on database config
-   */
-  private async detectActivePlatform(): Promise<void> {
-    try {
-      const config = await storage.getBotConfig();
-      if (!config) {
-        log("No bot configuration found, using Discord as default platform", "warn");
-        return;
-      }
-      
-      const platform = config.activeProvider || 'discord';
-      log(`Active platform detected from config: ${platform}`);
-      
-      // Ensure the appropriate platform is active
-      if (platform === 'revolt') {
-        // Start RevoltBot if it should be active
-        if (config.revoltToken && config.revoltToken.length > 10) {
-          await this.startRevoltBot();
-        } else {
-          log("Revolt configured as active platform but no valid token is available", "warn");
-          log("Falling back to Discord as the active platform");
-          // Update config to use Discord instead
-          await storage.updateBotConfig({
-            activeProvider: 'discord'
-          });
-        }
-      } else if (platform === 'discord') {
-        // Verify Discord token is valid
-        if (!config.discordToken || config.discordToken.length < 10) {
-          log("Discord configured as active platform but no valid token is available", "warn");
-          // We won't auto-switch to Revolt here, as the admin needs to explicitly choose
-        }
-      }
-    } catch (error) {
-      log(`Error detecting active platform: ${error}`, "error");
-    }
-  }
-  
-  /**
-   * Manually switch between Discord and Revolt as the secondary platform
-   * Only one should be active at a time
-   */
-  public async switchPlatform(platform: 'discord' | 'revolt'): Promise<boolean> {
-    try {
-      log(`Attempting to switch to ${platform} platform`);
-      
-      // Check if we're already using the requested platform
-      const config = await storage.getBotConfig();
-      if (config?.activeProvider === platform) {
-        log(`Platform ${platform} is already active, no change needed`);
-        return true;
-      }
-      
-      // Validate token for the platform we're switching to
-      if (platform === 'discord') {
-        if (!config?.discordToken || config.discordToken.length < 10) {
-          const errorMsg = "Cannot switch to Discord: invalid or missing token";
-          log(errorMsg, "error");
-          throw new Error(errorMsg);
-        }
-      } else { // platform === 'revolt'
-        if (!config?.revoltToken || config.revoltToken.length < 10) {
-          const errorMsg = "Cannot switch to Revolt: invalid or missing token";
-          log(errorMsg, "error");
-          throw new Error(errorMsg);
-        }
-      }
-      
-      // Update config in database first
-      await storage.updateBotConfig({
-        activeProvider: platform
-      });
-      
-      // Stop the currently active platform
-      if (platform === 'discord') {
-        // Stop RevoltBot if it's running
-        if (this.revoltBot) {
-          try {
-            await this.revoltBot.stop();
-            log("Stopped RevoltBot");
-          } catch (stopError) {
-            log(`Error stopping RevoltBot: ${stopError}`, "warn");
-            // Continue anyway, as we want to start Discord regardless
-          }
-        }
-        
-        // Start DiscordBot if it's not running
-        if (!this.discordBot.isReady()) {
-          await this.restartDiscordBot();
-          log("Started DiscordBot");
-        } else {
-          log("DiscordBot already running, no need to restart");
-        }
-      } else {
-        // Stop DiscordBot if it's running
-        if (this.discordBot.isReady()) {
-          try {
-            await this.discordBot.stop();
-            log("Stopped DiscordBot");
-          } catch (stopError) {
-            log(`Error stopping DiscordBot: ${stopError}`, "warn");
-            // Continue anyway
-          }
-        }
-        
-        // Initialize RevoltBot if it doesn't exist yet or restart it
-        await this.startRevoltBot();
-        log("Started RevoltBot");
-      }
-      
-      log(`Successfully switched to ${platform} platform`);
-      return true;
-    } catch (error) {
-      log(`Error switching platform to ${platform}: ${error}`, "error");
-      return false;
-    }
-  }
-  
-  /**
-   * Start the Discord bot with error handling and retries
-   */
-  private async startDiscordBot(): Promise<void> {
-    try {
-      // Check if already started
-      if (this.discordBot.isReady()) {
-        log("DiscordBot is already running");
-        return;
-      }
-      
-      // Get the config to check if token is available
-      const config = await storage.getBotConfig();
-      if (!config?.discordToken) {
-        log("Cannot start DiscordBot: no token configured", "error");
-        return;
-      }
-      
-      log("Starting DiscordBot...");
-      await this.discordBot.start();
-      log("DiscordBot started successfully");
-    } catch (error) {
-      log(`Error starting DiscordBot: ${error}`, "error");
-    }
-  }
-  
-  /**
-   * Start the Revolt bot with error handling and retries
-   */
-  private async startRevoltBot(): Promise<void> {
-    try {
-      // Get the config to check if token is available
-      const config = await storage.getBotConfig();
-      if (!config?.revoltToken) {
-        log("Cannot start RevoltBot: no token configured", "error");
-        return;
-      }
-      
-      // Check if we should use the separate Telegram bot for Revolt
-      // This is useful for testing with a different Telegram bot while keeping Discord integration intact
-      if (config?.telegramRevoltToken && config.telegramRevoltToken !== config.telegramToken) {
-        log("Using separate Telegram token for Revolt integration");
-        // TODO: Implement separate Telegram bot instance for Revolt if needed
-      }
-      
-      // Initialize RevoltBot if it doesn't exist yet
-      if (!this.revoltBot) {
-        log("Initializing new RevoltBot instance");
-        const adminIds = config.adminRevoltIds || [];
-        this.revoltBot = new RevoltBot(config.revoltToken, adminIds);
-      }
-      
-      // Check if already started
-      if (this.revoltBot.isReady()) {
-        log("RevoltBot is already running");
-        return;
-      }
-      
-      log("Starting RevoltBot...");
-      // RevoltBot doesn't need explicit start as it's initialized in the constructor
-      // We just ensure it's set up correctly
-      if (this.revoltBot.isStartingProcess()) {
-        log("RevoltBot is already in the process of starting");
-      } else {
-        log("Initializing RevoltBot connection");
-        await this.revoltBot.reconnect();
-      }
-      log("RevoltBot starting process initiated");
-    } catch (error) {
-      log(`Error starting RevoltBot: ${error}`, "error");
-    }
   }
 
   private startImageCacheCleanup(): void {
@@ -668,7 +467,7 @@ export class BridgeManager {
     try {
       // Reset the disabled state when attempting to start
       this.isDisabled = false;
-      this.disabledReason = '';
+      this.disabledReason = null;
       
       // Record start timestamp for uptime tracking
       this.startTimestamp = Date.now();
@@ -787,43 +586,6 @@ export class BridgeManager {
       throw error;
     }
   }
-  
-  // Restart only the Revolt bot
-  async restartRevoltBot() {
-    log("Restarting Revolt bot with new configuration...");
-    try {
-      // Get the config to check if token is available
-      const config = await storage.getBotConfig();
-      if (!config?.revoltToken) {
-        throw new BridgeError("Cannot restart RevoltBot: no token configured", { context: "restartRevoltBot" });
-      }
-      
-      // Gracefully stop the Revolt bot if it exists
-      if (this.revoltBot) {
-        try {
-          await this.revoltBot.stop();
-        } catch (stopError) {
-          log(`Error stopping existing Revolt bot: ${stopError}`, "warn");
-          // Continue anyway to recreate the bot
-        }
-      }
-      
-      // Add a small delay before creating a new instance
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Create a new instance with the latest token
-      const adminIds = config.adminRevoltIds || [];
-      this.revoltBot = new RevoltBot(config.revoltToken, adminIds);
-      
-      // Start the bot
-      await this.revoltBot.reconnect();
-      
-      log("Revolt bot restarted successfully");
-    } catch (error) {
-      handleBridgeError(error as BridgeError, "restartRevoltBot");
-      throw error;
-    }
-  }
 
   async restart() {
     log("Restarting all bots with new configuration...");
@@ -833,44 +595,12 @@ export class BridgeManager {
         clearInterval(this.healthCheckInterval);
         this.healthCheckInterval = null;
       }
-      
-      // Get the active provider configuration
-      const config = await storage.getBotConfig();
-      const activeProvider = config?.activeProvider || 'discord';
-      
-      // Set up stop promises
-      const stopPromises = [
-        this.telegramBot.stop()
-      ];
-      
-      // Add the active secondary platform bot
-      if (activeProvider === 'discord') {
-        stopPromises.push(this.discordBot.stop());
-        
-        // Also stop Revolt bot if it exists to ensure clean restart
-        if (this.revoltBot) {
-          try {
-            stopPromises.push(this.revoltBot.stop());
-          } catch (stopError) {
-            log(`Error stopping Revolt bot during restart: ${stopError}`, "warn");
-          }
-        }
-      } else {
-        // Stop Discord bot
-        stopPromises.push(this.discordBot.stop());
-        
-        // Stop Revolt bot if it exists
-        if (this.revoltBot) {
-          try {
-            stopPromises.push(this.revoltBot.stop());
-          } catch (stopError) {
-            log(`Error stopping Revolt bot during restart: ${stopError}`, "warn");
-          }
-        }
-      }
 
-      // Stop all active bots with graceful shutdown
-      await Promise.allSettled(stopPromises);
+      // Stop both bots with graceful shutdown
+      await Promise.allSettled([
+        this.telegramBot.stop(),
+        this.discordBot.stop()
+      ]);
 
       // Add longer delay before creating new instances
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -878,14 +608,8 @@ export class BridgeManager {
       // Create new instances with updated tokens
       this.telegramBot = new TelegramBot(this);
       this.discordBot = new DiscordBot(this);
-      
-      // Initialize RevoltBot if needed
-      if (activeProvider === 'revolt' && config?.revoltToken) {
-        const adminIds = config.adminRevoltIds || [];
-        this.revoltBot = new RevoltBot(config.revoltToken, adminIds);
-      }
 
-      // Start bots with retry mechanism (this will detect which platform should be active)
+      // Start both bots with retry mechanism
       await this.start();
 
       // Restart health check
@@ -919,31 +643,16 @@ export class BridgeManager {
   async healthCheck(): Promise<{
     telegram: boolean;
     discord: boolean;
-    revolt?: boolean;
-    activeProvider: string;
     disabled?: boolean;
     disabledReason?: string;
     uptime?: number;
   }> {
     try {
-      // Get the active provider from config
-      let activeProvider = 'discord';
-      try {
-        const config = await storage.getBotConfig();
-        if (config?.activeProvider) {
-          activeProvider = config.activeProvider;
-        }
-      } catch (configError) {
-        log(`Error getting active provider: ${configError}`, "warn");
-      }
-      
       // Return early if bridge is disabled
       if (this.isDisabled) {
         return {
           telegram: false,
           discord: false,
-          revolt: false,
-          activeProvider,
           disabled: true,
           disabledReason: this.disabledReason || "Bridge is disabled"
         };
@@ -958,16 +667,9 @@ export class BridgeManager {
       // Add slight delay to prevent rate limiting
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Check status of each platform
-      const telegramConnected = this.telegramBot.getIsConnected();
-      const discordConnected = this.discordBot.isReady();
-      const revoltConnected = this.revoltBot?.isReady() || false;
-      
       return {
-        telegram: telegramConnected,
-        discord: discordConnected,
-        revolt: revoltConnected,
-        activeProvider,
+        telegram: this.telegramBot.getIsConnected(),
+        discord: this.discordBot.isReady(),
         uptime
       };
     } catch (error) {
@@ -975,8 +677,6 @@ export class BridgeManager {
       return {
         telegram: false,
         discord: false,
-        revolt: false,
-        activeProvider: 'discord',
         disabled: this.isDisabled,
         disabledReason: this.isDisabled ? this.disabledReason : "Health check error"
       };
@@ -2254,48 +1954,6 @@ export class BridgeManager {
 
   getDiscordBot(): DiscordBot {
     return this.discordBot;
-  }
-  
-  /**
-   * Gets the RevoltBot instance, initializing it if necessary
-   * This is used by the API to get information about the Revolt integration
-   * If the RevoltBot is not initialized and autoInit is true, it will be initialized
-   * @param autoInit Whether to auto-initialize the RevoltBot if it's not already initialized
-   * @returns The RevoltBot instance, or null if it's not initialized and autoInit is false
-   */
-  getRevoltBot(autoInit: boolean = false): RevoltBot | null {
-    // Check if the Revolt integration is active
-    const checkActive = async (): Promise<boolean> => {
-      try {
-        const config = await storage.getBotConfig();
-        return config?.activeProvider === 'revolt';
-      } catch (error) {
-        log(`Error checking if Revolt is active: ${error}`, "error");
-        return false;
-      }
-    };
-    
-    if (!this.revoltBot && autoInit) {
-      log("Auto-initializing RevoltBot");
-      
-      // Initialize the RevoltBot asynchronously, but only if Revolt is the active platform
-      checkActive().then(isActive => {
-        if (isActive) {
-          log("Revolt is the active platform, initializing RevoltBot");
-          return this.startRevoltBot();
-        } else {
-          log("Revolt is not the active platform, skipping initialization");
-          return Promise.resolve();
-        }
-      }).catch(err => {
-        log(`Error auto-initializing RevoltBot: ${err}`, "error");
-      });
-      
-      // We still return null on the first call as the initialization is asynchronous
-      return null;
-    }
-    
-    return this.revoltBot;
   }
 }
 

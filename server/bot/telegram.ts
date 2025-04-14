@@ -2206,32 +2206,8 @@ Images/photos are also supported.
         }
         console.log(`Found user in database: ${JSON.stringify(user)}`);
         
-        // Check if there's a ticket ID in memory first
-        const activeTicketIdFromMemory = userMemoryState?.activeTicketId;
-        let ticketFromMemory = null;
-        
-        // If we have a ticket ID in memory, try to get that specific ticket first
-        if (activeTicketIdFromMemory) {
-          console.log(`Found activeTicketId ${activeTicketIdFromMemory} in memory state, checking if it exists`);
-          ticketFromMemory = await storage.getTicket(activeTicketIdFromMemory);
-          
-          // Verify it's an active ticket
-          if (ticketFromMemory && ['closed', 'deleted', 'transcript', 'completed'].indexOf(ticketFromMemory.status) !== -1) {
-            console.log(`Ticket ${activeTicketIdFromMemory} exists but is not active (status: ${ticketFromMemory.status})`);
-            ticketFromMemory = null;
-          } else if (ticketFromMemory) {
-            console.log(`Found valid active ticket ${activeTicketIdFromMemory} from memory state`);
-          }
-        }
-        
         // Get all active tickets for this user
         const activeTickets = await storage.getActiveTicketsByUserId(user.id);
-        
-        // Add the memory ticket to active tickets if it's not already there
-        if (ticketFromMemory && !activeTickets.some(t => t.id === ticketFromMemory!.id)) {
-          console.log(`Adding memory ticket ${ticketFromMemory.id} to active tickets list`);
-          activeTickets.push(ticketFromMemory);
-        }
         
         if (activeTickets.length === 0) {
           console.log(`No active tickets found for user ${user.id}`);
@@ -2274,11 +2250,11 @@ Images/photos are also supported.
           return;
         }
         
-        // User already has the active ticket ID from memory state
-        // (we stored it in activeTicketIdFromMemory at the beginning of this function)
+        // Get the active ticket ID from user's memory state
+        const currentTicketId = userMemoryState?.activeTicketId;
         
         // If user has multiple active tickets and none is selected in state, ask them which one to close
-        if (activeTickets.length > 1 && !activeTicketIdFromMemory) {
+        if (activeTickets.length > 1 && !currentTicketId) {
           // Create buttons for each ticket
           const buttons = [];
           
@@ -2321,12 +2297,12 @@ Images/photos are also supported.
         }
         
         // If user has a selected ticket in memory state or just one active ticket, close that one
-        const ticketToClose = activeTicketIdFromMemory
-          ? activeTickets.find(t => t.id === activeTicketIdFromMemory) 
+        const ticketToClose = currentTicketId 
+          ? activeTickets.find(t => t.id === currentTicketId) 
           : activeTickets[0];
         
         if (!ticketToClose) {
-          console.log(`Current ticket ID ${activeTicketIdFromMemory} not found in active tickets`);
+          console.log(`Current ticket ID ${currentTicketId} not found in active tickets`);
           await ctx.reply("❌ Could not find your selected ticket. Use /switch to select an active ticket first.");
           return;
         }

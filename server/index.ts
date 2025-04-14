@@ -1,11 +1,10 @@
-import express from "express";
-import type { Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes.js";
-import { setupVite, serveStatic, log } from "./vite.js";
-import { storage } from "./storage.js";
+import express, { type Request, Response, NextFunction } from "express";
+import { registerRoutes } from "./routes";
+import { setupVite, serveStatic, log } from "./vite";
+import { storage } from "./storage";
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { db } from './db.js';
-import { loadEnv } from "../utilities/loadEnv.js";
+import { db } from './db';
+import { loadEnv } from "../utilities/loadEnv";
 
 const app = express();
 app.use(express.json());
@@ -57,17 +56,10 @@ app.use((req, res, next) => {
     if (isProduction) {
       log("Setting longer timeouts for production environment", "info");
       // Increase default Node.js timeouts for production stability
-      const http = await import('http');
-      const https = await import('https');
-      
-      // Set keepAlive on the agents in a type-safe way
-      const httpAgent = http.default.globalAgent as any;
-      const httpsAgent = https.default.globalAgent as any;
-      
-      httpAgent.keepAlive = true;
-      httpAgent.keepAliveMsecs = 60000; // 1 minute
-      httpsAgent.keepAlive = true;
-      httpsAgent.keepAliveMsecs = 60000; // 1 minute
+      require('http').globalAgent.keepAlive = true;
+      require('http').globalAgent.keepAliveMsecs = 60000; // 1 minute
+      require('https').globalAgent.keepAlive = true;
+      require('https').globalAgent.keepAliveMsecs = 60000; // 1 minute
     }
     
     // Verify essential environment variables

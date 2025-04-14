@@ -9,19 +9,14 @@ export const botConfig = pgTable("bot_config", {
   welcomeImageUrl: text("welcome_image_url"),
   telegramToken: text("telegram_token"),
   discordToken: text("discord_token"),
-  revoltToken: text("revolt_token"),
-  telegramRevoltToken: text("telegram_revolt_token"), // Separate Telegram token when using Revolt
   adminTelegramIds: text("admin_telegram_ids").array().default([]),
   adminDiscordIds: text("admin_discord_ids").array().default([]),
-  adminRevoltIds: text("admin_revolt_ids").array().default([]),
-  activeProvider: text("active_provider").default("discord"), // "discord" or "revolt"
 });
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   telegramId: text("telegram_id").unique(),
   discordId: text("discord_id").unique(),
-  revoltId: text("revolt_id").unique(),
   username: text("username").notNull(),
   isBanned: boolean("is_banned").default(false),
   banReason: text("ban_reason"),
@@ -29,22 +24,15 @@ export const users = pgTable("users", {
   bannedBy: text("banned_by"),
   telegramUsername: text("telegram_username"),
   telegramName: text("telegram_name"),
-  revoltUsername: text("revolt_username"),
 });
 
 // Forward declare the categories type to resolve circular reference
 const categoriesConfig = {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
-  // Discord fields
   discordRoleId: text("discord_role_id").default(""),
   discordCategoryId: text("discord_category_id").default(""),
-  transcriptCategoryId: text("transcript_category_id"),
-  // Revolt fields
-  revoltRoleId: text("revolt_role_id").default(""),
-  revoltCategoryId: text("revolt_category_id").default(""),
-  revoltTranscriptCategoryId: text("revolt_transcript_category_id"),
-  // Shared fields
+  transcriptCategoryId: text("transcript_category_id"), // Added transcript category ID
   questions: text("questions").array().notNull(),
   serviceSummary: text("service_summary").default("Our team is ready to assist you!"),
   serviceImageUrl: text("service_image_url"),
@@ -52,7 +40,7 @@ const categoriesConfig = {
   newRow: boolean("new_row").default(false),
   parentId: integer("parent_id"),
   isSubmenu: boolean("is_submenu").default(false),
-  isClosed: boolean("is_closed").default(false),
+  isClosed: boolean("is_closed").default(false), // Added isClosed field
 };
 
 export const categories = pgTable("categories", categoriesConfig);
@@ -71,7 +59,6 @@ export const tickets = pgTable("tickets", {
   categoryId: integer("category_id").references(() => categories.id),
   status: text("status").notNull(),
   discordChannelId: text("discord_channel_id"),
-  revoltChannelId: text("revolt_channel_id"),
   claimedBy: text("claimed_by"),
   amount: integer("amount"),
   answers: text("answers").array(),
