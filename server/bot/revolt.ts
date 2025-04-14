@@ -5,26 +5,22 @@
  */
 
 import * as console from "console";
+import { Client, API } from "revolt.js";
+import { storage } from "../storage";
+import { BridgeManager } from "./bridge";
+import { log } from "../vite";
+import { ulid } from 'ulid';
+import fetch from "node-fetch";
+import { createHash } from "crypto";
 
-// Use the same logger as the rest of the application
-const log = (message: string, level: 'info' | 'error' | 'warn' | 'debug' = 'info') => {
-  const timestamp = new Date().toISOString();
-  const prefix = `[${level}]`;
-  
-  switch (level) {
-    case 'error':
-      console.error(`${timestamp} ${prefix} ${message}`);
-      break;
-    case 'warn':
-      console.warn(`${timestamp} ${prefix} ${message}`);
-      break;
-    case 'debug':
-      console.debug(`${timestamp} ${prefix} ${message}`);
-      break;
-    default:
-      console.log(`${timestamp} ${prefix} ${message}`);
-  }
-};
+// Define ConnectionState enum here instead of importing it
+enum ConnectionState {
+  DISCONNECTED = 'disconnected',
+  CONNECTING = 'connecting',
+  CONNECTED = 'connected',
+  RECONNECTING = 'reconnecting',
+  ERROR = 'error'
+}
 
 export interface RevoltRole {
   id: string;
@@ -58,26 +54,223 @@ export interface RevoltServerInfo {
  * This is a placeholder implementation that will be completed
  * when the revolt.js package is properly integrated
  */
+interface RevoltWebhook {
+  id: string;
+  channelId: string;
+  token: string;
+  name: string;
+  lastUsed: number;
+  failures: number;
+}
+
+interface RevoltMessage {
+  content?: string;
+  embeds?: any[];
+  files?: Array<{
+    file: Buffer;
+    filename: string;
+  }>;
+}
+
+/**
+ * Rate limit bucket for Revolt API
+ */
+interface RateLimitBucket {
+  tokens: number;
+  lastRefill: number;
+  capacity: number;
+  refillRate: number;
+  queue: Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }>;
+}
+
 export class RevoltBot {
+  public client: Client;
+  private bridge: BridgeManager | null = null;
   private isConnected: boolean = false;
   private isConnecting: boolean = false;
   private disconnectReason: string | null = null;
   private serverId: string | null = null;
   private adminIds: string[] = [];
+  private token: string;
+  private webhooks: Map<string, RevoltWebhook[]> = new Map();
+  private webhookCreationLock: Set<string> = new Set();
+  private rateLimitBuckets: Map<string, RateLimitBucket> = new Map();
+  private connectionTimeout: NodeJS.Timeout | null = null;
+  private cleanupInterval: NodeJS.Timeout | null = null;
+  private lastError: Error | null = null;
+  private connectionError: string | null = null;
   
-  constructor(token: string, adminIds: string[] = []) {
+  // Rate limit configurations
+  private readonly LIMITS = {
+    global: { capacity: 90, refillTime: 1000 }, // 90 per second
+    message: { capacity: 8, refillTime: 5000 }, // 8 per 5 seconds
+    channelCreate: { capacity: 15, refillTime: 10000 }, // 15 per 10 seconds
+    channelEdit: { capacity: 8, refillTime: 10000 }, // 8 per 10 seconds
+  };
+
+  // Connection timeouts
+  private readonly CONNECTION_TIMEOUT = 30000; // 30 seconds
+  private readonly CLEANUP_INTERVAL = 300000; // 5 minutes
+  
+  constructor(token: string, adminIds: string[] = [], bridge: BridgeManager | null = null) {
+    this.token = token;
     this.adminIds = adminIds;
+    this.bridge = bridge;
+    
     log(`RevoltBot created with token length: ${token.length}`, "info");
     
-    // In a real implementation, we would connect to Revolt here
-    this.disconnectReason = "Revolt integration is not fully implemented yet";
+    // Initialize Revolt client
+    this.client = new Client({
+      baseURL: "https://api.revolt.chat",
+      autoReconnect: true,
+    });
+    
+    // Set up rate limit buckets
+    this.setupRateLimitBuckets();
+    
+    // Start cleanup intervals
+    this.startCleanupIntervals();
+    
+    // Set up event handlers
+    this.setupEventHandlers();
   }
   
+  /**
+   * Set up rate limiting buckets
+   */
+  private setupRateLimitBuckets(): void {
+    Object.entries(this.LIMITS).forEach(([key, limit]) => {
+      this.rateLimitBuckets.set(key, {
+        tokens: limit.capacity,
+        lastRefill: Date.now(),
+        capacity: limit.capacity,
+        refillRate: limit.capacity / limit.refillTime,
+        queue: []
+      });
+    });
+  }
+
+  /**
+   * Start cleanup intervals for WebSocket connections
+   */
+  private startCleanupIntervals(): void {
+    // Clear any existing intervals
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+    }
+
+    // Start WebSocket cleanup interval
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupConnections();
+    }, this.CLEANUP_INTERVAL);
+
+    log("Started WebSocket cleanup intervals for Revolt");
+  }
+
+  /**
+   * Clean up stale WebSocket connections
+   */
+  private async cleanupConnections(): Promise<void> {
+    try {
+      if (!this.client) return;
+
+      // Check if client is connected
+      if (this.client.events && !(this.client.events as any).connected) {
+        log("Found dead Revolt WebSocket connection, attempting cleanup...", "debug");
+
+        try {
+          // Attempt to destroy and reconnect
+          if (this.client) {
+            // Disconnect current client
+            this.client.removeAllListeners();
+            this.client.events.removeAllListeners();
+            await this.stop();
+            log("Successfully destroyed Revolt client connection", "debug");
+
+            // Attempt to reconnect
+            await this.start();
+          }
+        } catch (error) {
+          log(`Error during Revolt WebSocket cleanup: ${error}`, "error");
+        }
+      }
+    } catch (error) {
+      log(`Error checking Revolt WebSocket status: ${error}`, "error");
+    }
+  }
+
+  /**
+   * Set up event handlers for Revolt client
+   */
+  private setupEventHandlers(): void {
+    // Ensure client is available
+    if (!this.client) {
+      log("Cannot set up event handlers: Revolt client not initialized", "error");
+      return;
+    }
+
+    // Setup ready event
+    this.client.on("ready", () => {
+      log("Revolt bot is ready", "info");
+      this.isConnected = true;
+      this.isConnecting = false;
+      this.disconnectReason = null;
+      this.registerSlashCommands();
+    });
+
+    // Setup error event
+    this.client.on("error", (err) => {
+      log(`Revolt error: ${err}`, "error");
+      this.lastError = err instanceof Error ? err : new Error(String(err));
+    });
+
+    // Handle message events
+    this.client.on("message", async (message) => {
+      // Skip messages from the bot itself
+      if (message.author?.bot) return;
+      
+      try {
+        // Process commands
+        if (message.content && message.content.startsWith('/')) {
+          // Handle commands
+          log(`Received command: ${message.content}`, "debug");
+        }
+        
+        // Check if this is in a ticket channel
+        if (this.bridge) {
+          // Handle forwarding to Telegram (via Bridge)
+          // TODO: Implement message forwarding
+        }
+      } catch (error) {
+        log(`Error handling Revolt message: ${error}`, "error");
+      }
+    });
+  }
+
+  /**
+   * Register slash commands with Revolt
+   */
+  private async registerSlashCommands(): Promise<void> {
+    try {
+      log("Revolt does not yet support global slash commands like Discord", "info");
+      log("Command registration for Revolt not implemented", "info");
+      // TODO: When Revolt supports slash commands, implement them here
+    } catch (error) {
+      log(`Error registering Revolt slash commands: ${error}`, "error");
+    }
+  }
+
   /**
    * Check if the bot is ready to process commands
    */
   public isReady(): boolean {
-    return this.isConnected;
+    return this.isConnected && this.client && (this.client as any).ready;
   }
   
   /**
@@ -95,16 +288,46 @@ export class RevoltBot {
       throw new Error("Revolt bot is not ready");
     }
     
-    // This is a placeholder implementation
-    return {
-      id: "revolt-server-id",
-      name: "Revolt Server",
-      iconUrl: undefined,
-      memberCount: 0,
-      ownerId: "revolt-owner-id",
-      categories: [],
-      roles: []
-    };
+    try {
+      // Get the default server - in Revolt we might be in multiple servers
+      const server = this.client.servers.array()[0];
+      if (!server) {
+        throw new Error("Revolt bot is not in any servers");
+      }
+      
+      // Get server information
+      const serverId = server._id;
+      const serverName = server.name;
+      const iconUrl = server.icon ? server.icon.url : undefined;
+      const memberCount = server.member_count || 0;
+      const ownerId = server.owner;
+      
+      // Get categories
+      const categories: RevoltCategory[] = [];
+      const channels = server.channels.map(c => this.client.channels.get(c));
+      
+      // Build role list
+      const roles: RevoltRole[] = [];
+      for (const [roleId, role] of Object.entries(server.roles || {})) {
+        roles.push({
+          id: roleId,
+          name: role.name
+        });
+      }
+      
+      return {
+        id: serverId,
+        name: serverName,
+        iconUrl,
+        memberCount,
+        ownerId,
+        categories,
+        roles
+      };
+    } catch (error) {
+      log(`Error getting Revolt server info: ${error}`, "error");
+      throw error;
+    }
   }
   
   /**
@@ -115,7 +338,66 @@ export class RevoltBot {
       throw new Error("Revolt bot is not ready");
     }
     
-    log(`Would send message to Revolt channel ${channelId}: ${content}`, "info");
+    await this.messageCheck();
+    
+    try {
+      // Get the channel from Revolt
+      const channel = this.client.channels.get(channelId);
+      if (!channel) {
+        throw new Error(`Channel with ID ${channelId} not found`);
+      }
+      
+      // Check if the channel is a text channel
+      if (channel.channel_type !== 'TextChannel') {
+        throw new Error(`Channel with ID ${channelId} is not a text channel`);
+      }
+      
+      // Send the message
+      await channel.sendMessage({
+        content
+      });
+      
+      log(`Sent message to Revolt channel ${channelId}`, "debug");
+    } catch (error) {
+      log(`Error sending message to Revolt channel ${channelId}: ${error}`, "error");
+      throw error;
+    }
+  }
+  
+  /**
+   * Send a message using webhooks (with username override)
+   */
+  public async sendWebhookMessage(channelId: string, message: RevoltMessage): Promise<void> {
+    if (!this.isReady()) {
+      throw new Error("Revolt bot is not ready");
+    }
+    
+    await this.messageCheck();
+    
+    try {
+      // For now, just use regular message sending as Revolt's webhook support is limited
+      const channel = this.client.channels.get(channelId);
+      if (!channel) {
+        throw new Error(`Channel with ID ${channelId} not found`);
+      }
+      
+      // Check if the channel is a text channel
+      if (channel.channel_type !== 'TextChannel') {
+        throw new Error(`Channel with ID ${channelId} is not a text channel`);
+      }
+      
+      // Send the message
+      await channel.sendMessage({
+        content: message.content || '',
+        // Note: Embeds and files would be handled differently in Revolt
+        // This is a simplified implementation
+      });
+      
+      log(`Sent webhook-style message to Revolt channel ${channelId}`, "debug");
+    } catch (error) {
+      log(`Error sending webhook message to Revolt channel ${channelId}: ${error}`, "error");
+      throw error;
+    }
   }
   
   /**
@@ -126,12 +408,199 @@ export class RevoltBot {
       throw new Error("Revolt bot is not ready");
     }
     
-    // Generate a mock channel ID
-    const channelId = `revolt-channel-${Date.now()}`;
-    log(`Would create Revolt channel ${name} in category ${categoryId} with ID ${channelId}`, "info");
-    return channelId;
+    await this.checkRateLimit('channelCreate');
+    
+    try {
+      // Get the first server - in Revolt we might be in multiple servers
+      const server = this.client.servers.array()[0];
+      if (!server) {
+        throw new Error("Revolt bot is not in any servers");
+      }
+      
+      // Create the channel
+      const channel = await server.createChannel({
+        type: 'Text',
+        name
+      });
+      
+      log(`Created Revolt channel ${name} with ID ${channel._id}`, "info");
+      return channel._id;
+    } catch (error) {
+      log(`Error creating Revolt channel ${name}: ${error}`, "error");
+      throw error;
+    }
   }
   
+  /**
+   * Create a ticket channel with proper permissions
+   */
+  public async createTicketChannel(categoryId: string, name: string): Promise<string> {
+    if (!this.isReady()) {
+      throw new Error("Revolt bot is not ready");
+    }
+    
+    await this.checkRateLimit('channelCreate');
+    
+    try {
+      // Create base channel
+      const channelId = await this.createChannel(name, categoryId);
+      log(`Created ticket channel ${name} (${channelId}) in category ${categoryId}`, "info");
+      
+      // In a more complete implementation, we'd set up permissions here
+      // However, Revolt's permission model is different from Discord
+      
+      return channelId;
+    } catch (error) {
+      log(`Error creating ticket channel ${name}: ${error}`, "error");
+      throw error;
+    }
+  }
+  
+  /**
+   * Rate limiting utilities
+   */
+  private async checkRateLimit(type: string, id: string = 'global'): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const bucket = this.getBucket(type);
+      this.refillBucket(bucket);
+
+      if (bucket.tokens < 1) {
+        bucket.queue.push({ resolve, reject });
+
+        setTimeout(() => {
+          const index = bucket.queue.findIndex(item => 
+            item.resolve === resolve && item.reject === reject);
+          if (index > -1) {
+            bucket.queue.splice(index, 1);
+            reject(new Error("Rate limit wait timeout"));
+          }
+        }, 30000);
+        return;
+      }
+
+      bucket.tokens -= 1;
+      resolve();
+
+      while (bucket.queue.length > 0 && bucket.tokens >= 1) {
+        const next = bucket.queue.shift();
+        if (next) {
+          bucket.tokens -= 1;
+          next.resolve();
+        }
+      }
+    });
+  }
+
+  private getBucket(key: string): RateLimitBucket {
+    if (!this.rateLimitBuckets.has(key)) {
+      const limit = this.LIMITS[key as keyof typeof this.LIMITS] || this.LIMITS.global;
+      this.rateLimitBuckets.set(key, {
+        tokens: limit.capacity,
+        lastRefill: Date.now(),
+        capacity: limit.capacity,
+        refillRate: limit.capacity / limit.refillTime,
+        queue: []
+      });
+    }
+    return this.rateLimitBuckets.get(key)!;
+  }
+
+  private refillBucket(bucket: RateLimitBucket) {
+    const now = Date.now();
+    const timePassed = now - bucket.lastRefill;
+    const tokensToAdd = timePassed * bucket.refillRate;
+    bucket.tokens = Math.min(bucket.capacity, bucket.tokens + tokensToAdd);
+    bucket.lastRefill = now;
+  }
+
+  // Convenience methods for rate limiting
+  private async globalCheck(): Promise<void> {
+    return this.checkRateLimit('global');
+  }
+
+  private async messageCheck(): Promise<void> {
+    return this.checkRateLimit('message');
+  }
+
+  /**
+   * Start the Revolt bot
+   */
+  public async start(): Promise<void> {
+    try {
+      // Clear any existing timeouts and reset last error
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+      }
+      this.lastError = null;
+      this.isConnecting = true;
+      this.isConnected = false;
+
+      // Validate Revolt token
+      if (!this.token) {
+        const errorMessage = "Revolt bot token is missing";
+        log(errorMessage, "error");
+        this.lastError = new Error(errorMessage);
+        this.isConnecting = false;
+        throw this.lastError;
+      }
+
+      if (this.token === "your_revolt_bot_token_here" || this.token.includes("your_") || this.token.length < 10) {
+        const errorMessage = "Revolt bot token appears to be invalid or a placeholder";
+        log(errorMessage, "error");
+        this.lastError = new Error(errorMessage);
+        this.isConnecting = false;
+        throw this.lastError;
+      }
+
+      // Set connection timeout
+      this.connectionTimeout = setTimeout(() => {
+        log("Connection timeout reached, destroying Revolt client...", "warn");
+        this.lastError = new Error("Connection timeout reached");
+        this.isConnecting = false;
+        this.isConnected = false;
+        this.connectionError = "Connection timeout reached";
+        this.stop().catch(error => log(`Error stopping Revolt client: ${error}`, "error"));
+      }, this.CONNECTION_TIMEOUT);
+
+      log("Attempting to connect to Revolt with provided token...");
+      
+      // Login to Revolt
+      await this.client.loginBot(this.token);
+      
+      // Clear timeout on successful connection
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
+
+      // Update connection status
+      this.isConnecting = false;
+      this.isConnected = true;
+      this.connectionError = null;
+      this.serverId = (this.client.servers.array()[0]?._id) || null;
+      
+      log("Revolt bot started successfully");
+      return;
+    } catch (error) {
+      let errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error starting Revolt bot: ${errorMessage}`, "error");
+      
+      // Clean up timeouts
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
+      
+      // Update connection status
+      this.isConnecting = false;
+      this.isConnected = false;
+      this.connectionError = errorMessage;
+      this.lastError = error instanceof Error ? error : new Error(errorMessage);
+      
+      throw this.lastError;
+    }
+  }
+
   /**
    * Stop the bot and disconnect from Revolt
    */
@@ -141,10 +610,24 @@ export class RevoltBot {
       this.isConnected = false;
       this.isConnecting = false;
       
-      // In real implementation, we would:
-      // 1. Clear any intervals or timeouts
-      // 2. Disconnect the client from the Revolt API
-      // 3. Cleanup any resources
+      // Clear intervals and timeouts
+      if (this.cleanupInterval) {
+        clearInterval(this.cleanupInterval);
+        this.cleanupInterval = null;
+      }
+      
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
+      
+      // Remove all event listeners to prevent memory leaks
+      if (this.client) {
+        this.client.removeAllListeners();
+        if (this.client.events) {
+          this.client.events.removeAllListeners();
+        }
+      }
       
       log("Revolt bot stopped successfully", "info");
     } catch (error) {
@@ -167,20 +650,17 @@ export class RevoltBot {
       this.isConnecting = true;
       this.disconnectReason = null;
       
-      // In real implementation, we would:
-      // 1. Create a new Revolt client if needed
-      // 2. Connect to the Revolt API
-      // 3. Set up event handlers
+      // Stop the current connection
+      await this.stop();
       
-      // Simulate a successful connection
-      this.isConnected = true;
-      this.isConnecting = false;
+      // Start a new connection
+      await this.start();
       
-      log("Revolt bot connected successfully", "info");
+      log("Revolt bot reconnected successfully", "info");
     } catch (error) {
       this.isConnecting = false;
       this.isConnected = false;
-      this.disconnectReason = `Error connecting to Revolt: ${error}`;
+      this.disconnectReason = `Error reconnecting to Revolt: ${error}`;
       log(this.disconnectReason, "error");
       throw error;
     }
