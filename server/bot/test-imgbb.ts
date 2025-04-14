@@ -420,9 +420,8 @@ Recommended approach: ${optimizedResult.successRate > firstResult.successRate ? 
 // Run a comparison to test bridge.ts implementation 
 async function compareWithBridgeImplementation() {
   try {
-    // Import the bridge version
-    const bridgeModule = await import('./bridge');
-    const bridgeUploadToImgbb = bridgeModule.default?.uploadToImgbb || bridgeModule.uploadToImgbb;
+    // Import the bridge version directly to fix import issue
+    const { uploadToImgbb: bridgeUploadToImgbb } = await import('./bridge');
     
     if (!bridgeUploadToImgbb) {
       log('❌ Could not find uploadToImgbb function in bridge.ts', 'error');
