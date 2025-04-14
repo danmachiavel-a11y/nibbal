@@ -1745,6 +1745,72 @@ export async function registerRoutes(app: Express) {
   });
 
   // Platform Management Routes
+  
+  // Configure Revolt token
+  app.post("/api/revolt/configure", async (req, res) => {
+    try {
+      const schema = z.object({
+        revoltToken: z.string().min(5),
+        telegramRevoltToken: z.string().optional(),
+        adminRevoltIds: z.array(z.string()).optional()
+      });
+
+      const result = schema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Invalid request body", 
+          errors: result.error.errors 
+        });
+      }
+
+      // Get existing config
+      const config = await storage.getBotConfig();
+      
+      // Update only the Revolt-specific fields
+      const updatedConfig = await storage.updateBotConfig({
+        revoltToken: result.data.revoltToken,
+        telegramRevoltToken: result.data.telegramRevoltToken || config?.telegramRevoltToken,
+        adminRevoltIds: result.data.adminRevoltIds || config?.adminRevoltIds
+      });
+      
+      // If this is the first time setting up Revolt, try to initialize it
+      if (bridge) {
+        try {
+          log("Attempting to initialize Revolt bot with new token");
+          
+          // If there's no active platform yet, switch to Revolt
+          if (!config || !config.activeProvider || config.activeProvider === 'discord') {
+            log("Not switching platform automatically - waiting for user to explicitly switch");
+          } else if (config.activeProvider === 'revolt') {
+            log("Revolt is already the active platform, restarting the bot");
+            await bridge.switchPlatform('revolt');
+          }
+        } catch (error) {
+          log(`Error initializing Revolt bot: ${error}`, "error");
+        }
+      }
+      
+      res.json({ 
+        success: true, 
+        message: "Revolt token configured successfully",
+        config: {
+          revoltToken: "●●●●●●●●●●", // Don't send back the actual token, just indicate it's set
+          telegramRevoltToken: result.data.telegramRevoltToken ? "●●●●●●●●●●" : null,
+          adminRevoltIds: updatedConfig.adminRevoltIds,
+          activeProvider: updatedConfig.activeProvider
+        }
+      });
+    } catch (error: any) {
+      log(`Error configuring Revolt: ${error}`, "error");
+      res.status(500).json({ 
+        success: false,
+        message: "Failed to configure Revolt", 
+        error: error.message || String(error)
+      });
+    }
+  });
+  
   app.post("/api/switch-platform", async (req, res) => {
     try {
       if (!bridge) {
@@ -1820,8 +1886,8 @@ export async function registerRoutes(app: Express) {
       const activeProvider = config?.activeProvider || 'discord';
       
       // Get platform status information
-      let discordStatus = { connected: false, error: null };
-      let revoltStatus = { connected: false, error: null };
+      let discordStatus: { connected: boolean; error: string | null } = { connected: false, error: null };
+      let revoltStatus: { connected: boolean; error: string | null } = { connected: false, error: null };
       
       if (bridge) {
         // Check Discord status
@@ -1829,7 +1895,8 @@ export async function registerRoutes(app: Express) {
         if (discordBot) {
           discordStatus.connected = discordBot.isReady();
           if (!discordStatus.connected) {
-            discordStatus.error = discordBot.getLastError() || null;
+            const error = discordBot.getLastError();
+            if (error) discordStatus.error = error;
           }
         }
         
@@ -1838,7 +1905,8 @@ export async function registerRoutes(app: Express) {
         if (revoltBot) {
           revoltStatus.connected = revoltBot.isReady();
           if (!revoltStatus.connected) {
-            revoltStatus.error = revoltBot.getDisconnectReason() || null;
+            const error = revoltBot.getDisconnectReason();
+            if (error) revoltStatus.error = error;
           }
         }
       }
