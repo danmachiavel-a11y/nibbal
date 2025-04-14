@@ -414,6 +414,8 @@ function SettingsPage() {
       const submitData = {
         telegramToken: data.telegramToken,
         discordToken: data.discordToken,
+        revoltToken: data.revoltToken,
+        activeProvider: data.activeProvider,
         welcomeMessage: data.welcomeMessage,
         welcomeImageUrl: data.welcomeImageUrl,
         adminTelegramIds: data.adminTelegramIds,
@@ -827,6 +829,35 @@ function SettingsPage() {
                 <CardContent>
                   <Form {...botConfigForm}>
                     <form onSubmit={botConfigForm.handleSubmit(onBotConfigSubmit)} className="space-y-6">
+                      {/* Platform Selection Section */}
+                      <div className="bg-muted/20 border border-border/30 rounded-md p-4 mb-6">
+                        <h4 className="text-sm font-medium mb-3">Platform Selection</h4>
+                        <FormField
+                          control={botConfigForm.control}
+                          name="activeProvider"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Active Secondary Platform</FormLabel>
+                              <FormDescription>
+                                Select which platform to use as the secondary service alongside Telegram
+                              </FormDescription>
+                              <FormControl>
+                                <Tabs
+                                  value={field.value}
+                                  onValueChange={(value) => field.onChange(value)}
+                                  className="w-full"
+                                >
+                                  <TabsList className="grid w-full grid-cols-2">
+                                    <TabsTrigger value="discord">Discord</TabsTrigger>
+                                    <TabsTrigger value="revolt">Revolt</TabsTrigger>
+                                  </TabsList>
+                                </Tabs>
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <FormField
                           control={botConfigForm.control}
@@ -850,12 +881,14 @@ function SettingsPage() {
 
                         <FormField
                           control={botConfigForm.control}
-                          name="discordToken"
+                          name={botConfigForm.watch("activeProvider") === "discord" ? "discordToken" : "revoltToken"}
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Discord Bot Token</FormLabel>
+                              <FormLabel>{botConfigForm.watch("activeProvider") === "discord" ? "Discord" : "Revolt"} Bot Token</FormLabel>
                               <FormDescription>
-                                The Discord Bot token from Discord Developer Portal
+                                {botConfigForm.watch("activeProvider") === "discord" 
+                                  ? "The Discord Bot token from Discord Developer Portal" 
+                                  : "The Revolt Bot token from Revolt Developer Portal"}
                               </FormDescription>
                               <FormControl>
                                 <Input
