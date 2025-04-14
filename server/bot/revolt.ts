@@ -224,14 +224,14 @@ export class RevoltBot {
       this.registerSlashCommands();
     });
 
-    // Setup error event
-    this.client.on("error", (err) => {
+    // Setup error event with type cast to avoid TypeScript errors
+    (this.client as any).on("error", (err: any) => {
       log(`Revolt error: ${err}`, "error");
       this.lastError = err instanceof Error ? err : new Error(String(err));
     });
 
-    // Handle message events
-    this.client.on("message", async (message) => {
+    // Handle message events with type cast to avoid TypeScript errors
+    (this.client as any).on("message", async (message: any) => {
       // Skip messages from the bot itself
       if (message.author?.bot) return;
       
@@ -290,7 +290,8 @@ export class RevoltBot {
     
     try {
       // Get the default server - in Revolt we might be in multiple servers
-      const server = this.client.servers.array()[0];
+      const servers = Object.values(this.client.servers);
+      const server = servers.length > 0 ? servers[0] : null;
       if (!server) {
         throw new Error("Revolt bot is not in any servers");
       }
@@ -304,14 +305,15 @@ export class RevoltBot {
       
       // Get categories
       const categories: RevoltCategory[] = [];
-      const channels = server.channels.map(c => this.client.channels.get(c));
+      const channels = server.channels.map((c: string) => this.client.channels.get(c));
       
       // Build role list
       const roles: RevoltRole[] = [];
-      for (const [roleId, role] of Object.entries(server.roles || {})) {
+      for (const [roleId, roleData] of Object.entries(server.roles || {})) {
+        const role = roleData as any;
         roles.push({
           id: roleId,
-          name: role.name
+          name: role.name || 'Unknown Role'
         });
       }
       
@@ -347,8 +349,9 @@ export class RevoltBot {
         throw new Error(`Channel with ID ${channelId} not found`);
       }
       
-      // Check if the channel is a text channel
-      if (channel.channel_type !== 'TextChannel') {
+      // Check if the channel is a text channel using type assertion
+      const channelAny = channel as any;
+      if ((channelAny.channel_type !== 'TextChannel') && (channelAny.type !== 'TextChannel')) {
         throw new Error(`Channel with ID ${channelId} is not a text channel`);
       }
       
@@ -381,8 +384,9 @@ export class RevoltBot {
         throw new Error(`Channel with ID ${channelId} not found`);
       }
       
-      // Check if the channel is a text channel
-      if (channel.channel_type !== 'TextChannel') {
+      // Check if the channel is a text channel using type assertion
+      const channelAny = channel as any;
+      if ((channelAny.channel_type !== 'TextChannel') && (channelAny.type !== 'TextChannel')) {
         throw new Error(`Channel with ID ${channelId} is not a text channel`);
       }
       
@@ -412,7 +416,8 @@ export class RevoltBot {
     
     try {
       // Get the first server - in Revolt we might be in multiple servers
-      const server = this.client.servers.array()[0];
+      const servers = Object.values(this.client.servers);
+      const server = servers.length > 0 ? servers[0] : null;
       if (!server) {
         throw new Error("Revolt bot is not in any servers");
       }
@@ -577,7 +582,10 @@ export class RevoltBot {
       this.isConnecting = false;
       this.isConnected = true;
       this.connectionError = null;
-      this.serverId = (this.client.servers.array()[0]?._id) || null;
+      
+      // Get first server ID
+      const servers = Object.values(this.client.servers);
+      this.serverId = servers.length > 0 ? servers[0]._id : null;
       
       log("Revolt bot started successfully");
       return;
@@ -674,12 +682,41 @@ export class RevoltBot {
       throw new Error("Revolt bot is not ready");
     }
     
-    // Return mock roles
-    return [
-      { id: "revolt-role-1", name: "Admin" },
-      { id: "revolt-role-2", name: "Moderator" },
-      { id: "revolt-role-3", name: "Member" }
-    ];
+    try {
+      // Get the default server - in Revolt we might be in multiple servers
+      const servers = Object.values(this.client.servers);
+      const server = servers.length > 0 ? servers[0] : null;
+      if (!server) {
+        throw new Error("Revolt bot is not in any servers");
+      }
+      
+      // Get the roles
+      const roles: RevoltRole[] = [];
+      
+      // In Revolt, roles are stored in an object where keys are role IDs
+      for (const [roleId, roleData] of Object.entries(server.roles || {})) {
+        const role = roleData as any;
+        roles.push({
+          id: roleId,
+          name: role.name || 'Unknown Role'
+        });
+      }
+      
+      // If no roles are found but we're connected, provide default roles
+      if (roles.length === 0) {
+        log("No roles found in Revolt server, using default roles", "warn");
+        return [
+          { id: "default-owner", name: "Owner" },
+          { id: "default-admin", name: "Admin" },
+          { id: "default-member", name: "Member" }
+        ];
+      }
+      
+      return roles;
+    } catch (error) {
+      log(`Error getting Revolt roles: ${error}`, "error");
+      throw error;
+    }
   }
   
   /**
@@ -690,12 +727,24 @@ export class RevoltBot {
       return null;
     }
     
-    // Return a mock channel
-    return {
-      id: channelId,
-      name: `Channel ${channelId}`,
-      type: "TextChannel"
-    };
+    try {
+      // Get the channel from Revolt
+      const channel = this.client.channels.get(channelId);
+      if (!channel) {
+        return null;
+      }
+      
+      // Convert to RevoltChannel format
+      const channelAny = channel as any;
+      return {
+        id: channelId,
+        name: channelAny.name || `Channel ${channelId}`,
+        type: channelAny.channel_type || channelAny.type || "TextChannel"
+      };
+    } catch (error) {
+      log(`Error getting Revolt channel ${channelId}: ${error}`, "error");
+      return null;
+    }
   }
   
   /**
@@ -721,5 +770,48 @@ export class RevoltBot {
    */
   public isStartingProcess(): boolean {
     return this.isConnecting;
+  }
+  
+  /**
+   * Send a file to a Revolt channel
+   */
+  public async sendFile(channelId: string, file: Buffer, filename: string, caption?: string): Promise<void> {
+    if (!this.isReady()) {
+      throw new Error("Revolt bot is not ready");
+    }
+    
+    await this.messageCheck();
+    
+    try {
+      // Get the channel from Revolt
+      const channel = this.client.channels.get(channelId);
+      if (!channel) {
+        throw new Error(`Channel with ID ${channelId} not found`);
+      }
+      
+      // Check if the channel is a text channel using type assertion
+      const channelAny = channel as any;
+      if ((channelAny.channel_type !== 'TextChannel') && (channelAny.type !== 'TextChannel')) {
+        throw new Error(`Channel with ID ${channelId} is not a text channel`);
+      }
+      
+      // Send the file using a more flexible approach with type assertions to overcome API typing issues
+      // Cast to any to work around TypeScript limitations with Revolt API
+      const api = this.client.api as any;
+      const upload = await api.post('/attachments', {
+        file
+      });
+      
+      const uploadCast = upload as any;
+      await channel.sendMessage({
+        content: caption || '',
+        attachments: [uploadCast._id || uploadCast.id]
+      });
+      
+      log(`Sent file to Revolt channel ${channelId}`, "debug");
+    } catch (error) {
+      log(`Error sending file to Revolt channel ${channelId}: ${error}`, "error");
+      throw error;
+    }
   }
 }
