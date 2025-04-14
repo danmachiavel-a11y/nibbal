@@ -10,7 +10,7 @@ REPLIT_DISABLE_PACKAGE_LAYER = "1"
 
 [deployment]
 deploymentTarget = "cloudrun"
-build = ["sh", "-c", "npm run build"]
+build = ["sh", "-c", "node scripts/fix-solid-primitives.js && npm run build"]
 run = ["sh", "-c", "PORT=5000 NODE_ENV=production node dist/index.js"]
 
 [[ports]]
