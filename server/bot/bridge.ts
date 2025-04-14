@@ -85,8 +85,8 @@ export class BridgeManager {
     log("Initializing Bridge Manager");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
-    // Create RevoltBot instance but don't auto-start it
-    this.revoltBot = new RevoltBot({ bridge: this });
+    // RevoltBot will be initialized later when needed
+    this.revoltBot = null;
     this.startHealthCheck();
     this.startImageCacheCleanup();
     
@@ -207,18 +207,7 @@ export class BridgeManager {
    * Start the Revolt bot with error handling and retries
    */
   private async startRevoltBot(): Promise<void> {
-    if (!this.revoltBot) {
-      log("RevoltBot is not initialized", "error");
-      return;
-    }
-    
     try {
-      // Check if already started
-      if (this.revoltBot.isReady()) {
-        log("RevoltBot is already running");
-        return;
-      }
-      
       // Get the config to check if token is available
       const config = await storage.getBotConfig();
       if (!config?.revoltToken) {
@@ -233,9 +222,29 @@ export class BridgeManager {
         // TODO: Implement separate Telegram bot instance for Revolt if needed
       }
       
+      // Initialize RevoltBot if it doesn't exist yet
+      if (!this.revoltBot) {
+        log("Initializing new RevoltBot instance");
+        const adminIds = config.adminRevoltIds || [];
+        this.revoltBot = new RevoltBot(config.revoltToken, adminIds);
+      }
+      
+      // Check if already started
+      if (this.revoltBot.isReady()) {
+        log("RevoltBot is already running");
+        return;
+      }
+      
       log("Starting RevoltBot...");
-      await this.revoltBot.start();
-      log("RevoltBot started successfully");
+      // RevoltBot doesn't need explicit start as it's initialized in the constructor
+      // We just ensure it's set up correctly
+      if (this.revoltBot.isStartingProcess()) {
+        log("RevoltBot is already in the process of starting");
+      } else {
+        log("Initializing RevoltBot connection");
+        await this.revoltBot.reconnect();
+      }
+      log("RevoltBot starting process initiated");
     } catch (error) {
       log(`Error starting RevoltBot: ${error}`, "error");
     }
@@ -2108,6 +2117,10 @@ export class BridgeManager {
 
   getDiscordBot(): DiscordBot {
     return this.discordBot;
+  }
+  
+  getRevoltBot(): RevoltBot | null {
+    return this.revoltBot;
   }
 }
 

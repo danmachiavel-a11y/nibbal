@@ -522,8 +522,9 @@ export async function registerRoutes(app: Express) {
         });
       }
     } catch (error) {
-      console.error(`Error switching platform: ${error}`);
-      res.status(500).json({ success: false, error: error.message });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Error switching platform: ${errorMessage}`);
+      res.status(500).json({ success: false, error: errorMessage });
     }
   });
   
@@ -579,10 +580,11 @@ export async function registerRoutes(app: Express) {
         message: "Revolt token updated successfully" 
       });
     } catch (error) {
-      log(`Error updating Revolt token: ${error}`, "error");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error updating Revolt token: ${errorMessage}`, "error");
       res.status(500).json({ 
         success: false, 
-        error: error.message 
+        error: errorMessage 
       });
     }
   });
@@ -727,6 +729,78 @@ export async function registerRoutes(app: Express) {
       return res.status(500).json({
         success: false,
         message: `Error updating Telegram bot configuration: ${error}`
+      });
+    }
+  });
+
+  // Add new route to fetch Revolt server information
+  app.get("/api/revolt/server", async (req, res) => {
+    try {
+      if (!bridge) {
+        return res.status(503).json({ 
+          message: "Bot bridge not initialized",
+          error: "BOT_BRIDGE_UNAVAILABLE" 
+        });
+      }
+      
+      // Check if Revolt is the active platform
+      const config = await storage.getBotConfig();
+      if (config?.activeProvider !== 'revolt') {
+        return res.status(503).json({
+          message: "Revolt is not the active platform. Switch to Revolt platform first.",
+          error: "REVOLT_NOT_ACTIVE",
+          activeProvider: config?.activeProvider
+        });
+      }
+      
+      const revoltBot = bridge.getRevoltBot();
+      if (!revoltBot) {
+        return res.status(503).json({ 
+          message: "Revolt bot not initialized. The bot could not be started.",
+          error: "REVOLT_BOT_UNAVAILABLE"
+        });
+      }
+
+      // Check if the bot is ready
+      if (!revoltBot.isReady()) {
+        const disconnectReason = revoltBot.getDisconnectReason();
+        return res.status(503).json({
+          message: "Revolt bot is not connected.",
+          error: "REVOLT_BOT_NOT_READY",
+          details: disconnectReason || "No additional error details available. Check that your token is valid and properly configured."
+        });
+      }
+
+      try {
+        const serverInfo = await revoltBot.getServerInfo();
+        res.json(serverInfo);
+      } catch (error: any) {
+        // Special case for no servers
+        if (error.message?.includes("Bot is not in any servers")) {
+          return res.status(503).json({
+            message: "Bot is not connected to any Revolt servers. Please invite the bot to your server.",
+            error: "NO_SERVER_CONNECTED",
+            details: "The Revolt bot token is valid but the bot hasn't been invited to any servers."
+          });
+        }
+        
+        // Special case for permissions issues
+        if (error.message?.includes("Missing Permissions") || error.message?.includes("Missing Access")) {
+          return res.status(503).json({
+            message: "The bot doesn't have enough permissions in your Revolt server.",
+            error: "INSUFFICIENT_PERMISSIONS",
+            details: "Make sure the bot has the necessary permissions in the server."
+          });
+        }
+        
+        throw error; // Re-throw to be caught by the outer catch
+      }
+    } catch (error: any) {
+      log(`Error fetching Revolt server info: ${error}`, "error");
+      res.status(500).json({ 
+        message: "Failed to fetch Revolt server info", 
+        error: "REVOLT_SERVER_ERROR",
+        details: error.message || String(error)
       });
     }
   });
