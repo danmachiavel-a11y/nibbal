@@ -59,10 +59,14 @@ app.use((req, res, next) => {
       const http = await import('http');
       const https = await import('https');
       
-      http.default.globalAgent.keepAlive = true;
-      http.default.globalAgent.keepAliveMsecs = 60000; // 1 minute
-      https.default.globalAgent.keepAlive = true;
-      https.default.globalAgent.keepAliveMsecs = 60000; // 1 minute
+      // Set keepAlive on the agents in a type-safe way
+      const httpAgent = http.default.globalAgent as any;
+      const httpsAgent = https.default.globalAgent as any;
+      
+      httpAgent.keepAlive = true;
+      httpAgent.keepAliveMsecs = 60000; // 1 minute
+      httpsAgent.keepAlive = true;
+      httpsAgent.keepAliveMsecs = 60000; // 1 minute
     }
     
     // Verify essential environment variables
