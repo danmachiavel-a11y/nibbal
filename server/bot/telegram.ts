@@ -1221,45 +1221,45 @@ Only one active ticket per service is allowed.`);
 
       // Add clear instructions with the submenu selection
       const message = `━━━━━━━━━━━━━━━━━━━━━━\n🎫 *Create a new support ticket*\n\nPlease select a service from *${submenu.name}*:\n\n⚠️ *This will start a new ticket creation process.*\n━━━━━━━━━━━━━━━━━━━━━━`;
+      
+      // Preserve markdown in the message
+      const formattedMessage = preserveMarkdown(message);
 
-      // Check if we have a callback query and a message with text to edit
-      const hasEditableMessage = 
-        ctx.callbackQuery && 
-        ctx.callbackQuery.message && 
-        'text' in ctx.callbackQuery.message && 
-        ctx.callbackQuery.message.text;
-
-      if (hasEditableMessage) {
-        // Try to edit existing message
-        try {
-          await ctx.editMessageText(preserveMarkdown(message), {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
-          
-          // Answer the callback query to stop loading indicator
-          if (ctx.callbackQuery) {
+      try {
+        // Try to edit existing message if this was triggered by a callback
+        if (ctx.callbackQuery) {
+          try {
+            await ctx.editMessageText(formattedMessage, {
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            });
+            
+            // Answer the callback query to stop loading indicator
             await ctx.answerCbQuery();
+          } catch (error) {
+            // If we can't edit the message (e.g., too old or not sent by bot), send a new one
+            log(`Error editing submenu message: ${error}`, "warn");
+            await ctx.reply(formattedMessage, {
+              parse_mode: "MarkdownV2",
+              reply_markup: { inline_keyboard: keyboard }
+            });
           }
-        } catch (error) {
-          log(`Error editing message: ${error}`, "warn");
-          // Send a new message instead
-          await ctx.reply(preserveMarkdown(message), {
+        } else {
+          // Otherwise send a new message
+          await ctx.reply(formattedMessage, {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
         }
-      } else {
-        // Either no callback query or message has no text (e.g., it's a photo with caption)
-        // Always send a new message in this case
-        await ctx.reply(preserveMarkdown(message), {
-          parse_mode: "MarkdownV2",
-          reply_markup: { inline_keyboard: keyboard }
-        });
-        
-        // If there's a callback query, answer it
-        if (ctx.callbackQuery) {
-          await ctx.answerCbQuery();
+      } catch (error: any) {
+        // If editing fails, send a new message
+        if (error?.message?.includes("message can't be edited")) {
+          await ctx.reply(formattedMessage, {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        } else {
+          throw error; // Re-throw other errors
         }
       }
 
