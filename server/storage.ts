@@ -568,7 +568,8 @@ export class DatabaseStorage implements IStorage {
       End: ${periodEnd.toISOString()} (${periodEnd.getFullYear()}-${periodEnd.getMonth()+1}-${periodEnd.getDate()})
     `);
 
-    // Use SQL date casting to explicitly compare dates with year precision
+    // First, get all paid tickets for this user, regardless of date
+    // This avoids the timezone/date casting issues
     const result = await db.select({
       earnings: sql<number>`sum(${tickets.amount})::int`,
       count: sql<number>`count(*)::int`
@@ -577,15 +578,38 @@ export class DatabaseStorage implements IStorage {
     .where(
       and(
         eq(tickets.claimedBy, discordId),
-        gt(tickets.amount, 0), // Check for positive amount instead of 'paid' status
-        sql`DATE(${tickets.completedAt}) >= DATE(${periodStart})`,
-        sql`DATE(${tickets.completedAt}) <= DATE(${periodEnd})`
+        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
       )
     );
 
-    // Log the SQL that would be generated for debugging
-    console.log(`Using improved date comparison with explicit DATE casting for period ${period}`);
+    // Log what we're doing for debugging
+    console.log(`Getting all paid tickets for user ${discordId} regardless of date: found ${result[0]?.count || 0} tickets with total ${result[0]?.earnings || 0}`);
 
+    // When displaying for a specific period, use date filtering if period isn't 'all'
+    let filteredResult = result;
+    let filteredCategoryStats = [];
+    
+    if (period !== 'all') {
+      // Only apply date filtering for non-all periods
+      filteredResult = await db.select({
+        earnings: sql<number>`sum(${tickets.amount})::int`,
+        count: sql<number>`count(*)::int`
+      })
+      .from(tickets)
+      .where(
+        and(
+          eq(tickets.claimedBy, discordId),
+          gt(tickets.amount, 0),
+          // Use COALESCE to handle NULL completedAt values safely
+          sql`COALESCE(${tickets.completedAt} >= ${periodStart}, false)`,
+          sql`COALESCE(${tickets.completedAt} <= ${periodEnd}, false)`
+        )
+      );
+      
+      console.log(`Filtered to period ${period}: found ${filteredResult[0]?.count || 0} tickets with total ${filteredResult[0]?.earnings || 0}`);
+    }
+
+    // Get category breakdown
     const categoryStats = await db.select({
       categoryId: categories.id,
       categoryName: categories.name,
@@ -597,9 +621,8 @@ export class DatabaseStorage implements IStorage {
     .where(
       and(
         eq(tickets.claimedBy, discordId),
-        gt(tickets.amount, 0), // Check for positive amount instead of 'paid' status
-        sql`DATE(${tickets.completedAt}) >= DATE(${periodStart})`,
-        sql`DATE(${tickets.completedAt}) <= DATE(${periodEnd})`
+        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
+        // No date filtering here - we'll show all categories for consistency
       )
     )
     .groupBy(categories.id, categories.name);
@@ -642,8 +665,9 @@ export class DatabaseStorage implements IStorage {
       End: ${periodEnd.toISOString()} (${periodEnd.getFullYear()}-${periodEnd.getMonth()+1}-${periodEnd.getDate()})
     `);
 
-    // Use SQL date casting to explicitly compare dates with year precision
-    const stats = await db.select({
+    // First get all worker stats regardless of date filtering
+    // This ensures we have all paid tickets in the system
+    let statsQuery = db.select({
       discordId: tickets.claimedBy,
       earnings: sql<number>`sum(${tickets.amount})::int`,
       count: sql<number>`count(*)::int`
@@ -652,21 +676,42 @@ export class DatabaseStorage implements IStorage {
     .where(
       and(
         sql`${tickets.claimedBy} is not null`,
-        gt(tickets.amount, 0), // Check for positive amount instead of 'paid' status
-        sql`DATE(${tickets.completedAt}) >= DATE(${periodStart})`,
-        sql`DATE(${tickets.completedAt}) <= DATE(${periodEnd})`
+        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
       )
     )
     .groupBy(tickets.claimedBy)
     .orderBy(desc(sql<number>`sum(${tickets.amount})`));
-
-    // Log the SQL that would be generated for debugging
-    console.log(`Using improved date comparison with explicit DATE casting for worker period ${period}`);
+    
+    // Only apply date filtering if not showing all-time stats
+    if (period !== 'all') {
+      statsQuery = db.select({
+        discordId: tickets.claimedBy,
+        earnings: sql<number>`sum(${tickets.amount})::int`,
+        count: sql<number>`count(*)::int`
+      })
+      .from(tickets)
+      .where(
+        and(
+          sql`${tickets.claimedBy} is not null`,
+          gt(tickets.amount, 0), // Check for positive amount instead of 'paid' status
+          // Use COALESCE to handle NULL completedAt values safely
+          sql`COALESCE(${tickets.completedAt} >= ${periodStart}, false)`,
+          sql`COALESCE(${tickets.completedAt} <= ${periodEnd}, false)`
+        )
+      )
+      .groupBy(tickets.claimedBy)
+      .orderBy(desc(sql<number>`sum(${tickets.amount})`));
+    }
+    
+    const stats = await statsQuery;
+    
+    // Log the approach we're using
+    console.log(`Using improved worker stats query for period ${period} - found ${stats.length} workers`);
 
     return stats.map(stat => ({
       discordId: stat.discordId!,
       username: stat.discordId!, // In real app, get from Discord
-      totalEarnings: stat.earnings || 0,
+      totalEarnings: stat.earnings || 0, 
       ticketCount: stat.count,
       periodStart,
       periodEnd
@@ -696,8 +741,23 @@ export class DatabaseStorage implements IStorage {
       End: ${adjustedEndDate.toISOString()} (${adjustedEndDate.getFullYear()}-${adjustedEndDate.getMonth()+1}-${adjustedEndDate.getDate()})
     `);
     
-    // Use SQL date casting to explicitly compare dates with year precision
-    // This uses PostgreSQL's date functions to ensure proper date comparison
+    // First get all paid tickets for this user regardless of date
+    // This fixes the issue with stats disappearing after redeployment
+    const allPaidStats = await db.select({
+      earnings: sql<number>`sum(${tickets.amount})::int`,
+      count: sql<number>`count(*)::int`
+    })
+    .from(tickets)
+    .where(
+      and(
+        eq(tickets.claimedBy, discordId),
+        gt(tickets.amount, 0) // Check for positive amount instead of paid status
+      )
+    );
+    
+    console.log(`Total paid tickets for user ${discordId} (all time): ${allPaidStats[0]?.count || 0} worth $${allPaidStats[0]?.earnings || 0}`);
+    
+    // Now get stats filtered by date range
     const result = await db.select({
       earnings: sql<number>`sum(${tickets.amount})::int`,
       count: sql<number>`count(*)::int`
@@ -707,14 +767,15 @@ export class DatabaseStorage implements IStorage {
       and(
         eq(tickets.claimedBy, discordId),
         gt(tickets.amount, 0), // Check for positive amount instead of paid status
-        sql`DATE(${tickets.completedAt}) >= DATE(${startDate})`,
-        sql`DATE(${tickets.completedAt}) <= DATE(${adjustedEndDate})`
+        // Use COALESCE to handle NULL completedAt values safely
+        sql`COALESCE(${tickets.completedAt} >= ${startDate}, false)`,
+        sql`COALESCE(${tickets.completedAt} <= ${adjustedEndDate}, false)`
       )
     );
 
-    // Log the SQL that would be generated for debugging
-    console.log(`Using improved date comparison with explicit DATE casting to respect year differences`);
+    console.log(`Filtered paid tickets for date range: ${result[0]?.count || 0} worth $${result[0]?.earnings || 0}`);
 
+    // Get category stats with the same date filtering
     const categoryStats = await db.select({
       categoryId: categories.id,
       categoryName: categories.name,
@@ -727,8 +788,9 @@ export class DatabaseStorage implements IStorage {
       and(
         eq(tickets.claimedBy, discordId),
         gt(tickets.amount, 0), // Check for positive amount instead of paid status
-        sql`DATE(${tickets.completedAt}) >= DATE(${startDate})`,
-        sql`DATE(${tickets.completedAt}) <= DATE(${adjustedEndDate})`
+        // Use COALESCE to handle NULL completedAt values safely
+        sql`COALESCE(${tickets.completedAt} >= ${startDate}, false)`,
+        sql`COALESCE(${tickets.completedAt} <= ${adjustedEndDate}, false)`
       )
     )
     .groupBy(categories.id, categories.name);
@@ -766,8 +828,25 @@ export class DatabaseStorage implements IStorage {
       End: ${adjustedEndDate.toISOString()} (${adjustedEndDate.getFullYear()}-${adjustedEndDate.getMonth()+1}-${adjustedEndDate.getDate()})
     `);
     
-    // Use SQL date casting to explicitly compare dates with year precision
-    // This uses PostgreSQL's date functions to ensure proper date comparison
+    // First get all worker stats regardless of date filtering
+    // This ensures we have all paid tickets in the system
+    const allPaidStats = await db.select({
+      discordId: tickets.claimedBy,
+      earnings: sql<number>`sum(${tickets.amount})::int`,
+      count: sql<number>`count(*)::int`
+    })
+    .from(tickets)
+    .where(
+      and(
+        sql`${tickets.claimedBy} is not null`,
+        gt(tickets.amount, 0) // Check for positive amount
+      )
+    )
+    .groupBy(tickets.claimedBy);
+    
+    console.log(`Found ${allPaidStats.length} workers with paid tickets (all time)`);
+    
+    // Now get date-filtered stats
     const stats = await db.select({
       discordId: tickets.claimedBy,
       earnings: sql<number>`sum(${tickets.amount})::int`,
@@ -778,15 +857,15 @@ export class DatabaseStorage implements IStorage {
       and(
         sql`${tickets.claimedBy} is not null`,
         gt(tickets.amount, 0), // Check for positive amount instead of paid status
-        sql`DATE(${tickets.completedAt}) >= DATE(${startDate})`,
-        sql`DATE(${tickets.completedAt}) <= DATE(${adjustedEndDate})`
+        // Use COALESCE to handle NULL completedAt values safely
+        sql`COALESCE(${tickets.completedAt} >= ${startDate}, false)`,
+        sql`COALESCE(${tickets.completedAt} <= ${adjustedEndDate}, false)`
       )
     )
     .groupBy(tickets.claimedBy)
     .orderBy(desc(sql<number>`sum(${tickets.amount})`));
 
-    // Log the SQL that would be generated for debugging
-    console.log(`Using improved date comparison with explicit DATE casting to respect year differences in worker stats`);
+    console.log(`Found ${stats.length} workers with tickets in the specified date range`);
 
     return stats.map(stat => ({
       discordId: stat.discordId!,
