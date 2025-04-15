@@ -969,17 +969,35 @@ export class TelegramBot {
       welcomeMessage = preserveMarkdown(welcomeMessage);
       const welcomeImageUrl = botConfig?.welcomeImageUrl;
 
+      // Ensure we have a valid message ID to edit by checking both the callbackQuery and message
+      const hasMessageId = 
+        ctx.callbackQuery && 
+        ctx.callbackQuery.message && 
+        ('message_id' in ctx.callbackQuery.message) && 
+        ctx.callbackQuery.message.message_id;
+
+      const hasText = 
+        ctx.callbackQuery?.message && 
+        'text' in ctx.callbackQuery.message && 
+        ctx.callbackQuery.message.text;
+
       try {
-        // Try to edit existing message if this was triggered by a callback
-        if (ctx.callbackQuery) {
+        // Only try to edit if we have both a message ID and text content
+        if (hasMessageId && hasText && ctx.callbackQuery) {
           try {
+            // Try to edit the existing message
             await ctx.editMessageText(welcomeMessage, {
               parse_mode: "MarkdownV2",
               reply_markup: { inline_keyboard: keyboard }
             });
+            
+            // Answer the callback query to stop loading indicator
+            await ctx.answerCbQuery();
           } catch (error) {
-            // If we can't edit the message (e.g., too old or not sent by bot), send a new one
+            // If editing fails, log the details and send a new message
             log(`Error editing welcome message: ${error}`, "warn");
+            log(`Welcome message details: id=${ctx.callbackQuery?.message?.message_id}, hasText=${!!hasText}`, "debug");
+            
             if (welcomeImageUrl) {
               // Send with image if URL is provided
               await ctx.replyWithPhoto(welcomeImageUrl, {
@@ -994,9 +1012,18 @@ export class TelegramBot {
                 reply_markup: { inline_keyboard: keyboard }
               });
             }
+            
+            // Answer the callback query
+            if (ctx.callbackQuery) {
+              await ctx.answerCbQuery();
+            }
           }
         } else {
-          // Otherwise send a new message
+          // Cannot edit, so send a new message
+          if (ctx.callbackQuery) {
+            log(`Cannot edit main menu message - missing message ID or text content. hasMessageId=${!!hasMessageId}, hasText=${!!hasText}`, "debug");
+          }
+          
           if (welcomeImageUrl) {
             // Send with image if URL is provided
             await ctx.replyWithPhoto(welcomeImageUrl, {
@@ -1011,35 +1038,25 @@ export class TelegramBot {
               reply_markup: { inline_keyboard: keyboard }
             });
           }
+          
+          // Answer the callback query if applicable
+          if (ctx.callbackQuery) {
+            await ctx.answerCbQuery();
+          }
         }
       } catch (error: any) {
-        // If editing fails, send a new message
-        if (error?.message?.includes("message can't be edited")) {
-          if (welcomeImageUrl) {
-            try {
-              // Send with image if URL is provided
-              await ctx.replyWithPhoto(welcomeImageUrl, {
-                caption: welcomeMessage,
-                parse_mode: "MarkdownV2",
-                reply_markup: { inline_keyboard: keyboard }
-              });
-            } catch (photoError) {
-              log(`Error sending welcome image: ${photoError}`, "warn");
-              // Fall back to text only if image fails
-              await ctx.reply(welcomeMessage, {
-                parse_mode: "MarkdownV2",
-                reply_markup: { inline_keyboard: keyboard }
-              });
-            }
-          } else {
-            // Send text only
-            await ctx.reply(welcomeMessage, {
-              parse_mode: "MarkdownV2",
-              reply_markup: { inline_keyboard: keyboard }
-            });
-          }
-        } else {
-          throw error; // Re-throw other errors
+        // Handle any other errors
+        log(`Unexpected error displaying welcome menu: ${error}`, "error");
+        
+        // Send a basic text message as fallback
+        await ctx.reply(welcomeMessage, {
+          parse_mode: "MarkdownV2",
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        
+        // Always answer callback query if present
+        if (ctx.callbackQuery) {
+          await ctx.answerCbQuery("Error loading menu").catch(() => {});
         }
       }
     } catch (error) {
@@ -1225,41 +1242,56 @@ Only one active ticket per service is allowed.`);
       // Preserve markdown in the message
       const formattedMessage = preserveMarkdown(message);
 
-      try {
-        // Try to edit existing message if this was triggered by a callback
-        if (ctx.callbackQuery) {
-          try {
-            await ctx.editMessageText(formattedMessage, {
-              parse_mode: "MarkdownV2",
-              reply_markup: { inline_keyboard: keyboard }
-            });
-            
-            // Answer the callback query to stop loading indicator
+      // Ensure we have a valid message ID to edit by checking both the callbackQuery and message
+      const hasMessageId = 
+        ctx.callbackQuery && 
+        ctx.callbackQuery.message && 
+        ('message_id' in ctx.callbackQuery.message) && 
+        ctx.callbackQuery.message.message_id;
+
+      const hasText = 
+        ctx.callbackQuery?.message && 
+        'text' in ctx.callbackQuery.message && 
+        ctx.callbackQuery.message.text;
+
+      // Only try to edit if we have both a message ID and text content
+      if (hasMessageId && hasText) {
+        try {
+          await ctx.editMessageText(formattedMessage, {
+            parse_mode: "MarkdownV2",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+          
+          // Answer the callback query to stop loading indicator
+          if (ctx.callbackQuery) {
             await ctx.answerCbQuery();
-          } catch (error) {
-            // If we can't edit the message (e.g., too old or not sent by bot), send a new one
-            log(`Error editing submenu message: ${error}`, "warn");
-            await ctx.reply(formattedMessage, {
-              parse_mode: "MarkdownV2",
-              reply_markup: { inline_keyboard: keyboard }
-            });
           }
-        } else {
-          // Otherwise send a new message
+        } catch (error) {
+          log(`Error editing message: ${error}`, "warn");
+          
+          // If editing fails, send a new message, but include a debug log to understand why
+          log(`Message details: id=${ctx.callbackQuery?.message?.message_id}, hasText=${!!hasText}`, "debug");
+
           await ctx.reply(formattedMessage, {
             parse_mode: "MarkdownV2",
             reply_markup: { inline_keyboard: keyboard }
           });
+          
+          if (ctx.callbackQuery) {
+            await ctx.answerCbQuery();
+          }
         }
-      } catch (error: any) {
-        // If editing fails, send a new message
-        if (error?.message?.includes("message can't be edited")) {
-          await ctx.reply(formattedMessage, {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
-        } else {
-          throw error; // Re-throw other errors
+      } else {
+        // Cannot edit, so send a new message
+        log(`Cannot edit message - missing message ID or text content. hasMessageId=${!!hasMessageId}, hasText=${!!hasText}`, "debug");
+        
+        await ctx.reply(formattedMessage, {
+          parse_mode: "MarkdownV2",
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        
+        if (ctx.callbackQuery) {
+          await ctx.answerCbQuery();
         }
       }
 
