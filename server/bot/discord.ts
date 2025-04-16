@@ -2409,6 +2409,25 @@ export class DiscordBot {
     try {
       log(`Creating ticket channel ${name} in category ${categoryId}`);
 
+      // Verify client is authenticated
+      if (!this.client.token) {
+        log("Discord client token not set, attempting to reconnect...", "error");
+        // Check if token is available in environment
+        const token = process.env.DISCORD_BOT_TOKEN;
+        if (!token) {
+          throw new Error("Discord bot token is missing. Please set DISCORD_BOT_TOKEN environment variable.");
+        }
+        
+        // Attempt to log in again
+        await this.client.login(token);
+        
+        // Verify login was successful
+        if (!this.client.token) {
+          throw new Error("Failed to authenticate Discord client with provided token");
+        }
+        log("Discord client successfully reconnected", "info");
+      }
+
       await this.checkRateLimit('channelCreate');
       const category = await this.client.channels.fetch(categoryId);
       if (!category || category.type !== ChannelType.GuildCategory) {
@@ -2487,6 +2506,25 @@ export class DiscordBot {
   async sendMessage(channelId: string, message: WebhookMessage, username: string): Promise<void> {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
+
+      // Verify client is authenticated
+      if (!this.client.token) {
+        log("Discord client token not set before sending message, attempting to reconnect...", "error");
+        // Check if token is available in environment
+        const token = process.env.DISCORD_BOT_TOKEN;
+        if (!token) {
+          throw new Error("Discord bot token is missing. Please set DISCORD_BOT_TOKEN environment variable.");
+        }
+        
+        // Attempt to log in again
+        await this.client.login(token);
+        
+        // Verify login was successful
+        if (!this.client.token) {
+          throw new Error("Failed to authenticate Discord client with provided token");
+        }
+        log("Discord client successfully reconnected", "info");
+      }
 
       // Check rate limits
       await this.globalCheck();
@@ -2662,6 +2700,25 @@ export class DiscordBot {
   async moveChannelToCategory(channelId: string, categoryId: string, isTranscriptCategory: boolean = false): Promise<void> {
     try {
       log(`Moving channel ${channelId} to category ${categoryId} (transcript category: ${isTranscriptCategory})`);
+
+      // Verify client is authenticated
+      if (!this.client.token) {
+        log("Discord client token not set before moving channel, attempting to reconnect...", "error");
+        // Check if token is available in environment
+        const token = process.env.DISCORD_BOT_TOKEN;
+        if (!token) {
+          throw new Error("Discord bot token is missing. Please set DISCORD_BOT_TOKEN environment variable.");
+        }
+        
+        // Attempt to log in again
+        await this.client.login(token);
+        
+        // Verify login was successful
+        if (!this.client.token) {
+          throw new Error("Failed to authenticate Discord client with provided token");
+        }
+        log("Discord client successfully reconnected", "info");
+      }
 
       await this.checkRateLimit('channelEdit'); //Added rate limit check
 
