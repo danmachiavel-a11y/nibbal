@@ -479,7 +479,18 @@ export class DiscordBot {
 
   private setupHandlers() {
     this.client.on("ready", async () => {
-      log("Discord bot ready");
+      const guilds = this.client.guilds.cache.size;
+      log(`Discord bot ready with ${guilds} guilds. Client token present: ${!!this.client.token}`, "info");
+      
+      // Log connected guild information for diagnostic purposes
+      if (guilds > 0) {
+        const guildList = Array.from(this.client.guilds.cache.values())
+          .map(g => `${g.name} (ID: ${g.id}, Members: ${g.memberCount})`);
+        log(`Connected to guilds: ${guildList.join(", ")}`, "info");
+      } else {
+        log("Warning: Discord bot is not connected to any guilds", "warn");
+      }
+      
       await this.registerSlashCommands();
     });
 
@@ -3039,13 +3050,53 @@ export class DiscordBot {
 
   // Create a new Discord client with necessary intents
   private setupClient(): Client {
-    return new Client({
+    const client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent
-      ]
+      ],
+      rest: {
+        // Add custom retry options for REST API calls
+        retries: 5, // Maximum number of retries
+        timeout: 15000 // 15 seconds timeout for requests
+      }
     });
+    
+    // Add reconnection handling
+    client.on('disconnect', (event) => {
+      log(`Discord client disconnected with code ${event.code}. Reason: ${event.reason}`, "warn");
+      log("Will attempt to reconnect automatically...", "info");
+    });
+    
+    client.on('error', (error) => {
+      log(`Discord client error: ${error.message}`, "error");
+      
+      // Check for token-related errors
+      if (error.message.includes("token") || error.message.includes("authentication") || error.message.includes("login")) {
+        log("Discord token may be invalid - will attempt to refresh token on next operation", "warn");
+      }
+    });
+    
+    client.on('reconnecting', () => {
+      log("Discord client reconnecting...", "info");
+    });
+    
+    // Check token is healthy every 5 minutes
+    setInterval(() => {
+      try {
+        if (client.isReady() && !client.token) {
+          log("Discord client has no token despite being ready - attempting to reconnect...", "warn");
+          this.reconnect().catch(e => {
+            log(`Failed to reconnect Discord bot: ${e}`, "error");
+          });
+        }
+      } catch (error) {
+        log(`Error in token health check: ${error}`, "error");
+      }
+    }, 5 * 60 * 1000);
+    
+    return client;
   }
 
   async start() {
