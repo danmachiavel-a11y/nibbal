@@ -49,6 +49,7 @@ interface ImageCacheEntry {
 export class BridgeManager {
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
+  private isDiscordAvailable: boolean = true; // Added to handle Discord unavailability
   private retryAttempts: number = 0;
   private maxRetries: number = 3;
   private retryTimeout: number = 5000;

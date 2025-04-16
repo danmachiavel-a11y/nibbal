@@ -3111,12 +3111,24 @@ export class DiscordBot {
 
       log("Starting Discord bot client...");
 
-      // Validate Discord token
-      const token = process.env.DISCORD_BOT_TOKEN;
-      log(`Discord bot token from env: ${token ? 'exists (length ' + token.length + ')' : 'missing'}`);
+      // Read token directly from .env file instead of environment variables
+      let token;
+      try {
+        const fs = require('fs');
+        const envContent = fs.readFileSync('.env', 'utf8');
+        const lines = envContent.split('\n');
+        const tokenLine = lines.find(l => l.startsWith('DISCORD_BOT_TOKEN='));
+        token = tokenLine ? tokenLine.split('=')[1].trim() : null;
+        log(`Discord bot token from file: ${token ? 'exists (length ' + token.length + ')' : 'missing'}`);
+      } catch (fileError) {
+        log(`Error reading token from file: ${fileError}`, "error");
+        // Fall back to environment variable
+        token = process.env.DISCORD_BOT_TOKEN;
+        log(`Falling back to environment token: ${token ? 'exists (length ' + token.length + ')' : 'missing'}`);
+      }
       
       if (!token) {
-        const errorMessage = "Discord bot token is missing. Please set DISCORD_BOT_TOKEN in your environment variables or .env file.";
+        const errorMessage = "Discord bot token is missing. Please set DISCORD_BOT_TOKEN in your .env file.";
         log(errorMessage, "error");
         this.lastError = new Error(errorMessage);
         this.isConnecting = false;
@@ -3151,7 +3163,7 @@ export class DiscordBot {
           .catch(error => log(`Error destroying client: ${error}`, "error"));
       }, this.wsCleanupConfig.connectionTimeout);
 
-      log("Attempting to connect to Discord with provided token...");
+      log("Attempting to connect to Discord with token from file...");
       await this.client.login(token);
 
       // Clear timeout on successful connection
@@ -3259,13 +3271,29 @@ export class DiscordBot {
           console.log(`Discord login attempt ${loginAttempt + 1}/${maxLoginAttempts}`);
           this.client = this.setupClient();
           
+          // Read token directly from .env file
+          let token;
+          try {
+            const fs = require('fs');
+            const envContent = fs.readFileSync('.env', 'utf8');
+            const lines = envContent.split('\n');
+            const tokenLine = lines.find(l => l.startsWith('DISCORD_BOT_TOKEN='));
+            token = tokenLine ? tokenLine.split('=')[1].trim() : null;
+            console.log(`Discord bot token from file: ${token ? 'exists (length ' + token.length + ')' : 'missing'}`);
+          } catch (fileError) {
+            console.error(`Error reading token from file: ${fileError}`);
+            // Fall back to environment variable
+            token = process.env.DISCORD_BOT_TOKEN;
+            console.log(`Falling back to environment token: ${token ? 'exists (length ' + token.length + ')' : 'missing'}`);
+          }
+          
           // Basic validation of token
-          if (!process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_BOT_TOKEN.length < 20) {
+          if (!token || token.length < 20) {
             throw new Error("Discord token appears to be invalid or missing");
           }
           
           // Try to login
-          await this.client.login(process.env.DISCORD_BOT_TOKEN!);
+          await this.client.login(token);
           
           // If we get here, login succeeded
           this.isConnecting = false;
