@@ -97,6 +97,7 @@ export class DiscordBot {
   private readonly MAX_WEBHOOKS_PER_CHANNEL = 5;
 
   constructor(bridge: BridgeManager) {
+    log(`Initializing Discord bot client, token available: ${process.env.DISCORD_BOT_TOKEN ? 'Yes' : 'No'}`);
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -111,6 +112,9 @@ export class DiscordBot {
     this.startCleanupIntervals();
     this.setupHandlers();
     this.setupRateLimitBuckets();
+    
+    // Log initial client state
+    log(`Discord client initialized, has token: ${this.client.token ? 'Yes' : 'No'}`);
   }
 
   private setupRateLimitBuckets() {
@@ -2409,6 +2413,12 @@ export class DiscordBot {
     try {
       log(`Creating ticket channel ${name} in category ${categoryId}`);
 
+      // Add diagnostic logging
+      const tokenExists = process.env.DISCORD_BOT_TOKEN ? "exists" : "missing";
+      const tokenLength = process.env.DISCORD_BOT_TOKEN ? process.env.DISCORD_BOT_TOKEN.length : 0;
+      const clientHasToken = this.client.token ? "yes" : "no";
+      log(`Discord token diagnostic - Env token: ${tokenExists} (${tokenLength} chars), Client token: ${clientHasToken}`, "debug");
+
       // Verify client is authenticated
       if (!this.client.token) {
         log("Discord client token not set, attempting to reconnect...", "error");
@@ -2417,6 +2427,8 @@ export class DiscordBot {
         if (!token) {
           throw new Error("Discord bot token is missing. Please set DISCORD_BOT_TOKEN environment variable.");
         }
+        
+        log(`Attempting to login with token of length: ${token.length}`);
         
         // Attempt to log in again
         await this.client.login(token);
@@ -3046,8 +3058,12 @@ export class DiscordBot {
       this.isConnecting = true;
       this.isConnected = false;
 
+      log("Starting Discord bot client...");
+
       // Validate Discord token
       const token = process.env.DISCORD_BOT_TOKEN;
+      log(`Discord bot token from env: ${token ? 'exists (length ' + token.length + ')' : 'missing'}`);
+      
       if (!token) {
         const errorMessage = "Discord bot token is missing. Please set DISCORD_BOT_TOKEN in your environment variables or .env file.";
         log(errorMessage, "error");
