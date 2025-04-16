@@ -479,7 +479,17 @@ export class BridgeManager {
           "Telegram"
         ),
         this.startBotWithRetry(
-          () => this.discordBot.start(),
+          () => {
+            // Check if Discord token is present and looks valid
+            const token = process.env.DISCORD_BOT_TOKEN;
+            if (!token || token === "REPLACE_WITH_VALID_DISCORD_BOT_TOKEN" || token.length < 50) {
+              log("Discord bot token is missing or invalid. Skipping Discord bot initialization.", "warn");
+              log("Please set up a valid token using the instructions in discord-setup-instructions.md", "info");
+              this.isDiscordAvailable = false;
+              return Promise.resolve(); // Return resolved promise to continue without Discord
+            }
+            return this.discordBot.start();
+          },
           "Discord"
         )
       ]);
@@ -496,9 +506,13 @@ export class BridgeManager {
           }
         });
         
-        // If all bots failed, throw an error
+        // If all bots failed, throw an error, but handle case where Discord is intentionally skipped
         if (failures.length === results.length) {
-          throw new Error("All bots failed to start");
+          if (!this.isDiscordAvailable && failures.length === 1) {
+            log("Continuing without Discord bot", "warn");
+          } else {
+            throw new Error("All bots failed to start");
+          }
         }
       }
       
