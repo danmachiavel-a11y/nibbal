@@ -3111,16 +3111,28 @@ export class DiscordBot {
 
       log("Starting Discord bot client...");
 
-      // Get token from environment variables
+      // Get token from environment variables with deployment-friendly approach
       let token = process.env.DISCORD_BOT_TOKEN;
       
-      // Additional token validation
+      // Log token status but not the actual token
       if (token) {
         // Remove any quotes or extra whitespace that might have been accidentally added
         token = token.trim().replace(/(^["']|["']$)/g, '');
         log(`Discord bot token from env: exists (length ${token.length})`);
       } else {
-        log(`Discord bot token from env: missing`, "error");
+        // Try to read from alternative environment variables that might be used in deployment
+        const altEnvVars = ['DISCORD_TOKEN', 'BOT_TOKEN', 'DISCORDTOKEN'];
+        for (const varName of altEnvVars) {
+          if (process.env[varName]) {
+            token = process.env[varName].trim().replace(/(^["']|["']$)/g, '');
+            log(`Found Discord token in alternative env var ${varName} (length ${token.length})`);
+            break;
+          }
+        }
+        
+        if (!token) {
+          log(`Discord bot token missing from all environment variables`, "error");
+        }
       }
       
       if (!token) {
@@ -3267,16 +3279,28 @@ export class DiscordBot {
           console.log(`Discord login attempt ${loginAttempt + 1}/${maxLoginAttempts}`);
           this.client = this.setupClient();
           
-          // Get token from environment variables
+          // Get token from environment variables with deployment-friendly approach
           let token = process.env.DISCORD_BOT_TOKEN;
           
-          // Additional token validation
+          // Log token status but not the actual token
           if (token) {
             // Remove any quotes or extra whitespace that might have been accidentally added
             token = token.trim().replace(/(^["']|["']$)/g, '');
             console.log(`Discord bot token from env: exists (length ${token.length})`);
           } else {
-            console.log(`Discord bot token from env: missing`);
+            // Try to read from alternative environment variables that might be used in deployment
+            const altEnvVars = ['DISCORD_TOKEN', 'BOT_TOKEN', 'DISCORDTOKEN'];
+            for (const varName of altEnvVars) {
+              if (process.env[varName]) {
+                token = process.env[varName].trim().replace(/(^["']|["']$)/g, '');
+                console.log(`Found Discord token in alternative env var ${varName} (length ${token.length})`);
+                break;
+              }
+            }
+            
+            if (!token) {
+              console.log(`Discord bot token missing from all environment variables`);
+            }
           }
           
           // Basic validation of token
