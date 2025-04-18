@@ -324,9 +324,28 @@ export class TelegramBot {
     if (!this.bot) return false;
     
     try {
-      await this.telegram.getMe();
-      return true;
+      // Add timeout to getMe operation to avoid hanging
+      const timeoutPromise = new Promise<boolean>((_, reject) => {
+        setTimeout(() => reject(new Error("Connection verification timed out")), 10000);
+      });
+      
+      // Race between the actual operation and the timeout
+      const result = await Promise.race([
+        this.telegram.getMe().then(() => true),
+        timeoutPromise
+      ]);
+      
+      return result === true;
     } catch (error) {
+      // Log specific error types for better diagnosis
+      const errorMessage = String(error);
+      if (errorMessage.includes("ETIMEOUT") || errorMessage.includes("ECONNRESET")) {
+        log(`Telegram connection verification failed due to network issue: ${errorMessage}`, "warn");
+      } else if (errorMessage.includes("Conflict")) {
+        log(`Telegram connection verification failed due to conflict: ${errorMessage}`, "warn");
+      } else {
+        log(`Telegram connection verification failed: ${errorMessage}`, "debug");
+      }
       return false;
     }
   }
@@ -577,35 +596,86 @@ export class TelegramBot {
     // Stop the bot and clear resources
     try {
       if (this.bot) {
-        await this.bot.stop();
+        // Add timeout to stop operation to prevent hanging
+        const stopPromise = this.bot.stop();
+        const timeoutPromise = new Promise<void>((_, reject) => {
+          setTimeout(() => reject(new Error("Bot stop operation timed out")), 5000);
+        });
+        
+        await Promise.race([stopPromise, timeoutPromise]);
       }
     } catch (error) {
       log(`Error stopping Telegram bot during disconnect: ${error}`, "error");
+      // Continue with reconnection logic even if stopping fails
     }
     
     this.bot = null;
     this.stopHeartbeat();
     
-    // Attempt to reconnect if within limits
-    if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
-      const delay = this.calculateBackoffDelay();
-      this.reconnectAttempts++;
-      log(`Will attempt to reconnect Telegram bot in ${delay}ms (attempt ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`, "warn");
-      
-      this.updateConnectionState('reconnecting');
-      
-      setTimeout(async () => {
-        try {
-          await this.start();
-        } catch (error) {
-          log(`Error during reconnect attempt: ${error}`, "error");
-          await this.handleDisconnect();
-        }
-      }, delay);
-    } else {
-      log(`Maximum reconnect attempts reached (${this.MAX_RECONNECT_ATTEMPTS}), giving up`, "error");
-      this.updateConnectionState('disconnected', "Max reconnect attempts exceeded");
+    // Reset on severe failures or after many attempts
+    if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+      // Reset the counter every 30 minutes to allow future reconnection attempts
+      if (Date.now() - this.lastHeartbeatSuccess > 30 * 60 * 1000) {
+        log("Resetting reconnect attempts counter after 30 minute cooldown", "info");
+        this.reconnectAttempts = 0;
+      } else {
+        log(`Maximum reconnect attempts reached (${this.MAX_RECONNECT_ATTEMPTS}), waiting for cooldown`, "error");
+        this.updateConnectionState('disconnected', "Max reconnect attempts exceeded");
+        return;
+      }
     }
+    
+    // Calculate delay with exponential backoff
+    const delay = this.calculateBackoffDelay();
+    this.reconnectAttempts++;
+    log(`Will attempt to reconnect Telegram bot in ${delay}ms (attempt ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})`, "warn");
+    
+    this.updateConnectionState('reconnecting');
+    
+    // Set a reconnection timeout
+    setTimeout(async () => {
+      try {
+        // Check for Telegram API availability before trying to reconnect
+        try {
+          const response = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getMe', {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 10000
+          });
+          
+          if (response.status >= 200 && response.status < 300) {
+            log("Telegram API is available, proceeding with reconnection", "info");
+          } else if (response.status === 409) {
+            // Special handling for conflict errors
+            log("Detected 409 Conflict during pre-connect check, delaying reconnection", "warn");
+            // Wait longer than usual for conflict errors
+            await new Promise(resolve => setTimeout(resolve, 10000));
+          } else {
+            log(`Telegram API returned status ${response.status} during pre-connect check`, "warn");
+          }
+        } catch (apiCheckError) {
+          log(`Error checking Telegram API availability: ${apiCheckError}`, "warn");
+          // Continue anyway, the main reconnection attempt will handle errors
+        }
+        
+        await this.start();
+        // Reset reconnect attempts on successful reconnection
+        this.reconnectAttempts = 0;
+      } catch (error) {
+        log(`Error during reconnect attempt: ${error}`, "error");
+        
+        // Check for specific error types
+        const errorStr = String(error);
+        if (errorStr.includes("409") || errorStr.includes("Conflict")) {
+          log("Detected conflict error, using longer backoff for next attempt", "warn");
+          // Double the usual delay for conflict errors
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        
+        // Continue with reconnection
+        await this.handleDisconnect();
+      }
+    }, delay);
   }
 
   async start() {
@@ -637,7 +707,31 @@ export class TelegramBot {
       }
       
       log("Creating new Telegram bot instance", "debug");
-      this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+      // Use the token loader for better error handling and validation
+      const { loadTelegramToken } = await import('./token-loader');
+      const token = loadTelegramToken() || process.env.TELEGRAM_BOT_TOKEN;
+      
+      if (!token) {
+        throw new Error("Telegram bot token is missing. Please set TELEGRAM_BOT_TOKEN in your .env file.");
+      }
+      
+      // Validate token format
+      if (!token.includes(':')) {
+        log("Warning: Telegram token format appears invalid (should contain a colon ':', e.g., '123456789:AAHabcdef123456...'", "warn");
+      }
+      
+      this.bot = new Telegraf(token, {
+        // Add more robust connection options
+        telegram: {
+          // Increase timeouts for better reliability
+          apiRoot: 'https://api.telegram.org',
+          webhookReply: false,
+          // Add more aggressive timeouts
+          timeoutSeconds: 30,
+          // Maximum number of connection retries
+          retryAfterSeconds: 5
+        }
+      });
       
       // Check connection
       const botInfo = await this.telegram.getMe();
