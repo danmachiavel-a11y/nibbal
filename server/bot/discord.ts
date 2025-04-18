@@ -798,12 +798,15 @@ export class DiscordBot {
       }
 
       if (interaction.commandName === 'reopen') {
+        // First, immediately defer the reply to prevent "Unknown Interaction" errors
+        // This gives us 15 minutes to complete the operation instead of just 3 seconds
+        await interaction.deferReply({ ephemeral: false });
+        
         const ticket = await storage.getTicketByDiscordChannel(interaction.channelId);
 
         if (!ticket) {
-          await interaction.reply({
-            content: "This command can only be used in ticket channels!",
-            ephemeral: true
+          await interaction.editReply({
+            content: "This command can only be used in ticket channels!"
           });
           return;
         }
@@ -811,18 +814,16 @@ export class DiscordBot {
         try {
           // Get category for original category ID with null safety
           if (!ticket.categoryId) {
-            await interaction.reply({
-              content: "This ticket doesn't have a valid category. Please contact an administrator.",
-              ephemeral: true
+            await interaction.editReply({
+              content: "This ticket doesn't have a valid category. Please contact an administrator."
             });
             return;
           }
           
           const category = await storage.getCategory(ticket.categoryId);
           if (!category?.discordCategoryId) {
-            await interaction.reply({
-              content: "No Discord category set for this service. Please set it in the dashboard.",
-              ephemeral: true
+            await interaction.editReply({
+              content: "No Discord category set for this service. Please set it in the dashboard."
             });
             return;
           }
@@ -903,12 +904,11 @@ export class DiscordBot {
             )
             .setTimestamp();
 
-          await interaction.reply({ embeds: [embed] });
+          await interaction.editReply({ embeds: [embed] });
         } catch (error) {
           log(`Error reopening ticket: ${error}`, "error");
-          await interaction.reply({
-            content: "Failed to reopen ticket. Please try again.",
-            ephemeral: true
+          await interaction.editReply({
+            content: "Failed to reopen ticket. Please try again."
           });
         }
       }
