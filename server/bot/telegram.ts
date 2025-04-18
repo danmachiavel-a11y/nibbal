@@ -2062,25 +2062,54 @@ Images/photos are also supported.
     });
     
     this.bot.command('start', async (ctx) => {
-      if (!ctx.from?.id) return;
+      if (!ctx.from?.id) {
+        log("Start command received but ctx.from.id is missing!", "error");
+        return;
+      }
+      
+      // Acknowledge the command immediately to improve user experience
+      try {
+        await ctx.reply("🚀 Processing your request... Please wait a moment.");
+      } catch (ackError) {
+        log(`Error sending initial acknowledgment: ${ackError}`, "error");
+        // Continue processing even if ack fails
+      }
       
       if (!this.checkRateLimit(ctx.from.id, 'command', 'start')) {
-        await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
+        try {
+          await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
+        } catch (e) {
+          log(`Error in rate limit message: ${e}`, "error");
+        }
         return;
       }
       
       try {
         const userId = ctx.from.id;
+        log(`Processing /start command for user ${userId}`, "info");
         
-        // Check if user can be added (under concurrent limit)
-        const canAdd = await this.checkActiveUsers(userId);
-        if (!canAdd) {
-          await ctx.reply("⚠️ Bot is currently at maximum capacity. Please try again in a few minutes.");
-          return;
+        // Skip capacity check in production to prevent blocking users
+        let canAdd = true;
+        
+        // Only apply capacity check in development
+        if (process.env.NODE_ENV !== 'production') {
+          canAdd = await this.checkActiveUsers(userId);
+          if (!canAdd) {
+            await ctx.reply("⚠️ Bot is currently at maximum capacity. Please try again in a few minutes.");
+            return;
+          }
         }
         
         // Check if user is banned
-        const existingUser = await storage.getUserByTelegramId(userId.toString());
+        let existingUser;
+        try {
+          existingUser = await storage.getUserByTelegramId(userId.toString());
+          log(`User lookup result for ${userId}: ${existingUser ? 'Found' : 'Not found'}`, "debug");
+        } catch (userLookupError) {
+          log(`Error looking up user ${userId}: ${userLookupError}`, "error");
+          // Continue anyway and try to create the user
+        }
+        
         if (existingUser && existingUser.isBanned) {
           await ctx.reply(`⛔ You have been banned from using this bot${existingUser.banReason ? ` for: ${existingUser.banReason}` : ""}.`);
           return;
@@ -2088,19 +2117,42 @@ Images/photos are also supported.
         
         // Create user if doesn't exist
         if (!existingUser) {
-          await storage.createUser({
-            telegramId: userId.toString(),
-            username: ctx.from.username || `user_${userId}`,
-            telegramUsername: ctx.from.username,
-            telegramName: [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ')
-          });
-          log(`Created new user with telegramId ${userId}`);
+          try {
+            const newUser = await storage.createUser({
+              telegramId: userId.toString(),
+              username: ctx.from.username || `user_${userId}`,
+              telegramUsername: ctx.from.username,
+              telegramName: [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ')
+            });
+            log(`Created new user with telegramId ${userId} and ID ${newUser.id}`, "info");
+            existingUser = newUser; // Use the newly created user
+          } catch (createError) {
+            log(`Error creating user ${userId}: ${createError}`, "error");
+            
+            // If there's a duplicate key error, try to fetch the user again
+            if (String(createError).includes('duplicate key')) {
+              try {
+                existingUser = await storage.getUserByTelegramId(userId.toString());
+                log(`Retrieved user after duplicate key error: ${existingUser?.id}`, "info");
+              } catch (retryError) {
+                log(`Error on retry lookup: ${retryError}`, "error");
+                // Continue anyway with undefined existingUser
+              }
+            }
+          }
         }
         
         // Check if the user already has active tickets and is in one currently
         if (existingUser) {
           // Get all active tickets
-          const activeTickets = await storage.getActiveTicketsByUserId(existingUser.id);
+          let activeTickets = [];
+          try {
+            activeTickets = await storage.getActiveTicketsByUserId(existingUser.id);
+            log(`User ${userId} has ${activeTickets.length} active tickets`, "debug");
+          } catch (ticketError) {
+            log(`Error getting active tickets for user ${existingUser.id}: ${ticketError}`, "error");
+            // Continue with empty array
+          }
           
           if (activeTickets.length > 0) {
             log(`User ${userId} attempted to start and has ${activeTickets.length} active tickets`);
@@ -2145,10 +2197,20 @@ Images/photos are also supported.
         }
         
         // If we got here, no active tickets, so display category menu
-        await this.handleCategoryMenu(ctx);
+        try {
+          await this.handleCategoryMenu(ctx);
+          log(`Successfully displayed category menu for user ${userId}`, "info");
+        } catch (menuError) {
+          log(`Error displaying category menu: ${menuError}`, "error");
+          await ctx.reply("❌ Sorry, there was an error displaying the menu. Please try /start again.");
+        }
       } catch (error) {
         log(`Error in start command: ${error}`, "error");
-        await ctx.reply("❌ Sorry, there was an error starting the bot. Please try again.");
+        try {
+          await ctx.reply("❌ Sorry, there was an error starting the bot. Please try again later.");
+        } catch (replyError) {
+          log(`Error sending error message: ${replyError}`, "error");
+        }
       }
     });
     
