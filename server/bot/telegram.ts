@@ -719,8 +719,11 @@ export class TelegramBot {
       if (!token) {
         try {
           const { loadTelegramToken } = await import('./token-loader');
-          token = loadTelegramToken();
-          log("Using token from token-loader as fallback", "info");
+          const loadedToken = loadTelegramToken();
+          if (loadedToken) {
+            token = loadedToken;
+            log("Using token from token-loader as fallback", "info");
+          }
         } catch (tokenLoaderError) {
           log(`Error using token-loader, falling back to environment: ${tokenLoaderError}`, "warn");
         }
@@ -756,11 +759,41 @@ export class TelegramBot {
       await this.restoreUserStates();
       
       // Start polling for updates with custom parameters for better reliability
-      await this.bot.launch({
-        // Configure long polling for better stability
-        allowedUpdates: ['message', 'callback_query', 'inline_query', 'channel_post', 'edited_message'],
-        dropPendingUpdates: false
-      });
+      if (process.env.NODE_ENV === 'production') {
+        log("Using production launch configuration with conflict handling", "info");
+        
+        // Set polling parameters for production with conflict prevention
+        const pollingParams = {
+          // Configure long polling for better stability
+          allowed_updates: ['message', 'callback_query', 'inline_query', 'channel_post', 'edited_message'],
+          // In production, we force drop pending updates to avoid conflicts with previous instances
+          drop_pending_updates: true
+        };
+        
+        // Apply the polling params
+        this.bot.telegram.setMyCommands([
+          { command: 'start', description: 'Start a new ticket' },
+          { command: 'close', description: 'Close the current ticket' },
+          { command: 'switch', description: 'Switch between active tickets' },
+          { command: 'info', description: 'Show information about your tickets' },
+          { command: 'ping', description: 'Ping staff for attention' }
+        ]);
+        
+        // Launch with conflict prevention in production
+        await this.bot.launch();
+      } else {
+        // Development environment configuration - more forgiving
+        this.bot.telegram.setMyCommands([
+          { command: 'start', description: 'Start a new ticket' },
+          { command: 'close', description: 'Close the current ticket' },
+          { command: 'switch', description: 'Switch between active tickets' },
+          { command: 'info', description: 'Show information about your tickets' },
+          { command: 'ping', description: 'Ping staff for attention' }
+        ]);
+        
+        // Launch the bot in development mode
+        await this.bot.launch();
+      }
       
       // Start recurring tasks
       this.startHeartbeat();
