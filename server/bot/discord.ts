@@ -2795,14 +2795,15 @@ export class DiscordBot {
       if (rolesWithAccess.length > 0) {
         for (const roleId of rolesWithAccess) {
           if (isTranscriptCategory) {
-            // For transcript categories, staff can view but not send messages
+            // For transcript categories, staff should be able to view AND send messages
+            // This fixes the issue where users with roles can't see or type in closed tickets
             await channel.permissionOverwrites.edit(roleId, {
               ViewChannel: true,
-              SendMessages: false,
+              SendMessages: true,  // Changed from false to true
               ReadMessageHistory: true,
-              AttachFiles: false
+              AttachFiles: true    // Changed from false to true
             });
-            log(`Updated transcript permissions for role ${roleId} - read-only mode`);
+            log(`Updated transcript permissions for role ${roleId} - full access mode (changed from read-only)`);
           } else {
             // For regular categories, staff can view and send messages
             await channel.permissionOverwrites.edit(roleId, {
@@ -3007,14 +3008,15 @@ export class DiscordBot {
       
       // Set role permissions based on category type
       if (isTranscriptCategory) {
-        // For transcript categories, staff can view but not send messages
+        // For transcript categories, staff should be able to view AND send messages
+        // This fixes the issue where users with roles can't type in closed tickets
         await category.permissionOverwrites.edit(role, {
           ViewChannel: true,
-          SendMessages: false,
+          SendMessages: true,  // Changed from false to true
           ReadMessageHistory: true,
-          AttachFiles: false,
+          AttachFiles: true,   // Changed from false to true
         });
-        log(`Set up transcript category permissions for role ${role.name} - read-only`, "info");
+        log(`Set up transcript category permissions for role ${role.name} - full access (changed from read-only)`, "info");
       } else {
         // For regular categories, staff can view and send messages
         await category.permissionOverwrites.edit(role, {
