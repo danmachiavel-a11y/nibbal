@@ -637,11 +637,16 @@ export class TelegramBot {
       try {
         // Check for Telegram API availability before trying to reconnect
         try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+          
           const response = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getMe', {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
-            timeout: 10000
+            signal: controller.signal
           });
+          
+          clearTimeout(timeoutId);
           
           if (response.status >= 200 && response.status < 300) {
             log("Telegram API is available, proceeding with reconnection", "info");
@@ -720,17 +725,13 @@ export class TelegramBot {
         log("Warning: Telegram token format appears invalid (should contain a colon ':', e.g., '123456789:AAHabcdef123456...'", "warn");
       }
       
+      // Create a new Telegram bot instance with reliable connection settings
       this.bot = new Telegraf(token, {
-        // Add more robust connection options
         telegram: {
-          // Increase timeouts for better reliability
           apiRoot: 'https://api.telegram.org',
-          webhookReply: false,
-          // Add more aggressive timeouts
-          timeoutSeconds: 30,
-          // Maximum number of connection retries
-          retryAfterSeconds: 5
-        }
+          webhookReply: false
+        },
+        handlerTimeout: 30000 // 30 seconds timeout for handlers
       });
       
       // Check connection
@@ -743,8 +744,12 @@ export class TelegramBot {
       // Restore user states from database
       await this.restoreUserStates();
       
-      // Start polling for updates
-      await this.bot.launch();
+      // Start polling for updates with custom parameters for better reliability
+      await this.bot.launch({
+        // Configure long polling for better stability
+        allowedUpdates: ['message', 'callback_query', 'inline_query', 'channel_post', 'edited_message'],
+        dropPendingUpdates: false
+      });
       
       // Start recurring tasks
       this.startHeartbeat();
