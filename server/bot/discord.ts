@@ -2750,6 +2750,27 @@ export class DiscordBot {
         throw new Error(`Invalid channel type for channel ${channelId}`);
       }
 
+      // Save the original category permissions BEFORE moving
+      let originalCategoryRoles: string[] = [];
+      if (channel.parent && isTranscriptCategory) {
+        // If we're moving to a transcript category, get roles from the original category
+        const originalCategory = channel.parent;
+        log(`Getting permissions from original category ${originalCategory.id} before moving`);
+        
+        for (const [id, permOverwrite] of originalCategory.permissionOverwrites.cache.entries()) {
+          // Skip everyone role and bot
+          if (id === originalCategory.guild.roles.everyone.id || id === originalCategory.guild.members.me?.id) {
+            continue;
+          }
+          
+          // Check if this role has ViewChannel permission
+          if (permOverwrite.allow.has(PermissionFlagsBits.ViewChannel)) {
+            originalCategoryRoles.push(id);
+            log(`Found role ${id} with access in original category`);
+          }
+        }
+      }
+
       const category = await this.client.channels.fetch(categoryId);
       if (!(category instanceof CategoryChannel)) {
         throw new Error(`Invalid category ${categoryId}`);
@@ -2761,7 +2782,7 @@ export class DiscordBot {
         throw new Error("Failed to get guild from category");
       }
       
-      // Find the roles with ViewChannel permission in the category
+      // Find the roles with ViewChannel permission in the target category
       const categoryPermissions = category.permissionOverwrites.cache;
       const rolesWithAccess: string[] = [];
       
@@ -2774,6 +2795,16 @@ export class DiscordBot {
         // Check if this role has ViewChannel permission
         if (permOverwrite.allow.has(PermissionFlagsBits.ViewChannel)) {
           rolesWithAccess.push(id);
+        }
+      }
+      
+      // Combine roles from both categories if moving to transcript
+      if (isTranscriptCategory && originalCategoryRoles.length > 0) {
+        for (const roleId of originalCategoryRoles) {
+          if (!rolesWithAccess.includes(roleId)) {
+            rolesWithAccess.push(roleId);
+            log(`Added role ${roleId} from original category to roles with access`);
+          }
         }
       }
       
@@ -2799,11 +2830,11 @@ export class DiscordBot {
             // This fixes the issue where users with roles can't see or type in closed tickets
             await channel.permissionOverwrites.edit(roleId, {
               ViewChannel: true,
-              SendMessages: true,  // Changed from false to true
+              SendMessages: true,  // Enable sending messages in transcript categories
               ReadMessageHistory: true,
-              AttachFiles: true    // Changed from false to true
+              AttachFiles: true    // Enable file attachments in transcript categories
             });
-            log(`Updated transcript permissions for role ${roleId} - full access mode (changed from read-only)`);
+            log(`Updated transcript permissions for role ${roleId} - full access mode (view, send, attach)`);
           } else {
             // For regular categories, staff can view and send messages
             await channel.permissionOverwrites.edit(roleId, {
@@ -3006,7 +3037,8 @@ export class DiscordBot {
         ReadMessageHistory: false
       });
       
-      // Set role permissions based on category type
+      // Allow staff with appropriate roles to view and interact with all channels in the category,
+      // regardless of whether it's a regular category or transcript category
       if (isTranscriptCategory) {
         // For transcript categories, staff should be able to view AND send messages
         // This fixes the issue where users with roles can't type in closed tickets
