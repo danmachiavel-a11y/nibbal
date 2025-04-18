@@ -1442,11 +1442,24 @@ Only one active ticket per service is allowed.`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       log(`Error in handleSubmenuClick: ${errorMsg}`, "error");
-      await ctx.reply("❌ There was an error displaying the menu. Please try again.");
+      
+      // Don't send a reply if it's a query timeout error, as it will just fail again
+      if (!errorMsg.includes("query is too old") && !errorMsg.includes("query ID is invalid")) {
+        try {
+          await ctx.reply("❌ There was an error displaying the menu. Please try /start again.");
+        } catch (replyError) {
+          log(`Error sending error reply: ${replyError}`, "error");
+        }
+      }
       
       // Make sure we always answer the callback query to stop the loading indicator
       if (ctx.callbackQuery) {
-        await ctx.answerCbQuery("Error loading menu").catch(() => {});
+        try {
+          await ctx.answerCbQuery("Menu loading error").catch(() => {});
+        } catch (ackError) {
+          // Silent catch - likely a query timeout error
+          log(`Failed to answer callback query: ${ackError}`, "debug");
+        }
       }
     }
   }
