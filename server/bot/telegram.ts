@@ -712,9 +712,19 @@ export class TelegramBot {
       }
       
       log("Creating new Telegram bot instance", "debug");
-      // Use the token loader for better error handling and validation
-      const { loadTelegramToken } = await import('./token-loader');
-      const token = loadTelegramToken() || process.env.TELEGRAM_BOT_TOKEN;
+      // Prioritize environment variable for production deployments
+      let token = process.env.TELEGRAM_BOT_TOKEN;
+      
+      // Fall back to token loader only if environment variable is missing
+      if (!token) {
+        try {
+          const { loadTelegramToken } = await import('./token-loader');
+          token = loadTelegramToken();
+          log("Using token from token-loader as fallback", "info");
+        } catch (tokenLoaderError) {
+          log(`Error using token-loader, falling back to environment: ${tokenLoaderError}`, "warn");
+        }
+      }
       
       if (!token) {
         throw new Error("Telegram bot token is missing. Please set TELEGRAM_BOT_TOKEN in your .env file.");
@@ -722,7 +732,8 @@ export class TelegramBot {
       
       // Validate token format
       if (!token.includes(':')) {
-        log("Warning: Telegram token format appears invalid (should contain a colon ':', e.g., '123456789:AAHabcdef123456...'", "warn");
+        log(`Warning: Telegram token format appears invalid (should contain a colon ':'): ${token.substring(0, 5)}...`, "warn");
+        // Continue anyway - some tokens may have unusual formats
       }
       
       // Create a new Telegram bot instance with reliable connection settings
