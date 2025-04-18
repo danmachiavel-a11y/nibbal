@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { log } from '../vite';
 
 /**
@@ -8,21 +9,28 @@ import { log } from '../vite';
  */
 export function loadDiscordToken(): string | null {
   try {
+    // Get current directory in ESM safe way
+    const currentFilePath = fileURLToPath(import.meta.url);
+    const currentDir = path.dirname(currentFilePath);
+    
     // Try to read directly from .env file
     const possiblePaths = [
       '.env',
       './.env',
       '../.env',
       path.join(process.cwd(), '.env'),
-      path.join(__dirname, '..', '..', '.env')
+      path.join(currentDir, '..', '..', '.env'),
+      path.join(currentDir, '..', '.env'),
     ];
     
     let envContent: string | null = null;
+    let foundPath: string | null = null;
     
     // Try each possible path until we find the .env file
     for (const envPath of possiblePaths) {
       try {
         if (fs.existsSync(envPath)) {
+          foundPath = envPath;
           log(`Found .env file at ${envPath}`);
           envContent = fs.readFileSync(envPath, 'utf8');
           break;
@@ -34,6 +42,7 @@ export function loadDiscordToken(): string | null {
     
     if (!envContent) {
       log('Could not find .env file in any of the expected locations', 'warn');
+      log(`Tried paths: ${possiblePaths.join(', ')}`, 'debug');
       return null;
     }
     
@@ -42,7 +51,7 @@ export function loadDiscordToken(): string | null {
     const tokenLine = lines.find(l => l.trim().startsWith('DISCORD_BOT_TOKEN='));
     
     if (!tokenLine) {
-      log('DISCORD_BOT_TOKEN not found in .env file', 'warn');
+      log(`DISCORD_BOT_TOKEN not found in .env file at ${foundPath}`, 'warn');
       return null;
     }
     

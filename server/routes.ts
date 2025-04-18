@@ -509,6 +509,9 @@ export async function registerRoutes(app: Express) {
       // Update process environment variables
       process.env.DISCORD_BOT_TOKEN = token;
       
+      // Import token loader to verify we can read from .env after updating
+      const { loadDiscordToken } = await import('./bot/token-loader');
+      
       // Import and use the utility function from loadEnv.ts
       const { updateEnvFile } = await import('../utilities/loadEnv.js');
       
@@ -518,6 +521,17 @@ export async function registerRoutes(app: Express) {
         fileUpdated = updateEnvFile({ DISCORD_BOT_TOKEN: token });
         if (fileUpdated) {
           log("Updated .env file with new Discord token", "info");
+          
+          // Verify we can read the token back from the .env file
+          const loadedToken = loadDiscordToken();
+          if (loadedToken) {
+            log(`Successfully verified token can be read back from .env (length: ${loadedToken.length})`, "info");
+            if (loadedToken !== token) {
+              log(`Warning: Token read from .env differs from the one provided! This may cause deployment issues.`, "warn");
+            }
+          } else {
+            log(`Warning: Could not read token back from .env file after update. This may cause deployment issues.`, "warn");
+          }
         } else {
           log("Failed to update .env file", "warn");
         }
