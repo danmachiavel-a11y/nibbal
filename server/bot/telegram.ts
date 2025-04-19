@@ -2311,12 +2311,14 @@ Images/photos are also supported.
         const buttons = [];
         const currentTicketId = userState?.activeTicketId;
         
-        // Create a map of categories for efficient lookup
-        const categoriesMap = new Map(categories.map(c => [c.id, c]));
+        // Get all categories for displaying ticket info
+        const ticketCategories = await storage.getCategories();
+        const categoriesMap = new Map(ticketCategories.map(c => [c.id, c]));
         
         // Create a button for each ticket
         for (const ticket of userTickets) {
-          const category = categoriesMap.get(ticket.categoryId);
+          // Handle potential null categoryId safely
+          const category = ticket.categoryId ? categoriesMap.get(ticket.categoryId) : undefined;
           const categoryName = category ? category.name : "Unknown category";
           
           // Mark currently active ticket
@@ -2502,9 +2504,11 @@ Images/photos are also supported.
           const categoriesMap = new Map();
           
           for (const categoryId of categoryIds) {
-            const category = await storage.getCategory(categoryId!);
-            if (category) {
-              categoriesMap.set(categoryId, category);
+            if (categoryId !== null) {
+              const category = await storage.getCategory(categoryId);
+              if (category) {
+                categoriesMap.set(categoryId, category);
+              }
             }
           }
           
