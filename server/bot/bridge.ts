@@ -1137,7 +1137,8 @@ export class BridgeManager {
         return;
       }
 
-      if (!user.telegramId.match(/^\d+$/)) {
+      // Since telegramId is now a number, we don't need to check its format
+      if (!Number.isFinite(user.telegramId)) {
         log(`Invalid Telegram ID format for user: ${user.id}`, "error");
         return;
       }

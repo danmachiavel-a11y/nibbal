@@ -867,10 +867,13 @@ export class TelegramBot {
     }
   }
 
-  async sendMessage(chatId: number, text: string) {
+  async sendMessage(chatId: number | string, text: string) {
     try {
+      // Convert chatId to number if it's a string
+      const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+      
       // Use the telegram getter for null safety
-      await this.telegram.sendMessage(chatId, preserveMarkdown(text), {
+      await this.telegram.sendMessage(numericChatId, preserveMarkdown(text), {
         parse_mode: "MarkdownV2"
       });
     } catch (error) {
@@ -879,8 +882,11 @@ export class TelegramBot {
     }
   }
 
-  async sendPhoto(chatId: number, photo: Buffer | string, caption?: string): Promise<string | undefined> {
+  async sendPhoto(chatId: number | string, photo: Buffer | string, caption?: string): Promise<string | undefined> {
     try {
+      // Convert chatId to number if it's a string
+      const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+      
       log(`Sending photo to chat ${chatId}`);
       let sentMessage;
 
@@ -888,19 +894,19 @@ export class TelegramBot {
       if (typeof photo === 'string' && photo.startsWith('http')) {
         const response = await fetch(photo);
         const buffer = await response.buffer();
-        sentMessage = await this.telegram.sendPhoto(chatId, { source: buffer }, {
+        sentMessage = await this.telegram.sendPhoto(numericChatId, { source: buffer }, {
           caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       } else if (photo instanceof Buffer) {
         // Handle buffer by using InputFile format
-        sentMessage = await this.telegram.sendPhoto(chatId, { source: photo }, {
+        sentMessage = await this.telegram.sendPhoto(numericChatId, { source: photo }, {
           caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
       } else {
         // Handle file_id string
-        sentMessage = await this.telegram.sendPhoto(chatId, photo, {
+        sentMessage = await this.telegram.sendPhoto(numericChatId, photo, {
           caption: caption ? preserveMarkdown(caption) : undefined,
           parse_mode: "MarkdownV2"
         });
@@ -921,9 +927,12 @@ export class TelegramBot {
     }
   }
 
-  async sendCachedPhoto(chatId: number, fileId: string, caption?: string): Promise<void> {
+  async sendCachedPhoto(chatId: number | string, fileId: string, caption?: string): Promise<void> {
     try {
-      await this.telegram.sendPhoto(chatId, fileId, {
+      // Convert chatId to number if it's a string
+      const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+      
+      await this.telegram.sendPhoto(numericChatId, fileId, {
         caption: caption ? preserveMarkdown(caption) : undefined,
         parse_mode: "MarkdownV2"
       });
@@ -2849,7 +2858,7 @@ Images/photos are also supported.
         try {
           if (targetUser.telegramId) {
             await this.sendMessage(
-              parseInt(targetUser.telegramId),
+              targetUser.telegramId,
               `⛔ You have been banned from using this bot for: ${reason}.`
             );
           }
@@ -2900,7 +2909,7 @@ Images/photos are also supported.
         try {
           if (targetUser.telegramId) {
             await this.sendMessage(
-              parseInt(targetUser.telegramId),
+              targetUser.telegramId,
               "✅ You have been unbanned and can now use the bot again."
             );
           }
