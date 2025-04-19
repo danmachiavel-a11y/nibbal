@@ -40,7 +40,7 @@ export interface IStorage {
   // Bot config operations
   getBotConfig(): Promise<BotConfig | undefined>;
   updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig>;
-  isAdmin(telegramId: string): Promise<boolean>;
+  isAdmin(telegramId: string | number): Promise<boolean>;
   isDiscordAdmin(discordId: string): Promise<boolean>;
   
   // Message queue operations
@@ -52,7 +52,7 @@ export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUsers(): Promise<User[]>;  // Get all users
-  getUserByTelegramId(telegramId: string): Promise<User | undefined>;
+  getUserByTelegramId(telegramId: string | number): Promise<User | undefined>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -152,9 +152,9 @@ export interface IStorage {
   getTicketsByUserId(userId: number): Promise<Ticket[]>;
   
   // User state persistence
-  saveUserState(userId: number, telegramId: string, state: string): Promise<void>;
-  getUserStateByTelegramId(telegramId: string): Promise<string | undefined>;
-  deactivateUserState(telegramId: string): Promise<void>;
+  saveUserState(userId: number, telegramId: string | number, state: string): Promise<void>;
+  getUserStateByTelegramId(telegramId: string | number): Promise<string | undefined>;
+  deactivateUserState(telegramId: string | number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -176,12 +176,14 @@ export class DatabaseStorage implements IStorage {
     return config;
   }
   
-  async isAdmin(telegramId: string): Promise<boolean> {
+  async isAdmin(telegramId: string | number): Promise<boolean> {
     const config = await this.getBotConfig();
     if (!config?.adminTelegramIds || config.adminTelegramIds.length === 0) {
       return false;
     }
-    return config.adminTelegramIds.includes(telegramId);
+    // Convert to string for comparison with adminTelegramIds array which stores string values
+    const strId = telegramId.toString(); 
+    return config.adminTelegramIds.includes(strId);
   }
   
   async isDiscordAdmin(discordId: string): Promise<boolean> {

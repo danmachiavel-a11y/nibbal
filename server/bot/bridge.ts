@@ -509,7 +509,7 @@ export class BridgeManager {
         
         // If all bots failed, throw an error, but handle case where Discord is intentionally skipped
         if (failures.length === results.length) {
-          if (!this.isDiscordAvailable && failures.length === 1 && results.length === 1 && true) {
+          if (!this.isDiscordAvailable && failures.length === 1 && results.length === 1) {
             log("Continuing without Discord bot", "warn");
           } else {
             throw new Error("All bots failed to start");
