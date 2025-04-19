@@ -224,9 +224,22 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(users);
   }
 
-  async getUserByTelegramId(telegramId: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.telegramId, telegramId));
-    return user;
+  async getUserByTelegramId(telegramId: string | number): Promise<User | undefined> {
+    try {
+      // Convert to numeric value for bigint column regardless of input type
+      const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+      
+      if (isNaN(numericId)) {
+        console.log(`[DB] Invalid telegramId format: ${telegramId}`);
+        return undefined;
+      }
+      
+      const [user] = await db.select().from(users).where(eq(users.telegramId, numericId));
+      return user;
+    } catch (error) {
+      console.log(`[DB] Error in getUserByTelegramId(${telegramId}): ${error}`);
+      return undefined;
+    }
   }
 
   async getUserByDiscordId(discordId: string): Promise<User | undefined> {
@@ -240,8 +253,34 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
-    return user;
+    try {
+      // Make sure telegramId is numeric if provided
+      if (insertUser.telegramId) {
+        // Convert to numeric value
+        const numericId = typeof insertUser.telegramId === 'string' 
+          ? parseInt(insertUser.telegramId, 10) 
+          : insertUser.telegramId;
+        
+        if (isNaN(numericId)) {
+          console.log(`[DB] Invalid telegramId format in createUser: ${insertUser.telegramId}`);
+          throw new Error(`Invalid telegramId format: ${insertUser.telegramId}`);
+        }
+        
+        // Update the insertUser object with the numeric ID
+        insertUser = {
+          ...insertUser,
+          telegramId: numericId
+        };
+      }
+      
+      console.log(`[DB] Creating user with values: ${JSON.stringify(insertUser)}`);
+      const [user] = await db.insert(users).values(insertUser).returning();
+      console.log(`[DB] Created user: ${JSON.stringify(user)}`);
+      return user;
+    } catch (error) {
+      console.log(`[DB] Error in createUser: ${error}`);
+      throw error;
+    }
   }
 
   async banUser(id: number, banReason?: string, bannedBy?: string): Promise<void> {
@@ -1029,21 +1068,29 @@ export class DatabaseStorage implements IStorage {
   }
 
   // User state persistence methods
-  async saveUserState(userId: number, telegramId: string, state: string): Promise<void> {
-    try {      
+  async saveUserState(userId: number, telegramId: string | number, state: string): Promise<void> {
+    try {
+      // Convert to numeric value for bigint column
+      const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+      
+      if (isNaN(numericId)) {
+        console.log(`[DB] Invalid telegramId format in saveUserState: ${telegramId}`);
+        throw new Error(`Invalid telegramId format: ${telegramId}`);
+      }
+      
       // First, deactivate any existing states for this telegram ID
       await db
         .update(userStates)
         .set({ isActive: false })
         .where(and(
-          eq(userStates.telegramId, telegramId),
+          eq(userStates.telegramId, numericId),
           eq(userStates.isActive, true)
         ));
       
       // Then create a new active state
       await db.insert(userStates).values({
         userId,
-        telegramId,
+        telegramId: numericId,
         state,
         timestamp: new Date(),
         isActive: true
@@ -1056,13 +1103,21 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async getUserStateByTelegramId(telegramId: string): Promise<string | undefined> {
-    try {      
+  async getUserStateByTelegramId(telegramId: string | number): Promise<string | undefined> {
+    try {
+      // Convert to numeric value for bigint column
+      const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+      
+      if (isNaN(numericId)) {
+        console.log(`[DB] Invalid telegramId format in getUserStateByTelegramId: ${telegramId}`);
+        return undefined;
+      }
+      
       const [userState] = await db
         .select()
         .from(userStates)
         .where(and(
-          eq(userStates.telegramId, telegramId),
+          eq(userStates.telegramId, numericId),
           eq(userStates.isActive, true)
         ))
         .orderBy(desc(userStates.timestamp))
@@ -1081,13 +1136,21 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async deactivateUserState(telegramId: string): Promise<void> {
-    try {      
+  async deactivateUserState(telegramId: string | number): Promise<void> {
+    try {
+      // Convert to numeric value for bigint column
+      const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+      
+      if (isNaN(numericId)) {
+        console.log(`[DB] Invalid telegramId format in deactivateUserState: ${telegramId}`);
+        throw new Error(`Invalid telegramId format: ${telegramId}`);
+      }
+      
       await db
         .update(userStates)
         .set({ isActive: false })
         .where(and(
-          eq(userStates.telegramId, telegramId),
+          eq(userStates.telegramId, numericId),
           eq(userStates.isActive, true)
         ));
       
