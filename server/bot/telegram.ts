@@ -1062,50 +1062,52 @@ export class TelegramBot {
 
   private async handleCategoryMenu(ctx: Context) {
     try {
-      const botConfig = await storage.getBotConfig();
-      const categories = await storage.getCategories();
+      // Fetch bot config and categories in parallel to improve performance
+      const [botConfig, categories] = await Promise.all([
+        storage.getBotConfig(),
+        storage.getCategories()
+      ]);
 
-      const submenus = categories.filter(cat => cat.isSubmenu);
-      const rootCategories = categories.filter(cat => !cat.parentId && !cat.isSubmenu);
+      // Filter categories - do this in a single pass for better performance
+      const submenus = [];
+      const rootCategories = [];
+      
+      for (const cat of categories) {
+        if (cat.isSubmenu) {
+          submenus.push(cat);
+        } else if (!cat.parentId) {
+          rootCategories.push(cat);
+        }
+      }
 
+      // Build keyboard layout
       const keyboard: { text: string; callback_data: string; }[][] = [];
       let currentRow: { text: string; callback_data: string; }[] = [];
 
-      for (const submenu of submenus) {
-        const button = {
-          text: submenu.isClosed ? `🔴 ${submenu.name}` : submenu.name,
-          callback_data: `submenu_${submenu.id}`
-        };
-
-        if (submenu.newRow && currentRow.length > 0) {
-          keyboard.push([...currentRow]);
-          currentRow = [button];
-        } else {
-          currentRow.push(button);
-          if (currentRow.length >= 2) {
+      // Process submenus
+      const processCategories = (categoryList: any[]) => {
+        for (const category of categoryList) {
+          const button = {
+            text: category.isClosed ? `🔴 ${category.name}` : category.name,
+            callback_data: category.isSubmenu ? `submenu_${category.id}` : `category_${category.id}`
+          };
+  
+          if (category.newRow && currentRow.length > 0) {
             keyboard.push([...currentRow]);
-            currentRow = [];
+            currentRow = [button];
+          } else {
+            currentRow.push(button);
+            if (currentRow.length >= 2) {
+              keyboard.push([...currentRow]);
+              currentRow = [];
+            }
           }
         }
-      }
-
-      for (const category of rootCategories) {
-        const button = {
-          text: category.isClosed ? `🔴 ${category.name}` : category.name,
-          callback_data: `category_${category.id}`
-        };
-
-        if (category.newRow && currentRow.length > 0) {
-          keyboard.push([...currentRow]);
-          currentRow = [button];
-        } else {
-          currentRow.push(button);
-          if (currentRow.length >= 2) {
-            keyboard.push([...currentRow]);
-            currentRow = [];
-          }
-        }
-      }
+      };
+      
+      // Process both types of categories
+      processCategories(submenus);
+      processCategories(rootCategories);
 
       if (currentRow.length > 0) {
         keyboard.push(currentRow);
@@ -1117,8 +1119,8 @@ export class TelegramBot {
       // Add clear visual separator and instructions
       welcomeMessage = `━━━━━━━━━━━━━━━━━━━━━━\n🎫 *Create a new support ticket*\n\n${welcomeMessage}\n\n⚠️ *Please select a service category below*\n*This will start a new ticket creation process.*\n━━━━━━━━━━━━━━━━━━━━━━`;
       
-      // Preserve markdown in the enhanced message
-      welcomeMessage = preserveMarkdown(welcomeMessage);
+      // Preserve markdown in the enhanced message (calculate this once)
+      const formattedMessage = preserveMarkdown(welcomeMessage);
       const welcomeImageUrl = botConfig?.welcomeImageUrl;
 
       // Ensure we have a valid message ID to edit by checking both the callbackQuery and message
@@ -1133,36 +1135,30 @@ export class TelegramBot {
         'text' in ctx.callbackQuery.message && 
         ctx.callbackQuery.message.text;
 
+      // Standard message options to reuse
+      const messageOptions = {
+        parse_mode: "MarkdownV2" as const,
+        reply_markup: { inline_keyboard: keyboard }
+      };
+      
       try {
         // Only try to edit if we have both a message ID and text content
         if (hasMessageId && hasText && ctx.callbackQuery) {
           try {
             // Try to edit the existing message
-            await ctx.editMessageText(welcomeMessage, {
-              parse_mode: "MarkdownV2",
-              reply_markup: { inline_keyboard: keyboard }
-            });
+            await ctx.editMessageText(formattedMessage, messageOptions);
             
             // Answer the callback query to stop loading indicator
             await ctx.answerCbQuery();
           } catch (error) {
-            // If editing fails, log the details and send a new message
-            log(`Error editing welcome message: ${error}`, "warn");
-            log(`Welcome message details: id=${ctx.callbackQuery?.message?.message_id}, hasText=${!!hasText}`, "debug");
-            
+            // If editing fails, send a new message
             if (welcomeImageUrl) {
-              // Send with image if URL is provided
               await ctx.replyWithPhoto(welcomeImageUrl, {
-                caption: welcomeMessage,
-                parse_mode: "MarkdownV2",
-                reply_markup: { inline_keyboard: keyboard }
+                caption: formattedMessage,
+                ...messageOptions
               });
             } else {
-              // Send text only
-              await ctx.reply(welcomeMessage, {
-                parse_mode: "MarkdownV2",
-                reply_markup: { inline_keyboard: keyboard }
-              });
+              await ctx.reply(formattedMessage, messageOptions);
             }
             
             // Answer the callback query
@@ -1172,23 +1168,13 @@ export class TelegramBot {
           }
         } else {
           // Cannot edit, so send a new message
-          if (ctx.callbackQuery) {
-            log(`Cannot edit main menu message - missing message ID or text content. hasMessageId=${!!hasMessageId}, hasText=${!!hasText}`, "debug");
-          }
-          
           if (welcomeImageUrl) {
-            // Send with image if URL is provided
             await ctx.replyWithPhoto(welcomeImageUrl, {
-              caption: welcomeMessage,
-              parse_mode: "MarkdownV2",
-              reply_markup: { inline_keyboard: keyboard }
+              caption: formattedMessage,
+              ...messageOptions
             });
           } else {
-            // Send text only
-            await ctx.reply(welcomeMessage, {
-              parse_mode: "MarkdownV2",
-              reply_markup: { inline_keyboard: keyboard }
-            });
+            await ctx.reply(formattedMessage, messageOptions);
           }
           
           // Answer the callback query if applicable
@@ -1196,15 +1182,9 @@ export class TelegramBot {
             await ctx.answerCbQuery();
           }
         }
-      } catch (error: any) {
-        // Handle any other errors
-        log(`Unexpected error displaying welcome menu: ${error}`, "error");
-        
-        // Send a basic text message as fallback
-        await ctx.reply(welcomeMessage, {
-          parse_mode: "MarkdownV2",
-          reply_markup: { inline_keyboard: keyboard }
-        });
+      } catch (error) {
+        // Handle any errors and provide a basic fallback
+        await ctx.reply(formattedMessage, messageOptions);
         
         // Always answer callback query if present
         if (ctx.callbackQuery) {
@@ -1215,10 +1195,11 @@ export class TelegramBot {
       const errorMsg = error instanceof Error ? error.message : String(error);
       log(`Error in handleCategoryMenu: ${errorMsg}`, "error");
       await ctx.reply("❌ There was an error displaying the menu. Please try again.");
-    }
-
-    if (ctx.callbackQuery) {
-      await ctx.answerCbQuery();
+      
+      // Always answer callback query if present
+      if (ctx.callbackQuery) {
+        await ctx.answerCbQuery().catch(() => {});
+      }
     }
   }
 
