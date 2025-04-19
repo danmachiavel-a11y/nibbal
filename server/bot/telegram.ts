@@ -2282,29 +2282,15 @@ Images/photos are also supported.
       if (!ctx.from?.id) return;
       const userId = ctx.from.id;
       
-      console.log(`[SWITCH CMD] User ${userId} executed /switch command`);
-      
-      // Special debugging case for user with ID 2 (the user having the ticket switching issue)
-      if (userId === 1933230287) {
-        console.log(`[SWITCH CMD] SPECIAL DEBUG: Checking user ID 2's tickets`);
-        
-        // Get database user
-        const dbUser = await storage.getUserByTelegramId(1933230287);
-        if (dbUser) {
-          console.log(`[SWITCH CMD] Found database user: ${JSON.stringify(dbUser)}`);
-          
-          // Check specific tickets 
-          const ticket105 = await storage.getTicket(105);
-          const ticket99 = await storage.getTicket(99);
-          
-          console.log(`[SWITCH CMD] Ticket #105 details: ${JSON.stringify(ticket105 || {})}`);
-          console.log(`[SWITCH CMD] Ticket #99 details: ${JSON.stringify(ticket99 || {})}`);
-          
-          // Get all active tickets explicitly
-          const activeTickets = await storage.getActiveTicketsByUserId(dbUser.id);
-          console.log(`[SWITCH CMD] User has ${activeTickets.length} active tickets: ${JSON.stringify(activeTickets.map(t => ({id: t.id, status: t.status})))}`);
-        }
+      // Send immediate acknowledgment to improve user experience
+      try {
+        await ctx.reply("🔄 Loading your tickets...");
+      } catch (ackError) {
+        log(`Error sending initial acknowledgment for switch command: ${ackError}`, "error");
+        // Continue even if ack fails
       }
+      
+      console.log(`[SWITCH CMD] User ${userId} executed /switch command`);
       
       if (!this.checkRateLimit(userId, 'command', 'switch')) {
         await ctx.reply("⚠️ You're sending commands too quickly. Please wait a moment.");
@@ -2313,7 +2299,6 @@ Images/photos are also supported.
       
       try {
         const userState = this.userStates.get(userId);
-        console.log(`[SWITCH CMD] Current user state: ${JSON.stringify(userState || {})}`);
         
         // Check if user is in a questionnaire
         if (userState?.inQuestionnaire) {
@@ -2321,8 +2306,12 @@ Images/photos are also supported.
           return;
         }
         
-        // Get user from database - telegramId is now a number in database
-        const user = await storage.getUserByTelegramId(userId);
+        // Get user from database and fetch categories in parallel to improve performance
+        const [user, categories] = await Promise.all([
+          storage.getUserByTelegramId(userId),
+          storage.getCategories() // Fetch all categories at once
+        ]);
+        
         if (!user) {
           await ctx.reply("❌ Error: User not found. Please use /start to begin again.");
           return;
@@ -2336,22 +2325,13 @@ Images/photos are also supported.
           await ctx.reply("❌ You don't have any active tickets. Use /start to create a new ticket.");
           return;
         }
-        // Previous pause notification removed as requested
         
         // Create buttons for each ticket
         const buttons = [];
         const currentTicketId = userState?.activeTicketId;
         
-        // Get the categories for all tickets upfront to avoid multiple DB calls
-        const categoryIds = [...new Set(userTickets.map(t => t.categoryId).filter(id => id !== null))];
-        const categoriesMap = new Map();
-        
-        for (const categoryId of categoryIds) {
-          const category = await storage.getCategory(categoryId!);
-          if (category) {
-            categoriesMap.set(categoryId, category);
-          }
-        }
+        // Create a map of categories for efficient lookup
+        const categoriesMap = new Map(categories.map(c => [c.id, c]));
         
         // Create a button for each ticket
         for (const ticket of userTickets) {
