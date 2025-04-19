@@ -15,7 +15,7 @@ export const botConfig = pgTable("bot_config", {
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
-  telegramId: text("telegram_id").unique(),
+  telegramId: bigint("telegram_id", { mode: "number" }).unique(), // Explicitly set mode
   discordId: text("discord_id").unique(),
   username: text("username").notNull(),
   isBanned: boolean("is_banned").default(false),
@@ -80,7 +80,7 @@ export const messages = pgTable("messages", {
 // Define message queue table for offline message processing
 export const messageQueue = pgTable("message_queue", {
   id: serial("id").primaryKey(),
-  telegramUserId: text("telegram_user_id").notNull(),
+  telegramUserId: bigint("telegram_user_id", { mode: "number" }).notNull(), // Explicitly set mode
   messageType: text("message_type").notNull(), // 'text', 'photo', 'command'
   content: text("content"), // Message text or serialized command data
   photoId: text("photo_id"), // For photo messages
@@ -95,7 +95,7 @@ export const messageQueue = pgTable("message_queue", {
 export const userStates = pgTable("user_states", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id),
-  telegramId: text("telegram_id").notNull(), // Keep as text for compatibility
+  telegramId: bigint("telegram_id", { mode: "number" }).notNull(), // Explicitly set mode
   state: text("state").notNull(), // JSON serialized state
   timestamp: timestamp("timestamp").defaultNow().notNull(),
   isActive: boolean("is_active").default(true).notNull(),
