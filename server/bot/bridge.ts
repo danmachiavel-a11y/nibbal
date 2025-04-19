@@ -1157,7 +1157,7 @@ export class BridgeManager {
 
         // Send text content if any
         if (content?.trim()) {
-          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${cleanedContent}`);
+          await this.telegramBot.sendMessage(user.telegramId, `${username}: ${cleanedContent}`);
         }
 
         // Process each attachment
@@ -1169,7 +1169,7 @@ export class BridgeManager {
 
               if (cachedImage?.telegramFileId) {
                 log(`Using cached Telegram fileId for ${attachment.url}`);
-                await this.telegramBot.sendCachedPhoto(parseInt(user.telegramId), cachedImage.telegramFileId, `Image from ${username}`);
+                await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `Image from ${username}`);
                 continue;
               }
 
@@ -1181,7 +1181,7 @@ export class BridgeManager {
               log(`Successfully processed image, size: ${buffer.length} bytes`);
 
               const caption = `Image from ${username}`;
-              const fileId = await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, caption);
+              const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, caption);
 
               if (fileId) {
                 this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
@@ -1221,7 +1221,7 @@ export class BridgeManager {
             .replace(/<#(\d+)>/g, "")
             .replace(/\s+/g, " ").trim();
           
-          await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${cleanedTextContent}`);
+          await this.telegramBot.sendMessage(user.telegramId, `${username}: ${cleanedTextContent}`);
         }
 
         // Process and send the image
@@ -1231,7 +1231,7 @@ export class BridgeManager {
 
           if (cachedImage?.telegramFileId) {
             log(`Using cached Telegram fileId for ${imageUrl}`);
-            await this.telegramBot.sendCachedPhoto(parseInt(user.telegramId), cachedImage.telegramFileId, `Image from ${username}`);
+            await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `Image from ${username}`);
             return;
           }
 
@@ -1242,7 +1242,7 @@ export class BridgeManager {
           }
           log(`Successfully processed image, size: ${buffer.length} bytes`);
 
-          const fileId = await this.telegramBot.sendPhoto(parseInt(user.telegramId), buffer, `Image from ${username}`);
+          const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, `Image from ${username}`);
 
           if (fileId) {
             this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
@@ -1269,7 +1269,7 @@ export class BridgeManager {
           .replace(/<#(\d+)>/g, "")
           .replace(/\s+/g, " ").trim();
           
-        await this.telegramBot.sendMessage(parseInt(user.telegramId), `${username}: ${cleanedContent}`);
+        await this.telegramBot.sendMessage(user.telegramId, `${username}: ${cleanedContent}`);
       }
 
       log(`Successfully sent message to Telegram user: ${user.username}`);
@@ -1537,7 +1537,7 @@ export class BridgeManager {
 
       // Send the message
       await this.telegramBot.sendMessage(
-        parseInt(user.telegramId),
+        user.telegramId,
         message
       );
 

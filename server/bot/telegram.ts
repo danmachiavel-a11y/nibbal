@@ -2140,8 +2140,9 @@ Images/photos are also supported.
         // Create user if doesn't exist
         if (!existingUser) {
           try {
+            // Since database is now using bigint for telegramId, pass it directly as a number
             const newUser = await storage.createUser({
-              telegramId: userId.toString(),
+              telegramId: userId, // Pass as number directly
               username: ctx.from.username || `user_${userId}`,
               telegramUsername: ctx.from.username,
               telegramName: [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ')
