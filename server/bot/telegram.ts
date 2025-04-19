@@ -2288,7 +2288,7 @@ Images/photos are also supported.
         }
         
         // Get user from database and fetch categories in parallel to improve performance
-        const [user, categories] = await Promise.all([
+        const [user, switchCategories] = await Promise.all([
           storage.getUserByTelegramId(userId),
           storage.getCategories() // Fetch all categories at once
         ]);
@@ -2297,6 +2297,8 @@ Images/photos are also supported.
           await ctx.reply("❌ Error: User not found. Please use /start to begin again.");
           return;
         }
+        
+        // We don't need to re-fetch categories since we already have them
         
         // Get all active tickets for this user
         const userTickets = await storage.getActiveTicketsByUserId(user.id);
@@ -2311,9 +2313,8 @@ Images/photos are also supported.
         const buttons = [];
         const currentTicketId = userState?.activeTicketId;
         
-        // Get all categories for displaying ticket info
-        const ticketCategories = await storage.getCategories();
-        const categoriesMap = new Map(ticketCategories.map(c => [c.id, c]));
+        // Use the categories we already fetched instead of making another database call
+        const categoriesMap = new Map(switchCategories.map(c => [c.id, c]));
         
         // Create a button for each ticket
         for (const ticket of userTickets) {
