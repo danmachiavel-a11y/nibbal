@@ -2168,7 +2168,8 @@ Images/photos are also supported.
         // Check if the user already has active tickets and is in one currently
         if (existingUser) {
           // Get all active tickets
-          let activeTickets = [];
+          // Explicitly type as any[] initially to avoid type issues
+          let activeTickets: any[] = [];
           try {
             activeTickets = await storage.getActiveTicketsByUserId(existingUser.id);
             log(`User ${userId} has ${activeTickets.length} active tickets`, "debug");
@@ -2288,7 +2289,7 @@ Images/photos are also supported.
         console.log(`[SWITCH CMD] SPECIAL DEBUG: Checking user ID 2's tickets`);
         
         // Get database user
-        const dbUser = await storage.getUserByTelegramId("1933230287");
+        const dbUser = await storage.getUserByTelegramId(1933230287);
         if (dbUser) {
           console.log(`[SWITCH CMD] Found database user: ${JSON.stringify(dbUser)}`);
           
@@ -2320,8 +2321,8 @@ Images/photos are also supported.
           return;
         }
         
-        // Get user from database
-        const user = await storage.getUserByTelegramId(userId.toString());
+        // Get user from database - telegramId is now a number in database
+        const user = await storage.getUserByTelegramId(userId);
         if (!user) {
           await ctx.reply("❌ Error: User not found. Please use /start to begin again.");
           return;
@@ -2447,7 +2448,7 @@ Images/photos are also supported.
           
           // Delete state from database as well
           try {
-            await storage.deactivateUserState(userId.toString());
+            await storage.deactivateUserState(userId); // Pass directly as number
           } catch (stateError) {
             console.log(`Error clearing persisted state: ${stateError}`);
           }
@@ -2457,8 +2458,8 @@ Images/photos are also supported.
         }
         
         // If not in questionnaire, process as normal close command
-        // Find the user
-        const user = await storage.getUserByTelegramId(userId.toString());
+        // Find the user - use numeric ID directly
+        const user = await storage.getUserByTelegramId(userId);
         if (!user) {
           console.log(`User with telegram ID ${userId} not found in database`);
           await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
