@@ -759,7 +759,7 @@ export class BridgeManager {
     content: string, 
     options?: { 
       showForceButton?: boolean, 
-      telegramId?: string,
+      telegramId?: string | number,
       ticketId?: number,
       username?: string
     }

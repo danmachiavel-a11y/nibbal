@@ -1618,7 +1618,7 @@ Only one active ticket per service is allowed.`);
               `**Note:** User has created a new ticket #${ticket.id} in the ${(await storage.getCategory(state.categoryId))?.name || "unknown"} category.`,
               {
                 showForceButton: true,
-                telegramId: user.telegramId || "",
+                telegramId: user.telegramId || 0, // Using 0 as fallback for numeric type
                 ticketId: otherTicket.id, // Button to force back to THIS ticket
                 username: user.telegramName || user.username
               }
@@ -2774,7 +2774,8 @@ Images/photos are also supported.
             // Get the user who created this ticket
             const ticketUser = await storage.getUser(ticket.userId);
             if (ticketUser && ticketUser.telegramId) {
-              const telegramId = parseInt(ticketUser.telegramId);
+              // telegramId is already a number from the database
+              const telegramId = ticketUser.telegramId;
               const userState = this.userStates.get(telegramId);
               
               if (userState && userState.activeTicketId === ticket.id) {
