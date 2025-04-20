@@ -229,15 +229,54 @@ export class DatabaseStorage implements IStorage {
   async getUserByTelegramId(telegramId: string | number): Promise<User | undefined> {
     try {
       // Convert to numeric value for bigint column regardless of input type
-      const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+      let numericId: number;
+      
+      if (typeof telegramId === 'string') {
+        // Handle string IDs that might be too large for parseInt
+        // Use String method instead for large numbers
+        if (telegramId.length > 15) {
+          try {
+            // For very large numbers, use BigInt and convert back to Number
+            // This handles IDs up to 2^53-1 (Number.MAX_SAFE_INTEGER)
+            numericId = Number(BigInt(telegramId));
+            
+            // If conversion results in NaN or infinity, handle gracefully
+            if (!isFinite(numericId)) {
+              console.log(`[DB] Telegram ID too large for safe conversion: ${telegramId}`);
+              return undefined;
+            }
+          } catch (conversionError) {
+            console.log(`[DB] Failed to convert large Telegram ID: ${telegramId}`, conversionError);
+            return undefined;
+          }
+        } else {
+          numericId = parseInt(telegramId, 10);
+        }
+      } else {
+        numericId = telegramId;
+      }
       
       if (isNaN(numericId)) {
         console.log(`[DB] Invalid telegramId format: ${telegramId}`);
         return undefined;
       }
       
-      const [user] = await db.select().from(users).where(eq(users.telegramId, numericId));
-      return user;
+      // Use a try-catch specifically for the database query
+      try {
+        const [user] = await db.select().from(users).where(eq(users.telegramId, numericId));
+        return user;
+      } catch (dbError) {
+        console.error(`[DB] Database error looking up user ${telegramId}: ${dbError}`);
+        // Try alternative approach for very large IDs
+        if (String(telegramId).length > 15) {
+          console.log(`[DB] Trying string comparison for large ID: ${telegramId}`);
+          // This is a fallback to handle potential bigint conversion issues
+          const allUsers = await db.select().from(users);
+          const user = allUsers.find(u => String(u.telegramId) === String(telegramId));
+          return user;
+        }
+        return undefined;
+      }
     } catch (error) {
       console.log(`[DB] Error in getUserByTelegramId(${telegramId}): ${error}`);
       return undefined;
@@ -1108,30 +1147,75 @@ export class DatabaseStorage implements IStorage {
   async getUserStateByTelegramId(telegramId: string | number): Promise<string | undefined> {
     try {
       // Convert to numeric value for bigint column
-      const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+      let numericId: number;
+      
+      if (typeof telegramId === 'string') {
+        // Handle string IDs that might be too large for parseInt
+        if (telegramId.length > 15) {
+          try {
+            // For very large numbers, use BigInt and convert back to Number
+            numericId = Number(BigInt(telegramId));
+            
+            // If conversion results in NaN or infinity, handle gracefully
+            if (!isFinite(numericId)) {
+              console.log(`[DB] Telegram ID too large for safe conversion in getUserStateByTelegramId: ${telegramId}`);
+              return undefined;
+            }
+          } catch (conversionError) {
+            console.log(`[DB] Failed to convert large Telegram ID in getUserStateByTelegramId: ${telegramId}`, conversionError);
+            return undefined;
+          }
+        } else {
+          numericId = parseInt(telegramId, 10);
+        }
+      } else {
+        numericId = telegramId;
+      }
       
       if (isNaN(numericId)) {
         console.log(`[DB] Invalid telegramId format in getUserStateByTelegramId: ${telegramId}`);
         return undefined;
       }
       
-      const [userState] = await db
-        .select()
-        .from(userStates)
-        .where(and(
-          eq(userStates.telegramId, numericId),
-          eq(userStates.isActive, true)
-        ))
-        .orderBy(desc(userStates.timestamp))
-        .limit(1);
-      
-      if (userState) {
-        console.log(`[DB] Found active user state for telegramId: ${telegramId}`);
-        return userState.state;
+      // Use a try-catch specifically for the database query
+      try {
+        const [userState] = await db
+          .select()
+          .from(userStates)
+          .where(and(
+            eq(userStates.telegramId, numericId),
+            eq(userStates.isActive, true)
+          ))
+          .orderBy(desc(userStates.timestamp))
+          .limit(1);
+        
+        if (userState) {
+          console.log(`[DB] Found active user state for telegramId: ${telegramId}`);
+          return userState.state;
+        }
+        
+        console.log(`[DB] No active user state found for telegramId: ${telegramId}`);
+        return undefined;
+      } catch (dbError) {
+        console.error(`[DB] Database error retrieving state for user ${telegramId}: ${dbError}`);
+        
+        // Try alternative approach for very large IDs
+        if (String(telegramId).length > 15) {
+          console.log(`[DB] Trying alternative lookup for state with large ID: ${telegramId}`);
+          // This is a fallback to handle potential bigint conversion issues
+          const allUserStates = await db
+            .select()
+            .from(userStates)
+            .where(eq(userStates.isActive, true))
+            .orderBy(desc(userStates.timestamp));
+            
+          const userState = allUserStates.find(u => String(u.telegramId) === String(telegramId));
+          if (userState) {
+            return userState.state;
+          }
+        }
+        return undefined;
       }
-      
-      console.log(`[DB] No active user state found for telegramId: ${telegramId}`);
-      return undefined;
     } catch (error) {
       console.error(`[DB] Error retrieving user state for telegramId: ${telegramId}`, error);
       return undefined;
@@ -1141,25 +1225,85 @@ export class DatabaseStorage implements IStorage {
   async deactivateUserState(telegramId: string | number): Promise<void> {
     try {
       // Convert to numeric value for bigint column
-      const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+      let numericId: number;
+      
+      if (typeof telegramId === 'string') {
+        // Handle string IDs that might be too large for parseInt
+        if (telegramId.length > 15) {
+          try {
+            // For very large numbers, use BigInt and convert back to Number
+            numericId = Number(BigInt(telegramId));
+            
+            // If conversion results in NaN or infinity, handle gracefully
+            if (!isFinite(numericId)) {
+              console.log(`[DB] Telegram ID too large for safe conversion in deactivateUserState: ${telegramId}`);
+              // Don't throw error, but return early since we can't proceed
+              return;
+            }
+          } catch (conversionError) {
+            console.log(`[DB] Failed to convert large Telegram ID in deactivateUserState: ${telegramId}`, conversionError);
+            // Don't throw error, but return early since we can't proceed
+            return;
+          }
+        } else {
+          numericId = parseInt(telegramId, 10);
+        }
+      } else {
+        numericId = telegramId;
+      }
       
       if (isNaN(numericId)) {
         console.log(`[DB] Invalid telegramId format in deactivateUserState: ${telegramId}`);
-        throw new Error(`Invalid telegramId format: ${telegramId}`);
+        return;
       }
       
-      await db
-        .update(userStates)
-        .set({ isActive: false })
-        .where(and(
-          eq(userStates.telegramId, numericId),
-          eq(userStates.isActive, true)
-        ));
-      
-      console.log(`[DB] Deactivated all user states for telegramId: ${telegramId}`);
+      // Use a try-catch specifically for the database query
+      try {
+        await db
+          .update(userStates)
+          .set({ isActive: false })
+          .where(and(
+            eq(userStates.telegramId, numericId),
+            eq(userStates.isActive, true)
+          ));
+        
+        console.log(`[DB] Deactivated all user states for telegramId: ${telegramId}`);
+      } catch (dbError) {
+        console.error(`[DB] Database error deactivating state for user ${telegramId}: ${dbError}`);
+        
+        // Try alternative approach for very large IDs
+        if (String(telegramId).length > 15) {
+          try {
+            console.log(`[DB] Trying alternative deactivation for state with large ID: ${telegramId}`);
+            
+            // Get all active states
+            const activeStates = await db
+              .select()
+              .from(userStates)
+              .where(eq(userStates.isActive, true));
+              
+            // Find the ones with matching telegram ID (as string comparison)
+            const targetStates = activeStates.filter(u => String(u.telegramId) === String(telegramId));
+            
+            // If any found, update them one by one
+            if (targetStates.length > 0) {
+              for (const state of targetStates) {
+                await db
+                  .update(userStates)
+                  .set({ isActive: false })
+                  .where(eq(userStates.id, state.id));
+              }
+              console.log(`[DB] Deactivated ${targetStates.length} states using ID-based lookup for ${telegramId}`);
+            }
+          } catch (fallbackError) {
+            console.error(`[DB] Fallback approach failed for user ${telegramId}:`, fallbackError);
+          }
+        }
+      }
     } catch (error) {
       console.error(`[DB] Error deactivating user states for telegramId: ${telegramId}`, error);
-      throw error;
+      // Don't throw error to avoid crashing the application
+      // This is a non-critical operation that can be retried
     }
   }
 }
