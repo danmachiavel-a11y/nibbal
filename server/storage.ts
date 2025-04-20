@@ -297,14 +297,37 @@ export class DatabaseStorage implements IStorage {
     try {
       // Make sure telegramId is numeric if provided
       if (insertUser.telegramId) {
-        // Convert to numeric value
-        const numericId = typeof insertUser.telegramId === 'string' 
-          ? parseInt(insertUser.telegramId, 10) 
-          : insertUser.telegramId;
+        // Handle conversion for large IDs
+        let numericId: number;
+        const telegramId = insertUser.telegramId;
+        
+        if (typeof telegramId === 'string') {
+          // Handle string IDs that might be too large for parseInt
+          const telegramIdStr = telegramId as string;
+          if (telegramIdStr.length > 15) {
+            try {
+              // For very large numbers, use BigInt and convert back to Number
+              numericId = Number(BigInt(telegramId));
+              
+              // If conversion results in NaN or infinity, handle gracefully
+              if (!isFinite(numericId)) {
+                console.log(`[DB] Telegram ID too large for safe conversion in createUser: ${telegramId}`);
+                throw new Error(`Telegram ID too large for safe conversion: ${telegramId}`);
+              }
+            } catch (conversionError) {
+              console.log(`[DB] Failed to convert large Telegram ID in createUser: ${telegramId}`, conversionError);
+              throw new Error(`Failed to convert Telegram ID: ${telegramId}`);
+            }
+          } else {
+            numericId = parseInt(telegramId, 10);
+          }
+        } else {
+          numericId = telegramId;
+        }
         
         if (isNaN(numericId)) {
-          console.log(`[DB] Invalid telegramId format in createUser: ${insertUser.telegramId}`);
-          throw new Error(`Invalid telegramId format: ${insertUser.telegramId}`);
+          console.log(`[DB] Invalid telegramId format in createUser: ${telegramId}`);
+          throw new Error(`Invalid telegramId format: ${telegramId}`);
         }
         
         // Update the insertUser object with the numeric ID
@@ -315,9 +338,29 @@ export class DatabaseStorage implements IStorage {
       }
       
       console.log(`[DB] Creating user with values: ${JSON.stringify(insertUser)}`);
-      const [user] = await db.insert(users).values(insertUser).returning();
-      console.log(`[DB] Created user: ${JSON.stringify(user)}`);
-      return user;
+      
+      try {
+        const [user] = await db.insert(users).values(insertUser).returning();
+        console.log(`[DB] Created user: ${JSON.stringify(user)}`);
+        return user;
+      } catch (dbError) {
+        console.error(`[DB] Database error creating user:`, dbError);
+        
+        // If this was a duplicate key error, try to find the existing user
+        const error = dbError as Error;
+        if (insertUser.telegramId && error.message?.includes('duplicate')) {
+          console.log(`[DB] Possible duplicate user, checking if user already exists with telegramId: ${insertUser.telegramId}`);
+          
+          // Look up the existing user
+          const existingUser = await this.getUserByTelegramId(insertUser.telegramId);
+          if (existingUser) {
+            console.log(`[DB] Found existing user with telegramId ${insertUser.telegramId}: ${JSON.stringify(existingUser)}`);
+            return existingUser;
+          }
+        }
+        
+        throw dbError;
+      }
     } catch (error) {
       console.log(`[DB] Error in createUser: ${error}`);
       throw error;
@@ -1112,32 +1155,99 @@ export class DatabaseStorage implements IStorage {
   async saveUserState(userId: number, telegramId: string | number, state: string): Promise<void> {
     try {
       // Convert to numeric value for bigint column
-      const numericId = typeof telegramId === 'string' ? parseInt(telegramId, 10) : telegramId;
+      let numericId: number;
+      
+      if (typeof telegramId === 'string') {
+        // Handle string IDs that might be too large for parseInt
+        if (telegramId.length > 15) {
+          try {
+            // For very large numbers, use BigInt and convert back to Number
+            numericId = Number(BigInt(telegramId));
+            
+            // If conversion results in NaN or infinity, handle gracefully
+            if (!isFinite(numericId)) {
+              console.log(`[DB] Telegram ID too large for safe conversion in saveUserState: ${telegramId}`);
+              throw new Error(`Telegram ID too large for safe conversion: ${telegramId}`);
+            }
+          } catch (conversionError) {
+            console.log(`[DB] Failed to convert large Telegram ID in saveUserState: ${telegramId}`, conversionError);
+            throw new Error(`Failed to convert Telegram ID: ${telegramId}`);
+          }
+        } else {
+          numericId = parseInt(telegramId, 10);
+        }
+      } else {
+        numericId = telegramId;
+      }
       
       if (isNaN(numericId)) {
         console.log(`[DB] Invalid telegramId format in saveUserState: ${telegramId}`);
         throw new Error(`Invalid telegramId format: ${telegramId}`);
       }
       
-      // First, deactivate any existing states for this telegram ID
-      await db
-        .update(userStates)
-        .set({ isActive: false })
-        .where(and(
-          eq(userStates.telegramId, numericId),
-          eq(userStates.isActive, true)
-        ));
-      
-      // Then create a new active state
-      await db.insert(userStates).values({
-        userId,
-        telegramId: numericId,
-        state,
-        timestamp: new Date(),
-        isActive: true
-      });
-      
-      console.log(`[DB] Saved user state for telegramId: ${telegramId}`);
+      try {
+        // First, deactivate any existing states for this telegram ID
+        await db
+          .update(userStates)
+          .set({ isActive: false })
+          .where(and(
+            eq(userStates.telegramId, numericId),
+            eq(userStates.isActive, true)
+          ));
+        
+        // Then create a new active state
+        await db.insert(userStates).values({
+          userId,
+          telegramId: numericId,
+          state,
+          timestamp: new Date(),
+          isActive: true
+        });
+        
+        console.log(`[DB] Saved user state for telegramId: ${telegramId}`);
+      } catch (dbError) {
+        console.error(`[DB] Database error saving state for user ${telegramId}: ${dbError}`);
+        
+        // Try alternative approach for very large IDs if this is a DB error
+        if (String(telegramId).length > 15) {
+          try {
+            console.log(`[DB] Trying alternative approach for saving state with large ID: ${telegramId}`);
+            
+            // First fetch all active states for this user by userId
+            const activeStates = await db
+              .select()
+              .from(userStates)
+              .where(and(
+                eq(userStates.userId, userId),
+                eq(userStates.isActive, true)
+              ));
+            
+            // Deactivate them all using their IDs
+            for (const activeState of activeStates) {
+              await db
+                .update(userStates)
+                .set({ isActive: false })
+                .where(eq(userStates.id, activeState.id));
+            }
+            
+            // Insert a new state using string representation
+            // Use a raw SQL query as a last resort
+            await db.execute(sql`
+              INSERT INTO user_states 
+              (user_id, telegram_id, state, is_active, timestamp)
+              VALUES 
+              (${userId}, ${String(telegramId)}, ${state}, true, ${new Date()})
+            `);
+            
+            console.log(`[DB] Saved user state using alternative method for ID: ${telegramId}`);
+          } catch (alternativeError) {
+            console.error(`[DB] Alternative approach failed for user ${telegramId}:`, alternativeError);
+            throw alternativeError;
+          }
+        } else {
+          throw dbError;
+        }
+      }
     } catch (error) {
       console.error(`[DB] Error saving user state for telegramId: ${telegramId}`, error);
       throw error;
