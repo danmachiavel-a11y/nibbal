@@ -435,6 +435,11 @@ export class DiscordBot {
           name: 'nickname',
           description: 'Get Telegram username of ticket creator (Admin only)',
           type: ApplicationCommandType.ChatInput
+        },
+        {
+          name: 'closeallunsafe',
+          description: 'Close ALL tickets across ALL categories (Admin only, use with caution!)',
+          type: ApplicationCommandType.ChatInput
         }
       ];
 
