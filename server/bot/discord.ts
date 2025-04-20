@@ -57,7 +57,10 @@ import {
   ButtonStyle,
   ButtonInteraction,
   ChatInputCommandInteraction,
-  AutocompleteInteraction
+  AutocompleteInteraction,
+  Message,
+  Collection,
+  GuildChannel
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -1659,6 +1662,222 @@ export class DiscordBot {
             }
           } catch (replyError) {
             log(`Failed to send error message to user: ${replyError}`, "error");
+          }
+        }
+      }
+
+      if (interaction.commandName === 'closeallunsafe') {
+        log(`Handling /closeallunsafe command from user ${interaction.user.id}`, "info");
+        
+        // First, immediately defer the reply to prevent "Unknown Interaction" errors
+        // This gives us 15 minutes to complete the operation instead of just 3 seconds
+        await interaction.deferReply({ ephemeral: false });
+        
+        // Check if user is an admin (this is a dangerous command so we require admin)
+        const guild = interaction.guild;
+        if (!guild) {
+          await interaction.editReply({
+            content: "This command can only be used in a server!"
+          });
+          return;
+        }
+        
+        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
+        if (!isAdmin) {
+          await interaction.editReply({
+            content: "This command can only be used by administrators!"
+          });
+          return;
+        }
+        
+        // Give a strong warning and ask for confirmation
+        await interaction.editReply({
+          content: "⚠️ **WARNING: DANGEROUS OPERATION** ⚠️\n\n" +
+            "This command will close **ALL** tickets across **ALL** categories regardless of their status. " +
+            "This is meant to be used only when tickets are stuck or in emergencies.\n\n" +
+            "Are you sure you want to continue? (Reply with 'yes' to confirm or 'no' to cancel within 30 seconds)"
+        });
+        
+        // Create a message collector to wait for confirmation
+        const filter = (m: Message) => 
+          m.author.id === interaction.user.id && 
+          (m.content.toLowerCase() === 'yes' || m.content.toLowerCase() === 'no');
+        
+        const channel = interaction.channel as TextChannel;
+        try {
+          const collected = await channel.awaitMessages({ 
+            filter, 
+            max: 1, 
+            time: 30000, 
+            errors: ['time'] 
+          });
+          
+          const response = collected.first();
+          if (!response || response.content.toLowerCase() !== 'yes') {
+            await interaction.followUp({
+              content: "Operation cancelled. No tickets were closed."
+            });
+            return;
+          }
+          
+          // User confirmed, proceed with closing all tickets
+          await interaction.followUp({
+            content: "⏳ Proceeding with closing ALL tickets. This may take some time..."
+          });
+          
+          // Get all active tickets from the database
+          const validStatuses = ['open', 'pending', 'in-progress'];
+          
+          // Get all channels that could be tickets
+          let ticketChannels: Collection<string, GuildChannel> = new Collection();
+          
+          // Gather channels from all categories
+          guild.channels.cache.forEach(channel => {
+            if (channel.type === ChannelType.GuildCategory) {
+              // For each category, add all text channels
+              channel.children.cache.forEach(child => {
+                if (child.type === ChannelType.GuildText) {
+                  ticketChannels.set(child.id, child);
+                }
+              });
+            }
+          });
+          
+          log(`Found ${ticketChannels.size} potential ticket channels to process`);
+          
+          // Track progress
+          let processedCount = 0;
+          let closedCount = 0;
+          let alreadyClosedCount = 0;
+          let errorCount = 0;
+          const errorMessages: string[] = [];
+          
+          // Process all tickets
+          for (const [channelId, channel] of ticketChannels) {
+            try {
+              // Find the ticket associated with this channel
+              const ticket = await storage.getTicketByDiscordChannel(channelId);
+              
+              // Skip if no ticket is associated
+              if (!ticket) {
+                continue;
+              }
+              
+              processedCount++;
+              
+              // If the ticket is already closed, just count it
+              if (!validStatuses.includes(ticket.status)) {
+                alreadyClosedCount++;
+                continue;
+              }
+              
+              // Update ticket status in database
+              await storage.updateTicketStatus(ticket.id, "closed");
+              
+              // Try to move channel to transcript category
+              try {
+                if (ticket.categoryId) {
+                  const category = await storage.getCategory(ticket.categoryId);
+                  if (category?.transcriptCategoryId) {
+                    // Move to transcript category
+                    const textChannel = channel as TextChannel;
+                    await textChannel.setParent(category.transcriptCategoryId, {
+                      lockPermissions: false
+                    });
+                    
+                    // Set permissions for the transcript channel
+                    await textChannel.permissionOverwrites.set([
+                      // Ensure bot can still see the channel
+                      {
+                        id: guild.members.me!.id,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
+                      },
+                      // Deny access to @everyone
+                      {
+                        id: guild.roles.everyone.id,
+                        deny: [PermissionFlagsBits.ViewChannel]
+                      }
+                    ]);
+                    
+                    // Post a message in the channel to indicate it was auto-closed
+                    await textChannel.send({
+                      embeds: [
+                        new EmbedBuilder()
+                          .setColor(0xFF0000)
+                          .setTitle('⚠️ Ticket Automatically Closed')
+                          .setDescription(`This ticket was automatically closed by an administrator using the emergency close all command.`)
+                          .setTimestamp()
+                      ]
+                    });
+                  }
+                }
+              } catch (channelError) {
+                log(`Error moving channel ${channelId} to transcripts: ${channelError}`, "error");
+                errorMessages.push(`Error moving channel ${channel.name}: ${channelError instanceof Error ? channelError.message : 'Unknown error'}`);
+                // Continue processing even if channel move fails
+              }
+              
+              // Try to notify the user on Telegram
+              try {
+                const user = await storage.getUser(ticket.userId!);
+                if (user && user.telegramId) {
+                  await this.bridge.sendMessageToTelegram(
+                    user.telegramId,
+                    `❗ *System Notice*: Your ticket #${ticket.id} has been closed as part of a system-wide maintenance operation.`
+                  );
+                }
+              } catch (notifyError) {
+                log(`Error notifying user for ticket ${ticket.id}: ${notifyError}`, "error");
+                // Continue processing even if notification fails
+              }
+              
+              closedCount++;
+              
+              // Update progress every 5 tickets
+              if (processedCount % 5 === 0) {
+                await interaction.followUp({
+                  content: `Progress: ${processedCount} tickets processed, ${closedCount} closed...`
+                });
+              }
+              
+            } catch (error) {
+              log(`Error processing channel ${channelId}: ${error}`, "error");
+              errorCount++;
+              errorMessages.push(`Error with channel ${channel.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+          }
+          
+          // Send final status
+          const errorDetails = errorMessages.length > 0 
+            ? `\n\nErrors encountered:\n${errorMessages.slice(0, 5).map(msg => `• ${msg}`).join('\n')}${errorMessages.length > 5 ? `\n... and ${errorMessages.length - 5} more errors` : ''}`
+            : '';
+            
+          await interaction.followUp({
+            content: `✅ Operation completed. Processed ${processedCount} tickets:\n` +
+              `• ${closedCount} tickets closed\n` +
+              `• ${alreadyClosedCount} tickets were already closed\n` +
+              `• ${errorCount} errors encountered${errorDetails}`
+          });
+        } catch (error) {
+          // Check if it's a timeout error or a different error
+          if (error instanceof Error && error.message === "Collected 0 interactions but needed 1") {
+            // Confirmation timed out
+            await interaction.followUp({
+              content: "Confirmation timed out. Operation cancelled. No tickets were closed."
+            });
+          } else {
+            // Other error
+            log(`Major error in closeallunsafe command: ${error}`, "error");
+            
+            // Make sure we have a reply
+            try {
+              await interaction.followUp({
+                content: `An error occurred: ${error instanceof Error ? error.message : 'Unknown error'}. The operation may have been partially completed.`,
+                ephemeral: false
+              });
+            } catch (replyError) {
+              log(`Failed to send error message to user: ${replyError}`, "error");
+            }
           }
         }
       }
