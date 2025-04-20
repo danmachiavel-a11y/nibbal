@@ -1673,7 +1673,7 @@ export class DiscordBot {
         // This gives us 15 minutes to complete the operation instead of just 3 seconds
         await interaction.deferReply({ ephemeral: false });
         
-        // Check if user is an admin (this is a dangerous command so we require admin)
+        // Check if user is the server owner (this is a dangerous command so we require ownership)
         const guild = interaction.guild;
         if (!guild) {
           await interaction.editReply({
@@ -1682,10 +1682,10 @@ export class DiscordBot {
           return;
         }
         
-        const isAdmin = await this.isUserAdmin(interaction.user.id, guild);
-        if (!isAdmin) {
+        // Only allow the server owner to execute this command
+        if (interaction.user.id !== guild.ownerId) {
           await interaction.editReply({
-            content: "This command can only be used by administrators!"
+            content: "⛔ This command can only be used by the server owner due to its dangerous nature!"
           });
           return;
         }
