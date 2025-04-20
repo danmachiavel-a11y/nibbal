@@ -8,7 +8,7 @@ import fetch, { RequestInit } from 'node-fetch';
 import { TextChannel } from 'discord.js';
 import crypto from 'crypto';
 
-class BridgeError extends Error {
+export class BridgeError extends Error {
   code?: string;
   details?: any;
   context?: string;

@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { db } from './db';
 import { loadEnv } from "../utilities/loadEnv";
+import { initializeRecoverySystem } from "./recovery";
 
 const app = express();
 app.use(express.json());
@@ -187,16 +188,8 @@ app.use((req, res, next) => {
     process.exit(1);
   }
 
-  // Add unhandled rejection handler
-  process.on('unhandledRejection', (reason, promise) => {
-    log(`Unhandled Rejection at: ${promise}, reason: ${reason}`, "error");
-  });
-
-  // Add uncaught exception handler
-  process.on('uncaughtException', (error) => {
-    log(`Uncaught Exception: ${error}`, "error");
-    process.exit(1);
-  });
+  // Initialize the recovery system
+  initializeRecoverySystem();
 })().catch(error => {
   log(`Fatal error during startup: ${error}`, "error");
   process.exit(1);
