@@ -60,6 +60,7 @@ export class BridgeManager {
   private imageCache: Map<string, ImageCacheEntry> = new Map();
   private roleCache: Map<number, string> = new Map();
   private readonly imageCacheCleanupInterval = 3600000; // 1 hour
+  private discordStatusChangeCallbacks: Array<(isAvailable: boolean) => void> = [];
   
   // Message deduplication cache
   private readonly messageDedupCache: Map<string, number> = new Map();

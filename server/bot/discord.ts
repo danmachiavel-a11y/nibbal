@@ -2636,15 +2636,55 @@ export class DiscordBot {
     try {
       log(`Creating ticket channel ${name} in category ${categoryId}`);
 
-      // Add diagnostic logging
+      // Add detailed connection diagnostics
       const tokenExists = process.env.DISCORD_BOT_TOKEN ? "exists" : "missing";
       const tokenLength = process.env.DISCORD_BOT_TOKEN ? process.env.DISCORD_BOT_TOKEN.length : 0;
       const clientHasToken = this.client.token ? "yes" : "no";
-      log(`Discord token diagnostic - Env token: ${tokenExists} (${tokenLength} chars), Client token: ${clientHasToken}`, "debug");
+      const clientStatus = this.client.isReady() ? "ready" : "not ready";
+      const connectionStatus = this.isConnected ? "connected" : "disconnected";
+      
+      log(`Discord connection diagnostic - Status: ${connectionStatus}, Client: ${clientStatus}, Env token: ${tokenExists} (${tokenLength} chars), Client token: ${clientHasToken}`, "debug");
 
-      // Verify client is authenticated
+      // Check client readiness first - most reliable way to ensure connection is active
+      if (!this.client.isReady()) {
+        log("Discord client is not ready before creating ticket channel. Attempting to reconnect...", "warn");
+        
+        try {
+          // Update connection status for bridge manager
+          this.bridge?.updateDiscordStatus(false);
+          
+          // Try to fix connection
+          await this.ensureConnection();
+          
+          // Double-check that reconnection was successful
+          if (!this.client.isReady()) {
+            // If still not ready, we need to wait briefly and retry
+            log("First reconnection attempt didn't make client ready. Waiting and retrying...", "warn");
+            
+            // Wait 2 seconds before retry
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Try once more
+            await this.ensureConnection();
+            
+            // If still not ready, throw error
+            if (!this.client.isReady()) {
+              throw new Error("Discord client still not ready after reconnection attempts");
+            }
+          }
+          
+          // Reconnection successful
+          log("Discord client successfully reconnected before creating ticket channel", "info");
+          this.bridge?.updateDiscordStatus(true);
+        } catch (reconnectError) {
+          log(`Failed to reconnect Discord client: ${reconnectError}`, "error");
+          throw new Error(`Discord connection error: ${reconnectError}`);
+        }
+      }
+
+      // Verify client is authenticated with token
       if (!this.client.token) {
-        log("Discord client token not set, attempting to reconnect...", "error");
+        log("Discord client token not set, attempting to login...", "error");
         // Check if token is available in environment
         const token = process.env.DISCORD_BOT_TOKEN;
         if (!token) {
@@ -2653,18 +2693,34 @@ export class DiscordBot {
         
         log(`Attempting to login with token of length: ${token.length}`);
         
-        // Attempt to log in again
-        await this.client.login(token);
+        // Attempt to log in again with a timeout
+        const loginPromise = this.client.login(token);
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("Discord login attempt timed out after 5 seconds")), 5000);
+        });
+        
+        // Race the login against the timeout
+        await Promise.race([loginPromise, timeoutPromise]);
         
         // Verify login was successful
         if (!this.client.token) {
           throw new Error("Failed to authenticate Discord client with provided token");
         }
-        log("Discord client successfully reconnected", "info");
+        log("Discord client successfully logged in", "info");
       }
 
+      // Add rate limit check to prevent Discord API throttling
       await this.checkRateLimit('channelCreate');
-      const category = await this.client.channels.fetch(categoryId);
+      
+      // Fetch the category with a timeout to avoid hanging
+      const categoryFetchPromise = this.client.channels.fetch(categoryId);
+      const fetchTimeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Timeout fetching Discord category")), 10000);
+      });
+      
+      // Race the fetch against the timeout
+      const category = await Promise.race([categoryFetchPromise, fetchTimeoutPromise]);
+      
       if (!category || category.type !== ChannelType.GuildCategory) {
         throw new Error(`Invalid category ${categoryId}`);
       }
@@ -2692,7 +2748,11 @@ export class DiscordBot {
         }
       }
       
-      const channel = await guild.channels.create({
+      // Create the channel with error handling
+      log(`Creating channel "${name}" in category ${categoryId}...`);
+      
+      // Use a timeout for channel creation to prevent hanging
+      const channelCreatePromise = guild.channels.create({
         name,
         parent: category,
         type: ChannelType.GuildText,
@@ -2717,15 +2777,27 @@ export class DiscordBot {
         ]
       });
       
+      const createTimeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Timeout creating Discord channel")), 15000);
+      });
+      
+      // Race the channel creation against the timeout
+      const channel = await Promise.race([channelCreatePromise, createTimeoutPromise]);
+      
       // Add the role permission if found
       if (roleWithAccess) {
-        await channel.permissionOverwrites.edit(roleWithAccess, {
-          ViewChannel: true,
-          SendMessages: true,
-          ReadMessageHistory: true,
-          AttachFiles: true
-        });
-        log(`Set channel permissions for role ${roleWithAccess}`);
+        try {
+          await channel.permissionOverwrites.edit(roleWithAccess, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true
+          });
+          log(`Set channel permissions for role ${roleWithAccess}`);
+        } catch (permError) {
+          // Don't fail the whole operation if permission setting fails
+          log(`Warning: Failed to set permissions for role ${roleWithAccess}: ${permError}`, "warn");
+        }
       } else {
         log(`Warning: No role with access found in category ${categoryId}`, "warn");
       }
@@ -2733,8 +2805,99 @@ export class DiscordBot {
       log(`Successfully created channel ${channel.id}`);
       return channel.id;
     } catch (error) {
+      // Detailed error handling with specific error types
       log(`Error creating ticket channel: ${error}`, "error");
+      
+      // Check connection status and report meaningful error
+      if (!this.client.isReady()) {
+        log("Discord connection lost during channel creation", "error");
+        this.bridge?.updateDiscordStatus(false);
+        
+        // Attempt immediate reconnection in the background
+        this.ensureConnection().catch(e => log(`Background reconnection failed: ${e}`, "error"));
+        
+        throw new Error("Discord connection was lost during channel creation. The system will try to reconnect automatically.");
+      }
+      
+      // Check for common Discord API errors
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("Missing Access") || errorMessage.includes("Missing Permissions")) {
+        throw new Error("Bot lacks permissions to create channels in this category. Please check Discord bot permissions.");
+      } else if (errorMessage.includes("rate limit")) {
+        throw new Error("Discord API rate limit reached. Please try again in a few minutes.");
+      } else if (errorMessage.includes("Unknown Channel")) {
+        throw new Error(`Category with ID ${categoryId} no longer exists.`);
+      }
+      
       throw error;
+    }
+  }
+  
+  /**
+   * Ensures that Discord connection is active and working
+   * This is a helper method that attempts to fix connection issues
+   */
+  private async ensureConnection(): Promise<void> {
+    try {
+      // Skip if already connecting
+      if (this.isConnecting) {
+        log("Connection process already in progress, skipping duplicate attempt", "warn");
+        return;
+      }
+      
+      this.isConnecting = true;
+      
+      // Check if we have a token in the client
+      if (!this.client.token) {
+        const token = process.env.DISCORD_BOT_TOKEN;
+        if (!token) {
+          throw new Error("Discord bot token is missing from environment");
+        }
+        
+        // Attempt login with timeout
+        log(`Attempting to login with token of length ${token.length}`);
+        const loginPromise = this.client.login(token);
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("Login attempt timed out")), 5000);
+        });
+        
+        await Promise.race([loginPromise, timeoutPromise]);
+        
+        if (!this.client.token) {
+          throw new Error("Login attempt failed to set client token");
+        }
+      }
+      
+      // Verify connection by checking if client is ready
+      if (!this.client.isReady()) {
+        log("Client not ready, waiting for ready event", "debug");
+        
+        // Wait for ready event with timeout
+        await Promise.race([
+          new Promise<void>(resolve => {
+            const onceReady = () => {
+              this.client.removeListener('ready', onceReady);
+              resolve();
+            };
+            this.client.once('ready', onceReady);
+          }),
+          new Promise<void>((_, reject) => {
+            setTimeout(() => reject(new Error("Timed out waiting for ready event")), 10000);
+          })
+        ]);
+      }
+      
+      // Update connection status
+      this.isConnected = true;
+      this.connectionError = null;
+      log("Discord connection successfully verified", "info");
+    } catch (error) {
+      log(`Connection verification failed: ${error}`, "error");
+      this.isConnected = false;
+      this.connectionError = String(error);
+      throw error;
+    } finally {
+      this.isConnecting = false;
     }
   }
 
@@ -2742,27 +2905,61 @@ export class DiscordBot {
     try {
       log(`Attempting to send message to Discord channel ${channelId}`);
 
-      // Verify client is authenticated
+      // Check client readiness first - most reliable way to ensure connection is active
+      if (!this.client.isReady()) {
+        log("Discord client is not ready before sending message. Attempting to reconnect...", "warn");
+        
+        try {
+          // Update connection status for bridge manager
+          this.bridge?.updateDiscordStatus(false);
+          
+          // Use the ensureConnection helper method
+          await this.ensureConnection();
+          
+          this.bridge?.updateDiscordStatus(true);
+          log("Discord client successfully reconnected before sending message", "info");
+        } catch (reconnectError) {
+          log(`Failed to reconnect Discord client: ${reconnectError}`, "error");
+          throw new Error(`Discord connection error: ${reconnectError}`);
+        }
+      }
+
+      // Verify client is authenticated with token as a backup check
       if (!this.client.token) {
-        log("Discord client token not set before sending message, attempting to reconnect...", "error");
+        log("Discord client token not set before sending message, attempting to login...", "error");
         // Check if token is available in environment
         const token = process.env.DISCORD_BOT_TOKEN;
         if (!token) {
           throw new Error("Discord bot token is missing. Please set DISCORD_BOT_TOKEN environment variable.");
         }
         
-        // Attempt to log in again
-        await this.client.login(token);
+        // Attempt to log in again with timeout
+        const loginPromise = this.client.login(token);
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("Discord login attempt timed out after 5 seconds")), 5000);
+        });
+        
+        await Promise.race([loginPromise, timeoutPromise]);
         
         // Verify login was successful
         if (!this.client.token) {
           throw new Error("Failed to authenticate Discord client with provided token");
         }
-        log("Discord client successfully reconnected", "info");
+        log("Discord client successfully logged in", "info");
       }
 
-      // Check rate limits
-      await this.globalCheck();
+      // Check rate limits with timeout protection
+      try {
+        const ratelimitCheckPromise = this.globalCheck();
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("Rate limit check timed out")), 5000);
+        });
+        
+        await Promise.race([ratelimitCheckPromise, timeoutPromise]);
+      } catch (ratelimitError) {
+        log(`Rate limit check failed: ${ratelimitError}`, "warn");
+        // Continue anyway as this is just a precaution
+      }
       await this.webhookCheck(channelId);
 
       const channel = await this.client.channels.fetch(channelId);
