@@ -2651,7 +2651,10 @@ export class DiscordBot {
         
         try {
           // Update connection status for bridge manager
-          this.bridge?.updateDiscordStatus(false);
+          if (this.bridge) {
+            // TypeScript doesn't know about the updateDiscordStatus method, so we need to use any
+            (this.bridge as any).updateDiscordStatus(false);
+          }
           
           // Try to fix connection
           await this.ensureConnection();
@@ -2675,7 +2678,9 @@ export class DiscordBot {
           
           // Reconnection successful
           log("Discord client successfully reconnected before creating ticket channel", "info");
-          this.bridge?.updateDiscordStatus(true);
+          if (this.bridge) {
+            (this.bridge as any).updateDiscordStatus(true);
+          }
         } catch (reconnectError) {
           log(`Failed to reconnect Discord client: ${reconnectError}`, "error");
           throw new Error(`Discord connection error: ${reconnectError}`);
@@ -2811,7 +2816,9 @@ export class DiscordBot {
       // Check connection status and report meaningful error
       if (!this.client.isReady()) {
         log("Discord connection lost during channel creation", "error");
-        this.bridge?.updateDiscordStatus(false);
+        if (this.bridge) {
+          (this.bridge as any).updateDiscordStatus(false);
+        }
         
         // Attempt immediate reconnection in the background
         this.ensureConnection().catch(e => log(`Background reconnection failed: ${e}`, "error"));
@@ -2911,12 +2918,16 @@ export class DiscordBot {
         
         try {
           // Update connection status for bridge manager
-          this.bridge?.updateDiscordStatus(false);
+          if (this.bridge) {
+            (this.bridge as any).updateDiscordStatus(false);
+          }
           
           // Use the ensureConnection helper method
           await this.ensureConnection();
           
-          this.bridge?.updateDiscordStatus(true);
+          if (this.bridge) {
+            (this.bridge as any).updateDiscordStatus(true);
+          }
           log("Discord client successfully reconnected before sending message", "info");
         } catch (reconnectError) {
           log(`Failed to reconnect Discord client: ${reconnectError}`, "error");

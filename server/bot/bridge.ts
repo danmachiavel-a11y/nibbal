@@ -2021,6 +2021,44 @@ export class BridgeManager {
   getDiscordBot(): DiscordBot {
     return this.discordBot;
   }
+  
+  /**
+   * Update the Discord connection status
+   * This method is called by the Discord bot when its connection status changes
+   * It updates the internal state and notifies any registered callbacks
+   */
+  updateDiscordStatus(isAvailable: boolean): void {
+    // Don't trigger updates if the status hasn't changed
+    if (this.isDiscordAvailable === isAvailable) {
+      return;
+    }
+    
+    log(`Discord status changed: ${isAvailable ? 'Connected' : 'Disconnected'}`, isAvailable ? "info" : "warn");
+    
+    this.isDiscordAvailable = isAvailable;
+    
+    // Notify any registered callbacks
+    for (const callback of this.discordStatusChangeCallbacks) {
+      try {
+        callback(isAvailable);
+      } catch (error) {
+        log(`Error in Discord status change callback: ${error}`, "error");
+      }
+    }
+    
+    // If Discord has been reconnected, try to process any pending messages
+    if (isAvailable) {
+      log("Discord reconnected, checking for pending operations...");
+      // Any reconnection logic can go here
+    }
+  }
+  
+  /**
+   * Register a callback to be notified when Discord connection status changes
+   */
+  onDiscordStatusChange(callback: (isAvailable: boolean) => void): void {
+    this.discordStatusChangeCallbacks.push(callback);
+  }
 }
 
 async function uploadToImgbb(buffer: Buffer, retryCount: number = 3, delayMs: number = 1000): Promise<string | null> {
