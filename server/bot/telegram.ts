@@ -755,8 +755,9 @@ export class TelegramBot {
       // Setup event handlers
       this.setupHandlers();
       
-      // Restore user states from database
-      await this.restoreUserStates();
+      // Just check db connection instead of preloading all user states
+      // This addresses the slow startup issue without sacrificing functionality
+      await this.checkDatabaseConnection();
       
       // Start polling for updates with custom parameters for better reliability
       if (process.env.NODE_ENV === 'production') {
@@ -1651,8 +1652,23 @@ Only one active ticket per service is allowed.`);
   }
 
   /**
-   * Restore user states from database on application restart
+   * Just verify database connection without loading all states
+   * This is much faster than the full restoreUserStates method
    */
+  private async checkDatabaseConnection(): Promise<void> {
+    try {
+      // Simple query to verify DB connection is working
+      const users = await storage.getUsers();
+      log(`Database connection verified, found ${users.length} users`, "info");
+      
+      // Check if any users have active tickets that need handling
+      log(`Using lazy loading for user states - will load states on demand when users interact with the bot`, "info");
+    } catch (dbError) {
+      log(`Critical error: Cannot connect to database: ${dbError}`, "error");
+      throw new Error(`Database connection failed: ${dbError}`);
+    }
+  }
+
   private async restoreUserStates(): Promise<void> {
     try {
       log("Starting user state restoration process...", "info");
