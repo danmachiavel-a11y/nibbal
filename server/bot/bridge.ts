@@ -418,15 +418,26 @@ export class BridgeManager {
         return cached.buffer;
       }
 
-      // Use Promise.race to implement timeout
+      // Use Promise.race to implement timeout - reduced to 15 seconds for faster response
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Download timeout')), 30000)
+        setTimeout(() => reject(new Error('Download timeout')), 15000)
       );
 
+      // Add AbortController for cleaner cancellation
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
       const response = await Promise.race([
-        fetch(url),
+        fetch(url, { 
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 Message-Bridge/1.0'
+          }
+        }),
         timeoutPromise
       ]) as Response;
+      
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new BridgeError(`Failed to fetch Discord image: ${response.status}`, { context: "processDiscordToTelegram" });
@@ -1328,8 +1339,54 @@ export class BridgeManager {
       // Early return if Discord is not available
       if (!this.isDiscordAvailable) {
         log(`Discord bot is not available, storing message but not forwarding ticket ${ticketId}`, "warn");
-        // We'll still store the message in the database but won't attempt to forward to Discord
+        
+        // Still store the message in the database to preserve history
+        try {
+          const ticket = await storage.getTicket(ticketId);
+          if (ticket?.userId) {
+            await storage.createMessage({
+              ticketId,
+              content: `[QUEUED] ${content}`, // Mark as queued for visibility in the transcript
+              authorId: ticket.userId,
+              platform: "telegram",
+              timestamp: new Date(),
+              senderName: username
+            });
+            
+            log(`Message stored in database, will be forwarded when Discord reconnects: ${ticketId}`);
+          }
+        } catch (dbError) {
+          log(`Failed to store message in database: ${dbError}`, "error");
+        }
+        
+        // Add to retry queue to ensure it will be sent when Discord becomes available
+        if (this.messageRetryQueue.length < this.MAX_RETRY_QUEUE_SIZE) {
+          this.messageRetryQueue.push({
+            attempt: 0,
+            content,
+            ticketId,
+            username,
+            avatarUrl,
+            photo,
+            firstName,
+            lastName,
+            telegramId,
+            timestamp: Date.now()
+          });
+          log(`Added message to retry queue for ticket ${ticketId}, queue size: ${this.messageRetryQueue.length}`);
+        } else {
+          log(`Retry queue full (${this.messageRetryQueue.length}), discarding message for ticket ${ticketId}`, "warn");
+        }
+        
         return;
+      }
+      
+      // Check connection strength before sending
+      // If there were recent failures, add a small delay
+      if (this.discordConsecutiveFailures > 0) {
+        const backoffDelay = Math.min(this.discordConsecutiveFailures * 200, 2000); // 200ms per failure, max 2 seconds
+        log(`Adding ${backoffDelay}ms delay due to ${this.discordConsecutiveFailures} consecutive Discord failures`);
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
       }
       
       // Create a more robust deduplication key using content hash and context
