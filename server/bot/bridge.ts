@@ -550,10 +550,23 @@ export class BridgeManager {
         await startFn();
 
         this.retryAttempts = 0; // Reset on success
+        
+        // If Discord started successfully, make sure isDiscordAvailable is true
+        if (botName === "Discord") {
+          this.isDiscordAvailable = true;
+          log("Setting Discord as available after successful startup");
+        }
+        
         log(`${botName} bot started successfully`);
         return;
       } catch (error) {
         handleBridgeError(error as BridgeError, `startBotWithRetry-${botName}-${attempt}`);
+
+        // If Discord failed to start, mark it as unavailable
+        if (botName === "Discord") {
+          log("Setting Discord as unavailable due to startup failure", "warn");
+          this.isDiscordAvailable = false;
+        }
 
         if (attempt === this.maxRetries) {
           log(`${botName} bot failed to start after ${this.maxRetries} attempts`, "error");
@@ -668,6 +681,7 @@ export class BridgeManager {
   async healthCheck(): Promise<{
     telegram: boolean;
     discord: boolean;
+    discordAvailable?: boolean;
     disabled?: boolean;
     disabledReason?: string;
     uptime?: number;
@@ -678,6 +692,7 @@ export class BridgeManager {
         return {
           telegram: false,
           discord: false,
+          discordAvailable: false,
           disabled: true,
           disabledReason: this.disabledReason || "Bridge is disabled"
         };
@@ -692,9 +707,19 @@ export class BridgeManager {
       // Add slight delay to prevent rate limiting
       await new Promise(resolve => setTimeout(resolve, 1000));
       
+      // Get the current Discord state
+      const discordReady = this.discordBot.isReady();
+      
+      // Update isDiscordAvailable flag based on the check
+      if (discordReady !== this.isDiscordAvailable) {
+        log(`Updating Discord availability state: ${this.isDiscordAvailable} → ${discordReady}`);
+        this.isDiscordAvailable = discordReady;
+      }
+      
       return {
         telegram: this.telegramBot.getIsConnected(),
-        discord: this.discordBot.isReady(),
+        discord: discordReady,
+        discordAvailable: this.isDiscordAvailable,
         uptime
       };
     } catch (error) {
@@ -702,6 +727,7 @@ export class BridgeManager {
       return {
         telegram: false,
         discord: false,
+        discordAvailable: false,
         disabled: this.isDisabled,
         disabledReason: this.isDisabled ? this.disabledReason : "Health check error"
       };
@@ -778,8 +804,16 @@ export class BridgeManager {
       if (!channelId) {
         throw new BridgeError("Missing Discord channel ID", { context: "sendSystemMessageToDiscord" });
       }
+      
+      // Check Discord availability first
+      if (!this.isDiscordAvailable) {
+        log(`Discord bot is unavailable, cannot send system message to channel ${channelId}`, "warn");
+        return;
+      }
 
       if (!this.discordBot.isReady()) {
+        log("Discord bot is not ready, marking as unavailable", "warn");
+        this.isDiscordAvailable = false;
         throw new BridgeError("Discord bot is not ready", { context: "sendSystemMessageToDiscord" });
       }
 
