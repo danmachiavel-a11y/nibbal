@@ -1822,9 +1822,27 @@ export class DiscordBot {
                   if (category?.transcriptCategoryId) {
                     // Move to transcript category
                     const textChannel = channel as TextChannel;
-                    await textChannel.setParent(category.transcriptCategoryId, {
-                      lockPermissions: true // Use category permissions instead of setting individual channel permissions
-                    });
+                    
+                    try {
+                      // Use our proper moveChannelToCategory method instead of directly using setParent
+                      // This ensures permissions are correctly set up
+                      await this.moveChannelToCategory(
+                        channelId,
+                        category.transcriptCategoryId,
+                        true // This is a transcript category, so set appropriate permissions
+                      );
+                      log(`Successfully moved channel ${channelId} to transcript category using permission-safe method`);
+                    } catch (moveError) {
+                      log(`Error using moveChannelToCategory: ${moveError}, falling back to basic move`, "warn");
+                      // Fallback if the move method fails
+                      await textChannel.setParent(category.transcriptCategoryId);
+                      
+                      // Explicitly deny @everyone even in fallback mode
+                      await textChannel.permissionOverwrites.edit(textChannel.guild.roles.everyone.id, {
+                        ViewChannel: false, 
+                        SendMessages: false
+                      });
+                    }
                     
                     // Post a message in the channel to indicate it was auto-closed
                     await textChannel.send({
