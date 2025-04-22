@@ -447,10 +447,20 @@ export class BridgeManager {
     }
   }
   private startHealthCheck() {
-    // Run health check every 15 minutes (matching Telegram bot's heartbeat)
+    // Run health check every 5 minutes (reduced from 15 to catch issues sooner)
     this.healthCheckInterval = setInterval(async () => {
       try {
         const health = await this.healthCheck();
+        
+        // Update availability flags based on health check
+        if (!health.discord) {
+          log("Discord bot is unavailable, setting isDiscordAvailable = false", "warn");
+          this.isDiscordAvailable = false;
+        } else if (!this.isDiscordAvailable) {
+          log("Discord bot is now available, restoring isDiscordAvailable = true", "info");
+          this.isDiscordAvailable = true;
+        }
+        
         if (!health.telegram || !health.discord) {
           log("Bot disconnected, attempting to reconnect...");
           // Add delay before reconnection attempt
@@ -460,7 +470,7 @@ export class BridgeManager {
       } catch (error) {
         handleBridgeError(error as BridgeError, "healthCheck");
       }
-    }, 900000); // 15 minutes to match Telegram bot's heartbeat
+    }, 300000); // 5 minutes (reduced from 15) to catch issues sooner
   }
 
   async start() {
@@ -509,7 +519,7 @@ export class BridgeManager {
         
         // If all bots failed, throw an error, but handle case where Discord is intentionally skipped
         if (failures.length === results.length) {
-          if (!this.isDiscordAvailable && failures.length === 1 && results.length === 1) {
+          if (!this.isDiscordAvailable) {
             log("Continuing without Discord bot", "warn");
           } else {
             throw new Error("All bots failed to start");
@@ -1280,6 +1290,13 @@ export class BridgeManager {
 
   async forwardToDiscord(content: string, ticketId: number, username: string, avatarUrl?: string, photo?: string, firstName?: string, lastName?: string, telegramId?: number) {
     try {
+      // Early return if Discord is not available
+      if (!this.isDiscordAvailable) {
+        log(`Discord bot is not available, storing message but not forwarding ticket ${ticketId}`, "warn");
+        // We'll still store the message in the database but won't attempt to forward to Discord
+        return;
+      }
+      
       // Create a more robust deduplication key using content hash and context
       // For short content, use the full content, otherwise use a limited substring to avoid key size issues
       const contentForKey = content.length <= 50 ? content : content.substring(0, 50);
@@ -1305,19 +1322,17 @@ export class BridgeManager {
         log(`[DEDUP] Generated key for Discord: ${dedupKey}`, "debug");
       }
       
-      // Check if this message was recently sent - temporarily disabled for debugging
-      // if (this.messageDedupCache.has(dedupKey)) {
-      //   const lastSent = this.messageDedupCache.get(dedupKey);
-      //   if (now - lastSent! < this.messageDedupWindow) {
-      //     log(`Skipping duplicate message to Discord within ${this.messageDedupWindow}ms window: ${contentForKey.substring(0, 20)}...`, "warn");
-      //     return;
-      //   }
-      // }
+      // Check if this message was recently sent
+      if (this.messageDedupCache.has(dedupKey)) {
+        const lastSent = this.messageDedupCache.get(dedupKey);
+        if (now - lastSent! < this.messageDedupWindow) {
+          log(`Skipping duplicate message to Discord within ${this.messageDedupWindow}ms window: ${contentForKey.substring(0, 20)}...`, "warn");
+          return;
+        }
+      }
       
-      log(`DEBUG: Processing message to Discord, bypassing dedup. Key was: ${dedupKey}`, "warn");
-      
-      // Update deduplication cache - temporarily disabled
-      // this.messageDedupCache.set(dedupKey, now);
+      // Update deduplication cache
+      this.messageDedupCache.set(dedupKey, now);
       
       // Clean old entries from dedup cache if it gets too large
       if (this.messageDedupCache.size > this.MAX_DEDUP_CACHE_SIZE) {
