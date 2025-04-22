@@ -77,9 +77,28 @@ export class BridgeManager {
   
   // Enable extra deduplication logging to debug duplicate messages
   private readonly ENABLE_DEDUP_LOGGING = true;
-  private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB per image
+  private readonly MAX_IMAGE_SIZE = 3 * 1024 * 1024; // Reduced to 3MB per image for faster processing
   private readonly MIN_IMAGE_SIZE = 32; // 32 bytes minimum
-
+  
+  // Message retry mechanism
+  private messageRetryQueue: Array<{
+    attempt: number;
+    content: string;
+    ticketId: number;
+    username: string;
+    avatarUrl?: string;
+    photo?: string;
+    firstName?: string;
+    lastName?: string;
+    telegramId?: number;
+    timestamp: number;
+  }> = [];
+  private readonly MAX_RETRY_QUEUE_SIZE = 500;
+  private readonly MAX_RETRY_ATTEMPTS = 5;
+  private readonly RETRY_INTERVAL = 10000; // 10 seconds
+  private discordConsecutiveFailures = 0; // Track failures for backoff
+  private memoryCache = new Map<string, any>();
+  private readonly MEMORY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
   constructor() {
     log("Initializing Bridge Manager");
@@ -87,6 +106,9 @@ export class BridgeManager {
     this.discordBot = new DiscordBot(this);
     this.startHealthCheck();
     this.startImageCacheCleanup();
+    
+    // Setup retry processor for queued messages
+    setInterval(() => this.processRetryQueue(), this.RETRY_INTERVAL);
   }
 
   private startImageCacheCleanup(): void {
@@ -757,6 +779,89 @@ export class BridgeManager {
     log(`Bridge has been marked as disabled: ${reason}`, "warn");
   }
   
+  /**
+   * Process the message retry queue
+   * Attempts to resend messages that failed due to Discord unavailability
+   */
+  private async processRetryQueue(): Promise<void> {
+    // Skip processing if Discord is still not available
+    if (!this.isDiscordAvailable || !this.discordBot.isReady()) {
+      return;
+    }
+    
+    // Skip if queue is empty
+    if (this.messageRetryQueue.length === 0) {
+      return;
+    }
+    
+    log(`Processing message retry queue (${this.messageRetryQueue.length} messages)`);
+    
+    // Process up to 5 messages per batch to avoid overloading
+    const messagesToProcess = this.messageRetryQueue.slice(0, 5);
+    const remainingMessages = this.messageRetryQueue.slice(5);
+    this.messageRetryQueue = remainingMessages;
+    
+    let successCount = 0;
+    let failureCount = 0;
+    
+    // Process each message with individual try/catch to continue even if one fails
+    for (const message of messagesToProcess) {
+      try {
+        // Skip messages that have exceeded retry attempts
+        if (message.attempt >= this.MAX_RETRY_ATTEMPTS) {
+          log(`Message for ticket ${message.ticketId} exceeded max retry attempts (${message.attempt}/${this.MAX_RETRY_ATTEMPTS}), discarding`);
+          failureCount++;
+          continue;
+        }
+        
+        // Increment attempt count
+        message.attempt++;
+        
+        // Add delay between messages to avoid rate limits
+        if (successCount > 0 || failureCount > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        log(`Retrying message for ticket ${message.ticketId} (attempt ${message.attempt}/${this.MAX_RETRY_ATTEMPTS})`);
+        
+        // Forward the message to Discord
+        await this.forwardToDiscord(
+          message.content,
+          message.ticketId,
+          message.username,
+          message.avatarUrl,
+          message.photo,
+          message.firstName,
+          message.lastName,
+          message.telegramId
+        );
+        
+        successCount++;
+        
+        // If we've been failing consistently, reset the counter since we had a success
+        if (this.discordConsecutiveFailures > 0) {
+          log(`Successfully sent message after ${this.discordConsecutiveFailures} consecutive failures, resetting failure counter`);
+          this.discordConsecutiveFailures = 0;
+        }
+      } catch (error) {
+        failureCount++;
+        
+        // Handle the error but continue processing other messages
+        log(`Failed to retry message for ticket ${message.ticketId}: ${error}`, "error");
+        
+        // Increment failure counter for backoff
+        this.discordConsecutiveFailures++;
+        
+        // Add the message back to the queue if we haven't exceeded max attempts
+        if (message.attempt < this.MAX_RETRY_ATTEMPTS) {
+          this.messageRetryQueue.push(message);
+        }
+      }
+    }
+    
+    log(`Processed ${successCount + failureCount} messages from retry queue: ${successCount} succeeded, ${failureCount} failed`);
+  }
+
   /**
    * Cleanup Telegram connections when we detect a 409 Conflict error
    * This can happen during deployment when multiple instances are running
