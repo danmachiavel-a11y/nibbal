@@ -77,7 +77,7 @@ export class BridgeManager {
   
   // Enable extra deduplication logging to debug duplicate messages
   private readonly ENABLE_DEDUP_LOGGING = true;
-  private readonly MAX_IMAGE_SIZE = 3 * 1024 * 1024; // Reduced to 3MB per image for faster processing
+  private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB per image
   private readonly MIN_IMAGE_SIZE = 32; // 32 bytes minimum
   
   // Message retry mechanism
@@ -440,14 +440,14 @@ export class BridgeManager {
         return cached.buffer;
       }
 
-      // Use Promise.race to implement timeout - reduced to 15 seconds for faster response
+      // Use Promise.race to implement timeout
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Download timeout')), 15000)
+        setTimeout(() => reject(new Error('Download timeout')), 30000)
       );
 
       // Add AbortController for cleaner cancellation
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
       const response = await Promise.race([
         fetch(url, { 
