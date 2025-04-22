@@ -1730,6 +1730,54 @@ export class DiscordBot {
           // Get all active tickets from the database
           const validStatuses = ['open', 'pending', 'in-progress'];
           
+          // First close all tickets that have open statuses in the database
+          await interaction.followUp({
+            content: "⏳ Step 1/2: Closing all tickets in the database with open statuses..."
+          });
+          
+          // Get all open tickets from database
+          const allOpenTickets = await storage.getAllTicketsWithStatuses(validStatuses);
+          
+          log(`Found ${allOpenTickets.length} tickets with open statuses in database`);
+          
+          // Track progress
+          let processedCount = 0;
+          let closedCount = 0;
+          let alreadyClosedCount = 0;
+          let errorCount = 0;
+          let noChannelCount = 0;
+          const errorMessages: string[] = [];
+          
+          // First, close all tickets in database
+          for (const ticket of allOpenTickets) {
+            try {
+              // Update ticket status in database
+              await storage.updateTicketStatus(ticket.id, "closed");
+              closedCount++;
+              processedCount++;
+              
+              // Update progress every 10 tickets
+              if (processedCount % 10 === 0) {
+                await interaction.followUp({
+                  content: `Database progress: ${processedCount}/${allOpenTickets.length} tickets processed, ${closedCount} closed...`
+                });
+              }
+            } catch (error) {
+              log(`Error closing ticket ${ticket.id} in database: ${error}`, "error");
+              errorCount++;
+              errorMessages.push(`Error with ticket ${ticket.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+          }
+          
+          await interaction.followUp({
+            content: `✅ Database update completed. ${closedCount} tickets marked as closed in database.`
+          });
+          
+          // Now handle Discord channels
+          await interaction.followUp({
+            content: "⏳ Step 2/2: Processing Discord channels..."
+          });
+          
           // Get all channels that could be tickets
           let ticketChannels: Collection<string, GuildChannel> = new Collection();
           
@@ -1747,14 +1795,11 @@ export class DiscordBot {
           
           log(`Found ${ticketChannels.size} potential ticket channels to process`);
           
-          // Track progress
-          let processedCount = 0;
-          let closedCount = 0;
-          let alreadyClosedCount = 0;
-          let errorCount = 0;
-          const errorMessages: string[] = [];
+          // Reset counters for Discord channel processing
+          let channelProcessedCount = 0;
+          let channelMovedCount = 0;
           
-          // Process all tickets
+          // Process all Discord channels
           for (const [channelId, channel] of ticketChannels) {
             try {
               // Find the ticket associated with this channel
@@ -1765,13 +1810,7 @@ export class DiscordBot {
                 continue;
               }
               
-              processedCount++;
-              
-              // If the ticket is already closed, just count it
-              if (!validStatuses.includes(ticket.status)) {
-                alreadyClosedCount++;
-                continue;
-              }
+              channelProcessedCount++;
               
               // Update ticket status in database
               await storage.updateTicketStatus(ticket.id, "closed");

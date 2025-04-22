@@ -71,6 +71,7 @@ export interface IStorage {
   createTicket(ticket: InsertTicket): Promise<Ticket>;
   getTicket(id: number): Promise<Ticket | undefined>;
   getTicketByDiscordChannel(channelId: string): Promise<Ticket | undefined>;
+  getAllTicketsWithStatuses(statuses: string[]): Promise<Ticket[]>; // Get tickets by their status values
   updateTicketStatus(id: number, status: string, claimedBy?: string): Promise<void>;
   updateTicketAmount(id: number, amount: number): Promise<void>;
   updateTicketDiscordChannel(id: number, channelId: string): Promise<void>;
@@ -437,6 +438,28 @@ export class DatabaseStorage implements IStorage {
       .from(tickets)
       .where(eq(tickets.discordChannelId, channelId));
     return ticket;
+  }
+  
+  async getAllTicketsWithStatuses(statuses: string[]): Promise<Ticket[]> {
+    try {
+      console.log(`[DB] Getting all tickets with statuses: ${statuses.join(', ')}`);
+      
+      // Using Drizzle's SQL or operator to find tickets with any of the specified statuses
+      // since inArray is not directly available in this version of Drizzle
+      const ticketsFound = await db
+        .select()
+        .from(tickets)
+        .where(
+          // Create an OR condition for each status
+          or(...statuses.map(status => eq(tickets.status, status)))
+        );
+      
+      console.log(`[DB] Found ${ticketsFound.length} tickets with the specified statuses`);
+      return ticketsFound;
+    } catch (error) {
+      console.error(`[DB] Error getting tickets by statuses: ${error}`);
+      return [];
+    }
   }
 
   async updateTicketStatus(id: number, status: string, claimedBy?: string): Promise<void> {
