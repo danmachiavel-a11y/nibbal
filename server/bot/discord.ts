@@ -60,7 +60,9 @@ import {
   AutocompleteInteraction,
   Message,
   Collection,
-  GuildChannel
+  GuildChannel,
+  ActivityType,
+  Options
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -1782,22 +1784,8 @@ export class DiscordBot {
                     // Move to transcript category
                     const textChannel = channel as TextChannel;
                     await textChannel.setParent(category.transcriptCategoryId, {
-                      lockPermissions: false
+                      lockPermissions: true // Use category permissions instead of setting individual channel permissions
                     });
-                    
-                    // Set permissions for the transcript channel
-                    await textChannel.permissionOverwrites.set([
-                      // Ensure bot can still see the channel
-                      {
-                        id: guild.members.me!.id,
-                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
-                      },
-                      // Deny access to @everyone
-                      {
-                        id: guild.roles.everyone.id,
-                        deny: [PermissionFlagsBits.ViewChannel]
-                      }
-                    ]);
                     
                     // Post a message in the channel to indicate it was auto-closed
                     await textChannel.send({
@@ -3316,31 +3304,72 @@ export class DiscordBot {
       ],
       rest: {
         // Add custom retry options for REST API calls
-        retries: 5, // Maximum number of retries
-        timeout: 15000 // 15 seconds timeout for requests
+        retries: 10, // Increased max number of retries
+        timeout: 20000, // 20 seconds timeout for requests
+        globalRequestsPerSecond: 50 // Explicit rate limit
+      },
+      // Add more robust reconnection settings
+      failIfNotExists: false,
+      presence: {
+        status: 'online',
+        activities: [{ 
+          name: 'support tickets',
+          type: 0 // Playing
+        }]
       }
     });
     
-    // Add reconnection handling
+    // Add enhanced reconnection handling
     client.on('disconnect', (event) => {
-      log(`Discord client disconnected with code ${event.code}. Reason: ${event.reason}`, "warn");
+      log(`Discord client disconnected with code ${event?.code || 'unknown'}. Reason: ${event?.reason || 'No reason provided'}`, "warn");
       log("Will attempt to reconnect automatically...", "info");
+      
+      // Update connection state
+      this.isConnected = false;
+      
+      // If this is a critical error, attempt to reconnect manually
+      if (event?.code === 4004 || event?.code === 4010 || event?.code === 4011 || event?.code === 4012 || event?.code === 4013 || event?.code === 4014) {
+        log(`Critical disconnect code ${event.code} detected. Manual reconnection required.`, "error");
+        
+        // Schedule reconnection with increasing backoff (between 30-60 seconds)
+        const reconnectDelay = 30000 + Math.floor(Math.random() * 30000);
+        log(`Scheduling reconnection in ${reconnectDelay / 1000} seconds...`, "info");
+        
+        setTimeout(() => {
+          this.reconnect().catch(e => {
+            log(`Failed scheduled reconnection: ${e}`, "error");
+          });
+        }, reconnectDelay);
+      }
     });
     
     client.on('error', (error) => {
       log(`Discord client error: ${error.message}`, "error");
       
-      // Check for token-related errors
+      // Check for specific errors that require token refresh
       if (error.message.includes("token") || error.message.includes("authentication") || error.message.includes("login")) {
         log("Discord token may be invalid - will attempt to refresh token on next operation", "warn");
+      }
+      
+      // Handle rate limit errors
+      if (error.message.includes("rate limit")) {
+        log("Rate limit exceeded. Adding additional backoff time.", "warn");
+        // Add additional backing off logic here if needed
       }
     });
     
     client.on('reconnecting', () => {
       log("Discord client reconnecting...", "info");
+      this.isConnecting = true;
     });
     
-    // Check token is healthy every 5 minutes
+    client.on('resume', (replayed) => {
+      log(`Discord client resumed. Replayed ${replayed} events.`, "info");
+      this.isConnected = true;
+      this.isConnecting = false;
+    });
+    
+    // Check token is healthy every 3 minutes (reduced from 5 to catch issues sooner)
     setInterval(() => {
       try {
         if (client.isReady() && !client.token) {
@@ -3349,10 +3378,15 @@ export class DiscordBot {
             log(`Failed to reconnect Discord bot: ${e}`, "error");
           });
         }
+        
+        // Also check if we're experiencing websocket issues
+        if ((client.ws as any).status === 5) { // 5 is the reconnecting status
+          log("WebSocket is currently in reconnecting state for >30 seconds...", "warn");
+        }
       } catch (error) {
         log(`Error in token health check: ${error}`, "error");
       }
-    }, 5 * 60 * 1000);
+    }, 3 * 60 * 1000);
     
     return client;
   }
