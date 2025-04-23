@@ -93,11 +93,15 @@ export class BridgeManager {
     lastName?: string;
     telegramId?: number;
     timestamp: number;
+    target: 'discord' | 'telegram'; // Target platform for the message
   }> = [];
-  private readonly MAX_RETRY_QUEUE_SIZE = 500;
-  private readonly MAX_RETRY_ATTEMPTS = 5;
-  private readonly RETRY_INTERVAL = 10000; // 10 seconds
+  private readonly MAX_RETRY_QUEUE_SIZE = 1000; // Increased from 500 to handle more messages
+  private readonly MAX_RETRY_ATTEMPTS = 8; // Increased from 5 to give more chances
+  private readonly RETRY_INTERVAL = 5000; // Reduced from 10s to 5s for faster retries
+  private readonly BATCH_SIZE = 3; // Process 3 messages per batch
+  private readonly MESSAGE_PROCESSING_DELAY = 500; // 500ms delay between messages in a batch
   private discordConsecutiveFailures = 0; // Track failures for backoff
+  private telegramConsecutiveFailures = 0; // Track failures for Telegram too
   private memoryCache = new Map<string, any>();
   private readonly MEMORY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
   
@@ -1126,29 +1130,87 @@ export class BridgeManager {
    * Process the message retry queue
    * Attempts to resend messages that failed due to Discord unavailability
    */
+  /**
+   * Process the message retry queue in batches with delays between messages
+   * Handles both Discord and Telegram messages with separate availability checks
+   */
   private async processRetryQueue(): Promise<void> {
-    // Skip processing if Discord is still not available
-    if (!this.isDiscordAvailable || !this.discordBot.isReady()) {
-      return;
-    }
-    
     // Skip if queue is empty
     if (this.messageRetryQueue.length === 0) {
       return;
     }
     
+    // Check platform availability
+    const discordAvailable = this.isDiscordAvailable && this.discordBot.isReady();
+    const telegramAvailable = this.telegramBot.getIsConnected();
+    
+    if (!discordAvailable && !telegramAvailable) {
+      // Both platforms unavailable, skip processing
+      return;
+    }
+    
     log(`Processing message retry queue (${this.messageRetryQueue.length} messages)`);
     
-    // Process up to 5 messages per batch to avoid overloading
-    const messagesToProcess = this.messageRetryQueue.slice(0, 5);
-    const remainingMessages = this.messageRetryQueue.slice(5);
-    this.messageRetryQueue = remainingMessages;
+    // Group messages by platform
+    const discordMessages = this.messageRetryQueue.filter(msg => 
+      msg.target === 'discord' && discordAvailable
+    );
+    const telegramMessages = this.messageRetryQueue.filter(msg => 
+      msg.target === 'telegram' && telegramAvailable
+    );
+    const skippedMessages = this.messageRetryQueue.filter(msg => 
+      (msg.target === 'discord' && !discordAvailable) || 
+      (msg.target === 'telegram' && !telegramAvailable)
+    );
+    
+    // Reset the queue with skipped messages (platforms not available)
+    this.messageRetryQueue = [...skippedMessages];
+    
+    // Process messages for each available platform in small batches
+    // This helps prevent one platform from monopolizing the queue
+    await this.processPlatformMessages('discord', discordMessages.slice(0, this.BATCH_SIZE));
+    await this.processPlatformMessages('telegram', telegramMessages.slice(0, this.BATCH_SIZE));
+    
+    // Add remaining messages back to the queue
+    this.messageRetryQueue = [
+      ...this.messageRetryQueue,
+      ...discordMessages.slice(this.BATCH_SIZE),
+      ...telegramMessages.slice(this.BATCH_SIZE)
+    ];
+    
+    // Log queue status if not empty
+    if (this.messageRetryQueue.length > 0) {
+      log(`Messages remaining in queue: ${this.messageRetryQueue.length}`);
+    }
+  }
+  
+  /**
+   * Process a batch of messages for a specific platform
+   * Adds delays between messages to avoid rate limits
+   */
+  private async processPlatformMessages(
+    platform: 'discord' | 'telegram',
+    messages: Array<{
+      attempt: number;
+      content: string;
+      ticketId: number;
+      username: string;
+      avatarUrl?: string;
+      photo?: string;
+      firstName?: string;
+      lastName?: string;
+      telegramId?: number;
+      timestamp: number;
+      target: 'discord' | 'telegram';
+    }>
+  ): Promise<void> {
+    if (messages.length === 0) return;
     
     let successCount = 0;
     let failureCount = 0;
     
     // Process each message with individual try/catch to continue even if one fails
-    for (const message of messagesToProcess) {
+    for (const message of messages) {
       try {
         // Skip messages that have exceeded retry attempts
         if (message.attempt >= this.MAX_RETRY_ATTEMPTS) {
@@ -1161,39 +1223,66 @@ export class BridgeManager {
         message.attempt++;
         
         // Add delay between messages to avoid rate limits
+        // The delay increases with consecutive failures for dynamic backoff
         if (successCount > 0 || failureCount > 0) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          const baseDelay = this.MESSAGE_PROCESSING_DELAY;
+          const failureMultiplier = platform === 'discord' 
+            ? Math.min(this.discordConsecutiveFailures, 5)
+            : Math.min(this.telegramConsecutiveFailures, 5);
+          const actualDelay = baseDelay * (1 + failureMultiplier * 0.5);
+          
+          await new Promise(resolve => setTimeout(resolve, actualDelay));
         }
         
-        log(`Retrying message for ticket ${message.ticketId} (attempt ${message.attempt}/${this.MAX_RETRY_ATTEMPTS})`);
+        log(`Retrying ${platform} message for ticket ${message.ticketId} (attempt ${message.attempt}/${this.MAX_RETRY_ATTEMPTS})`);
         
-        // Forward the message to Discord
-        await this.forwardToDiscord(
-          message.content,
-          message.ticketId,
-          message.username,
-          message.avatarUrl,
-          message.photo,
-          message.firstName,
-          message.lastName,
-          message.telegramId
-        );
+        if (platform === 'discord') {
+          // Forward the message to Discord
+          await this.forwardToDiscord(
+            message.content,
+            message.ticketId,
+            message.username,
+            message.avatarUrl,
+            message.photo,
+            message.firstName,
+            message.lastName,
+            message.telegramId
+          );
+          
+          // If we've been failing consistently, reset the counter since we had a success
+          if (this.discordConsecutiveFailures > 0) {
+            log(`Successfully sent Discord message after ${this.discordConsecutiveFailures} consecutive failures, resetting failure counter`);
+            this.discordConsecutiveFailures = 0;
+          }
+        } else {
+          // Forward to Telegram
+          // We don't have explicit attachments parameter here, so pass undefined
+          await this.forwardToTelegram(
+            message.content,
+            message.ticketId,
+            message.username
+          );
+          
+          // Reset Telegram failure counter on success
+          if (this.telegramConsecutiveFailures > 0) {
+            log(`Successfully sent Telegram message after ${this.telegramConsecutiveFailures} consecutive failures, resetting failure counter`);
+            this.telegramConsecutiveFailures = 0;
+          }
+        }
         
         successCount++;
-        
-        // If we've been failing consistently, reset the counter since we had a success
-        if (this.discordConsecutiveFailures > 0) {
-          log(`Successfully sent message after ${this.discordConsecutiveFailures} consecutive failures, resetting failure counter`);
-          this.discordConsecutiveFailures = 0;
-        }
       } catch (error) {
         failureCount++;
         
         // Handle the error but continue processing other messages
-        log(`Failed to retry message for ticket ${message.ticketId}: ${error}`, "error");
+        log(`Failed to retry ${platform} message for ticket ${message.ticketId}: ${error}`, "error");
         
-        // Increment failure counter for backoff
-        this.discordConsecutiveFailures++;
+        // Increment failure counter for the appropriate platform
+        if (platform === 'discord') {
+          this.discordConsecutiveFailures++;
+        } else {
+          this.telegramConsecutiveFailures++;
+        }
         
         // Add the message back to the queue if we haven't exceeded max attempts
         if (message.attempt < this.MAX_RETRY_ATTEMPTS) {
@@ -1202,7 +1291,7 @@ export class BridgeManager {
       }
     }
     
-    log(`Processed ${successCount + failureCount} messages from retry queue: ${successCount} succeeded, ${failureCount} failed`);
+    log(`Processed ${successCount + failureCount} ${platform} messages: ${successCount} succeeded, ${failureCount} failed`);
   }
 
   /**
