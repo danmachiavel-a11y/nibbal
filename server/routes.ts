@@ -1328,8 +1328,9 @@ export async function registerRoutes(app: Express) {
               if (ticket.discordChannelId && bridge) {
                 try {
                   const channelStatus = await bridge.checkDiscordChannelStatus(ticket.discordChannelId);
+                  log(`Verifying ticket #${ticket.id} (${ticket.status}) - Discord channel exists: ${channelStatus.exists}, in transcripts: ${channelStatus.inTranscripts}`);
                   
-                  // CASE 1: Channel doesn't exist anymore, but ticket isn't closed
+                  // CASE 1: Channel doesn't exist anymore, but ticket isn't closed/deleted/transcript
                   if (!channelStatus.exists && !['closed', 'deleted', 'transcript'].includes(ticket.status)) {
                     // Update ticket status in database to closed
                     await storage.updateTicket(ticket.id, { 
@@ -1356,18 +1357,8 @@ export async function registerRoutes(app: Express) {
                   }
                   
                   // CASE 3: Channel exists in active category but ticket is marked as closed/transcript
-                  else if (!channelStatus.inTranscripts && channelStatus.exists && 
-                           ['transcript', 'closed'].includes(ticket.status)) {
-                    // Update ticket status in database to open
-                    await storage.updateTicket(ticket.id, { 
-                      status: 'open',
-                      completedAt: null
-                    });
-                    
-                    // Update status in the response
-                    log(`Updating ticket #${ticket.id} status from "${ticket.status}" to "open" - channel is active`);
-                    return { ...ticket, status: 'open' };
-                  }
+                  // REMOVED THIS CASE - we don't want to re-open tickets that have been closed manually
+                  // This was causing tickets to show as open on dashboard even after being closed in Discord
                 } catch (verificationError) {
                   log(`Error verifying Discord channel status for ticket #${ticket.id}: ${verificationError}`, "warn");
                   // Continue with original ticket data on error
@@ -1528,6 +1519,9 @@ export async function registerRoutes(app: Express) {
                     log(`Updated ticket #${ticket.id} status from "${ticket.status}" to "${newStatus}" based on Discord channel verification`);
                     ticket.status = newStatus;
                   }
+                  
+                  // We're NOT updating tickets from closed/transcript to open
+                  // This ensures tickets closed in Discord stay closed in the dashboard
                 } catch (verificationError) {
                   log(`Error verifying Discord channel status for ticket #${ticket.id}: ${verificationError}`, "warn");
                 }
