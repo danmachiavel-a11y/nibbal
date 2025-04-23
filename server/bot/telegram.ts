@@ -297,7 +297,7 @@ export class TelegramBot {
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly CLEANUP_DELAY = 10000; // 10 seconds
-  private readonly HEARTBEAT_INTERVAL = 900000; // 15 minutes
+  private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes (was 15 minutes)
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private readonly RECONNECT_COOLDOWN = 30000; // 30 seconds
   private readonly MAX_FAILED_HEARTBEATS = 3;
