@@ -2049,7 +2049,7 @@ export class BridgeManager {
                 .replace(/<#(\d+)>/g, "")
                 .replace(/\s+/g, " ").trim();
               
-              const messagePrefix = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] ${username}: `;
+              const messagePrefix = `${username}: `;
               await this.telegramBot.sendMessage(user.telegramId, `${messagePrefix}${cleanedTextContent}`);
               textSuccess = true;
               log(`Sent text portion of message with image URL to Telegram user ${user.telegramId} for ticket ${ticketId}`);
@@ -2125,8 +2125,8 @@ export class BridgeManager {
             
             log(`Stored Discord text message in database for ticket ${ticketId}`);
             
-            // Add ticket category to message for context when user has multiple tickets
-            const messagePrefix = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] ${username}: `;
+            // Add sender name to message for context without including category 
+            const messagePrefix = `${username}: `;
             
             // Clean Discord mentions in the content - remove completely
             let cleanedContent = content
