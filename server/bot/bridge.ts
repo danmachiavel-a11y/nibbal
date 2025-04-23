@@ -569,8 +569,8 @@ export class BridgeManager {
   }
 
   /**
-   * Specialized method to reconnect the Telegram bot with conflict handling
-   * This handles the situation where we're getting 409 Conflict errors
+   * Specialized method to reconnect the Telegram bot with enhanced conflict handling
+   * This handles network issues and the case where we're getting 409 Conflict errors
    */
   async reconnectTelegram(): Promise<void> {
     if (!this.telegramBot) {
@@ -582,25 +582,74 @@ export class BridgeManager {
     this.lastTelegramReconnectAttempt = Date.now();
     
     try {
-      log("Attempting to reconnect Telegram bot with conflict handling...", "express");
+      log("Attempting to reconnect Telegram bot with enhanced conflict handling...", "info");
       
-      // First stop the bot completely with timeout protection
+      // First check if Telegram API is accessible by making a simple test request
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        // Create an anonymous fetch request to simply check if Telegram API is reachable
+        const response = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getWebhookInfo', {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'User-Agent': 'TelegramBotBridge/1.0' 
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.status === 409) {
+          log("409 Conflict detected during pre-reconnect check - will use more aggressive cleanup", "warn");
+          // Force a longer delay for conflicts
+          await new Promise(resolve => setTimeout(resolve, 10000));
+        } else if (response.status < 200 || response.status >= 300) {
+          log(`Telegram API returned status ${response.status} in pre-reconnect check`, "warn");
+        } else {
+          log("Telegram API is accessible, proceeding with normal reconnection", "info");
+        }
+      } catch (preCheckError) {
+        // Just log the error and continue with reconnection attempt
+        log(`Error during pre-reconnect API check: ${preCheckError}`, "warn");
+      }
+      
+      // First stop the bot completely with timeout protection - use a longer timeout
+      try {
+        log("Stopping current Telegram bot instance...", "info");
         await Promise.race([
           this.telegramBot.stop(),
-          new Promise<void>(resolve => setTimeout(resolve, 5000)) // 5s timeout
+          new Promise<void>(resolve => {
+            setTimeout(() => {
+              log("Stop operation timed out, forcing cleanup", "warn");
+              resolve();
+            }, 8000); // Increased from 5s to 8s
+          })
         ]);
+        log("Telegram bot stopped successfully", "debug");
       } catch (stopError) {
         log(`Error stopping Telegram bot before reconnect: ${stopError}`, "warn");
         // Continue with reconnect anyway
       }
       
-      // Give the system time to fully release connections
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Give the system time to fully release connections - longer wait for conflict situations
+      log("Waiting for connections to fully close...", "debug");
+      await new Promise(resolve => setTimeout(resolve, 8000));
       
-      // Try to start the bot with special conflict detection
+      // Attempt to force release webhook/getUpdates to prevent conflicts
       try {
-        // Start the Telegram bot
+        log("Forcing webhook cleanup to prevent conflicts...", "debug");
+        await this.cleanupTelegramConnections();
+      } catch (cleanupError) {
+        log(`Error during pre-start cleanup: ${cleanupError}`, "warn");
+        // Continue anyway, just a preemptive attempt
+      }
+      
+      // Try to start the bot with enhanced conflict detection
+      try {
+        // Start the Telegram bot with automatic conflict resolution
+        log("Starting Telegram bot with conflict prevention...", "info");
         await this.telegramBot.start();
         log("Telegram bot reconnected successfully", "info");
       } catch (startError) {
@@ -609,14 +658,44 @@ export class BridgeManager {
         if (errorStr.includes('409') || errorStr.includes('conflict')) {
           log("409 Conflict detected during reconnection - another instance is running", "error");
           
-          // If we have access to the cleanup method, try it
+          // For conflict errors, try a more aggressive cleanup approach
+          log("Attempting aggressive cleanup for conflict resolution...", "warn");
+          
           try {
+            // Force a longer delay for conflicts
+            await new Promise(resolve => setTimeout(resolve, 15000));
+            
+            // Try forceful webhook deletion and connection cleanup
             await this.cleanupTelegramConnections();
+            
+            // Schedule a delayed retry with a 2-minute cooldown
+            log("Scheduling reconnection retry after 120s cooldown", "info");
+            setTimeout(() => {
+              log("Attempting reconnection after conflict cooldown...", "info");
+              this.reconnectTelegram().catch(e => {
+                log(`Post-conflict reconnection failed: ${e}`, "error");
+              });
+            }, 120000); // 2 minute cooldown after conflict
           } catch (cleanupError) {
-            log(`Error during connection cleanup: ${cleanupError}`, "error");
+            log(`Error during aggressive connection cleanup: ${cleanupError}`, "error");
           }
           
-          // Don't rethrow - we'll retry on the next health check
+          // Don't rethrow - we've scheduled a retry
+          return;
+        }
+        
+        // For non-conflict errors, add more detailed logging
+        log(`Non-conflict error during Telegram reconnection: ${errorStr}`, "error");
+        
+        // Handle specific known error cases
+        if (errorStr.includes('econnrefused') || errorStr.includes('timeout') || errorStr.includes('network')) {
+          log("Network connectivity issue detected, scheduling retry with backoff", "warn");
+          // Schedule a retry with shorter delay for network issues
+          setTimeout(() => {
+            this.reconnectTelegram().catch(e => {
+              log(`Network-related reconnection retry failed: ${e}`, "error");
+            });
+          }, 30000); // 30 second retry for network issues
           return;
         }
         
@@ -995,25 +1074,62 @@ export class BridgeManager {
   }
 
   /**
-   * Cleanup Telegram connections when we detect a 409 Conflict error
+   * Enhanced cleanup for Telegram connections when we detect a 409 Conflict error
    * This can happen during deployment when multiple instances are running
+   * or when a previous bot instance was not properly terminated
    */
   async cleanupTelegramConnections(): Promise<void> {
     try {
-      log("Attempting to clean up Telegram connections...", "info");
+      log("Performing aggressive cleanup of Telegram connections...", "info");
       
-      // Safely stop the Telegram bot if it exists
+      // 1. First attempt: Safely stop the Telegram bot if it exists
       if (this.telegramBot) {
         try {
-          await this.telegramBot.stop();
+          // Use timeout to prevent hanging
+          await Promise.race([
+            this.telegramBot.stop(),
+            new Promise<void>((resolve) => setTimeout(() => {
+              log("Stop operation timed out during cleanup, forcing continuation", "warn");
+              resolve();
+            }, 5000))
+          ]);
           log("Telegram bot stopped successfully during cleanup", "info");
         } catch (stopError) {
           log(`Error stopping Telegram bot during cleanup: ${stopError}`, "error");
+          // Continue with cleanup regardless
         }
       }
       
-      // Force garbage collection if available (Node.js with --expose-gc flag)
-      if (global.gc) {
+      // 2. Attempt to delete any webhook
+      try {
+        log("Attempting to delete any existing webhook...", "info");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const webhookDeleteResponse = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook?drop_pending_updates=true', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'User-Agent': 'TelegramBotBridge/1.0'
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (webhookDeleteResponse.ok) {
+          const result = await webhookDeleteResponse.json();
+          log(`Webhook deletion result: ${JSON.stringify(result)}`, "info");
+        } else {
+          log(`Failed to delete webhook: ${webhookDeleteResponse.status} ${webhookDeleteResponse.statusText}`, "warn");
+        }
+      } catch (webhookError) {
+        log(`Error during webhook deletion: ${webhookError}`, "warn");
+        // Continue with other cleanup steps
+      }
+      
+      // 3. Force garbage collection if available (Node.js with --expose-gc flag)
+      if (typeof global.gc === 'function') {
         try {
           global.gc();
           log("Forced garbage collection to clean up stale connections", "info");
@@ -1022,9 +1138,37 @@ export class BridgeManager {
         }
       }
       
-      // Add a delay to allow external connections to terminate
-      log("Waiting for external connections to terminate...", "info");
-      await new Promise(resolve => setTimeout(resolve, 10000)); // 10 second delay
+      // 4. Add a more significant delay to allow external connections to terminate
+      log("Waiting for external connections to terminate completely...", "info");
+      await new Promise(resolve => setTimeout(resolve, 15000)); // 15 second delay (increased from 10s)
+      
+      // 5. Make a simple API call to check if the conflict is resolved
+      try {
+        log("Testing Telegram API access after cleanup...", "debug");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const testResponse = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getMe', {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'User-Agent': 'TelegramBotBridge/1.0'
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (testResponse.status === 409) {
+          log("⚠️ Conflict still detected after cleanup. A longer cooldown period may be needed.", "warn");
+        } else if (testResponse.ok) {
+          log("✅ Telegram API accessible after cleanup - conflict appears to be resolved", "info");
+        } else {
+          log(`Telegram API returned status ${testResponse.status} after cleanup`, "warn");
+        }
+      } catch (testError) {
+        log(`Error testing Telegram API after cleanup: ${testError}`, "warn");
+      }
       
       log("Telegram connection cleanup completed", "info");
     } catch (error) {

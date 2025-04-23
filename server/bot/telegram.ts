@@ -793,12 +793,94 @@ export class TelegramBot {
       this.updateConnectionState('reconnecting');
       this.stopHeartbeat();
       
+      // BEFORE STARTING: Verify that the API is accessible and there are no conflicts
+      // This pre-flight check helps prevent 409 errors during initialization
+      try {
+        log("Performing Telegram API pre-flight check...", "debug");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        if (!process.env.TELEGRAM_BOT_TOKEN) {
+          throw new Error("TELEGRAM_BOT_TOKEN environment variable is not set");
+        }
+        
+        // First try to delete any existing webhook to prevent conflicts
+        try {
+          log("Attempting to clean webhook configuration...", "debug");
+          const deleteWebhookResponse = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook?drop_pending_updates=true', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'User-Agent': 'TelegramBotBridge/1.0' 
+            },
+            signal: controller.signal
+          });
+          
+          if (!deleteWebhookResponse.ok) {
+            if (deleteWebhookResponse.status === 409) {
+              // If we get a conflict here, we need to wait
+              log("409 Conflict detected during webhook cleanup, delaying startup", "warn");
+              await new Promise(resolve => setTimeout(resolve, 15000));
+            } else {
+              log(`Warning: Webhook deletion returned status ${deleteWebhookResponse.status}`, "warn");
+            }
+          } else {
+            log("Webhook configuration cleaned successfully", "debug");
+          }
+        } catch (webhookError) {
+          log(`Error during webhook cleanup: ${webhookError}`, "warn");
+          // Wait a bit before continuing
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        
+        // Then check if the bot is accessible via getMe
+        const response = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getMe', {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'User-Agent': 'TelegramBotBridge/1.0' 
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.status === 409) {
+          log("409 Conflict detected during pre-flight check - another instance is running", "error");
+          // Wait significantly longer before proceeding
+          await new Promise(resolve => setTimeout(resolve, 15000));
+          
+          // Try one more time with an exponential backoff
+          log("Retrying pre-flight check after delay...", "debug");
+          const retryResponse = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getMe', {
+            method: 'GET',
+            headers: { 
+              'Content-Type': 'application/json',
+              'User-Agent': 'TelegramBotBridge/1.0' 
+            }
+          });
+          
+          if (retryResponse.status === 409) {
+            // If we still have conflict, throw an error
+            throw new Error("409 Conflict: Another bot instance is running. Cannot start.");
+          }
+        } else if (!response.ok) {
+          log(`Telegram API returned status ${response.status} during pre-flight check`, "warn");
+        } else {
+          log("Telegram API accessible, proceeding with initialization", "debug");
+        }
+      } catch (preFlightError) {
+        log(`Error during Telegram pre-flight check: ${preFlightError}`, "warn");
+        // Don't throw here - we'll attempt to start the bot anyway and let Telegraf handle errors
+      }
+      
       // Create new bot instance
       if (!process.env.TELEGRAM_BOT_TOKEN) {
         throw new Error("TELEGRAM_BOT_TOKEN environment variable is not set");
       }
       
       log("Creating new Telegram bot instance", "debug");
+      log("Initializing Telegram bot with enhanced connection stability", "debug");
       // Prioritize environment variable for production deployments
       let token = process.env.TELEGRAM_BOT_TOKEN;
       
@@ -908,8 +990,25 @@ export class TelegramBot {
         
         log("Launching with conflict prevention in production mode", "info");
         
+        // Add a small random delay before launching to prevent multiple instances
+        // from connecting at the exact same time (mitigating conflicts)
+        const randomStartupDelay = Math.floor(Math.random() * 3000) + 1000; // 1-4 seconds
+        log(`Adding random startup delay of ${randomStartupDelay}ms to prevent conflicts`, "debug");
+        await new Promise(resolve => setTimeout(resolve, randomStartupDelay));
+        
         // Explicitly use the standard launch method with conflict prevention options
-        await this.bot.launch();
+        await this.bot.launch({
+          // Enhanced polling parameters for better resilience
+          polling: {
+            timeout: 30,          // Use shorter timeout (30 seconds)
+            limit: 50,            // Fetch fewer updates at once (reduced from 100)
+            allowedUpdates: [     // Only get updates we care about
+              'message',
+              'callback_query',
+              'inline_query'
+            ]
+          }
+        });
         
         log("Telegram bot launched in production mode with enhanced network reliability", "info");
       } else {
