@@ -803,14 +803,19 @@ export class TelegramBot {
         // Continue anyway - some tokens may have unusual formats
       }
       
-      // Create a new Telegram bot instance with reliable connection settings
-      this.bot = new Telegraf(token, {
+      // Create a new Telegram bot instance with enhanced reliability
+      // Use variable to allow proper typing
+      const telegrafOptions = {
         telegram: {
           apiRoot: 'https://api.telegram.org',
           webhookReply: false
         },
-        handlerTimeout: 30000 // 30 seconds timeout for handlers
-      });
+        handlerTimeout: 60000 // 60 seconds timeout for handlers
+      };
+      
+      // Create with better network resilience
+      log("Initializing Telegram bot with enhanced connection stability", "debug");
+      this.bot = new Telegraf(token, telegrafOptions);
       
       // Check connection
       const botInfo = await this.telegram.getMe();
@@ -823,41 +828,83 @@ export class TelegramBot {
       // This addresses the slow startup issue without sacrificing functionality
       await this.checkDatabaseConnection();
       
+      // Setup commands first (same for both environments)
+      await this.bot.telegram.setMyCommands([
+        { command: 'start', description: 'Start a new ticket' },
+        { command: 'close', description: 'Close the current ticket' },
+        { command: 'switch', description: 'Switch between active tickets' },
+        { command: 'info', description: 'Show information about your tickets' },
+        { command: 'ping', description: 'Ping staff for attention' }
+      ]);
+      
+      // Setup error handling for network issues
+      this.bot.catch((err, ctx) => {
+        const errorStr = String(err).toLowerCase();
+        
+        // Check if it's a network-related error
+        if (
+          errorStr.includes('econnreset') || 
+          errorStr.includes('timeout') || 
+          errorStr.includes('socket') || 
+          errorStr.includes('network')
+        ) {
+          log(`Network error in Telegram bot handler: ${err}`, "warn");
+          
+          // Increment failed heartbeat to trigger reconnection if needed
+          this.failedHeartbeats++;
+          
+          // Force immediate heartbeat check if we've seen multiple network errors
+          if (this.failedHeartbeats >= 2) {
+            log("Multiple network errors detected, triggering immediate connection check", "warn");
+            this.handleHeartbeat().catch(e => {
+              log(`Error in forced heartbeat: ${e}`, "error");
+            });
+          }
+        } else {
+          // For non-network errors, just log normally
+          log(`Error in Telegram bot handler: ${err}`, "error");
+        }
+      });
+      
       // Start polling for updates with custom parameters for better reliability
       if (process.env.NODE_ENV === 'production') {
-        log("Using production launch configuration with conflict handling", "info");
+        log("Using production launch configuration with enhanced network resilience", "info");
         
-        // Set polling parameters for production with conflict prevention
+        // Set polling parameters for production with conflict prevention and network resilience
         const pollingParams = {
           // Configure long polling for better stability
           allowed_updates: ['message', 'callback_query', 'inline_query', 'channel_post', 'edited_message'],
           // In production, we force drop pending updates to avoid conflicts with previous instances
-          drop_pending_updates: true
+          drop_pending_updates: true,
+          // Set polling timeout to shorter interval (30 seconds) for more frequent connection verification
+          timeout: 30,
+          // Limit the number of updates per polling cycle to avoid overwhelming the system
+          limit: 50
         };
         
-        // Apply the polling params
-        this.bot.telegram.setMyCommands([
-          { command: 'start', description: 'Start a new ticket' },
-          { command: 'close', description: 'Close the current ticket' },
-          { command: 'switch', description: 'Switch between active tickets' },
-          { command: 'info', description: 'Show information about your tickets' },
-          { command: 'ping', description: 'Ping staff for attention' }
-        ]);
+        // Launch with enhanced polling parameters in production
+        await this.bot.launch({
+          polling: pollingParams
+        });
         
-        // Launch with conflict prevention in production
-        await this.bot.launch();
+        log("Telegram bot launched in production mode with enhanced network reliability", "info");
       } else {
-        // Development environment configuration - more forgiving
-        this.bot.telegram.setMyCommands([
-          { command: 'start', description: 'Start a new ticket' },
-          { command: 'close', description: 'Close the current ticket' },
-          { command: 'switch', description: 'Switch between active tickets' },
-          { command: 'info', description: 'Show information about your tickets' },
-          { command: 'ping', description: 'Ping staff for attention' }
-        ]);
+        // Development environment configuration - with enhanced stability
+        const developmentPollingParams = {
+          // Also limit updates
+          allowed_updates: ['message', 'callback_query', 'inline_query', 'channel_post', 'edited_message'],
+          // Don't drop updates in development
+          drop_pending_updates: false,
+          // Use shorter timeout in development for faster reconnection
+          timeout: 20
+        };
         
-        // Launch the bot in development mode
-        await this.bot.launch();
+        // Launch in development mode with enhanced parameters
+        await this.bot.launch({
+          polling: developmentPollingParams
+        });
+        
+        log("Telegram bot launched in development mode with standard polling", "info");
       }
       
       // Start recurring tasks
