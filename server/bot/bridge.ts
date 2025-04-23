@@ -697,14 +697,63 @@ export class BridgeManager {
   private async reconnectDisconnectedBots(health: { telegram: boolean; discord: boolean }) {
     try {
       if (!health.telegram) {
-        log("Attempting to reconnect Telegram bot...");
-        // Add longer delay before reconnection
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        await this.startBotWithRetry(() => this.telegramBot.start(), "Telegram");
+        const now = Date.now();
+        // Check if we've attempted a reconnect too recently
+        if (now - this.lastTelegramReconnectAttempt < this.MIN_RECONNECT_INTERVAL) {
+          log(`Skipping Telegram reconnect - attempted too recently (${Math.floor((now - this.lastTelegramReconnectAttempt) / 1000)}s ago)`, "warn");
+        } else {
+          this.lastTelegramReconnectAttempt = now;
+          log("Attempting to reconnect Telegram bot...", "express");
+          
+          // First ensure the bot is properly stopped
+          try {
+            await Promise.race([
+              this.telegramBot.stop(),
+              new Promise<void>(resolve => setTimeout(resolve, 5000)) // Don't wait more than 5 seconds
+            ]);
+          } catch (stopError) {
+            log(`Error stopping Telegram bot before reconnect: ${stopError}`, "warn");
+            // Continue with reconnect anyway
+          }
+          
+          // Add longer delay before reconnection to allow connections to fully close
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          
+          try {
+            await this.startBotWithRetry(
+              () => this.telegramBot.start(),
+              "Telegram",
+              3, // Max attempts
+              true // Enable conflict detection
+            );
+          } catch (startError) {
+            // Handle conflict errors specially
+            const errorStr = String(startError).toLowerCase();
+            if (errorStr.includes('409') || errorStr.includes('conflict')) {
+              log("409 Conflict error during reconnection - will try again after extended cooldown", "warn");
+              
+              // Schedule a delayed retry with much longer interval
+              setTimeout(() => {
+                log("Attempting reconnection after conflict cooldown...", "info");
+                this.reconnectTelegram().catch(e => {
+                  log(`Post-conflict reconnection failed: ${e}`, "error");
+                });
+              }, 120000); // 2 minute cooldown after conflict
+            }
+          }
+        }
       }
+      
       if (!health.discord) {
-        log("Attempting to reconnect Discord bot...");
-        await this.startBotWithRetry(() => this.discordBot.start(), "Discord");
+        const now = Date.now();
+        // Check if we've attempted a reconnect too recently
+        if (now - this.lastDiscordReconnectAttempt < this.MIN_RECONNECT_INTERVAL) {
+          log(`Skipping Discord reconnect - attempted too recently (${Math.floor((now - this.lastDiscordReconnectAttempt) / 1000)}s ago)`, "warn");
+        } else {
+          this.lastDiscordReconnectAttempt = now;
+          log("Attempting to reconnect Discord bot...", "express");
+          await this.startBotWithRetry(() => this.discordBot.start(), "Discord");
+        }
       }
     } catch (error) {
       handleBridgeError(error as BridgeError, "reconnectDisconnectedBots");
