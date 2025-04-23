@@ -357,7 +357,15 @@ export class TelegramBot {
     }
 
     try {
-      const isConnected = await this.verifyConnection();
+      // Add timeout to prevent connection check from hanging
+      const connectionPromise = this.verifyConnection();
+      const timeoutPromise = new Promise<boolean>((_, reject) => {
+        setTimeout(() => reject(new Error("Connection verification timed out")), 10000);
+      });
+      
+      // Race the verification against the timeout
+      const isConnected = await Promise.race([connectionPromise, timeoutPromise]);
+      
       if (isConnected) {
         this.failedHeartbeats = 0;
         this.lastHeartbeatSuccess = Date.now();
@@ -366,18 +374,74 @@ export class TelegramBot {
         this.failedHeartbeats++;
         log(`Telegram heartbeat failed, count: ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}`, "warn");
         
+        // Check if we need to attempt reconnection
         if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
           log(`Too many failed heartbeats, attempting reconnection`, "warn");
-          await this.handleDisconnect();
+          
+          // Reset the bot instance completely
+          if (this.bot) {
+            try {
+              // Close old connection with timeout protection
+              const stopPromise = this.bot.stop();
+              const stopTimeoutPromise = new Promise<void>(resolve => {
+                setTimeout(() => {
+                  log("Stop operation timed out, forcing cleanup", "warn");
+                  resolve();
+                }, 3000);
+              });
+              
+              await Promise.race([stopPromise, stopTimeoutPromise]);
+            } catch (stopError) {
+              log(`Error stopping bot during heartbeat reconnection: ${stopError}`, "warn");
+              // Continue with reconnection regardless
+            }
+            
+            this.bot = null;
+            this._isConnected = false;
+          }
+          
+          // Allow a brief cooldown before reconnecting
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Trigger proper reconnection procedure
+          this.bridge.reconnectTelegram().catch(e => {
+            log(`Failed initial reconnection attempt: ${e}`, "error");
+          });
         }
       }
     } catch (error) {
       this.failedHeartbeats++;
       log(`Error during Telegram heartbeat: ${error}`, "error");
       
-      if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
-        log(`Too many failed heartbeats, attempting reconnection`, "warn");
-        await this.handleDisconnect();
+      // Check for specific critical errors that require immediate reconnection
+      const errorStr = String(error).toLowerCase();
+      const criticalErrors = ['timeout', 'econnreset', 'socket hang up', 'network error', 'econnrefused'];
+      const isCritical = criticalErrors.some(e => errorStr.includes(e));
+      
+      if (isCritical || this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
+        log(`${isCritical ? 'Critical connection error' : 'Too many failed heartbeats'}, forcing reconnection`, "warn");
+        
+        // Reset the bot instance
+        if (this.bot) {
+          try {
+            await Promise.race([
+              this.bot.stop(),
+              new Promise(resolve => setTimeout(resolve, 3000))
+            ]);
+          } catch (stopError) {
+            log(`Error stopping bot: ${stopError}`, "warn");
+          }
+          
+          this.bot = null;
+          this._isConnected = false;
+        }
+        
+        // Invoke bridge's reconnect method after a short delay
+        setTimeout(() => {
+          this.bridge.reconnectTelegram().catch(e => {
+            log(`Failed to reconnect after critical error: ${e}`, "error");
+          });
+        }, 2000);
       }
     }
   }
