@@ -1976,7 +1976,7 @@ export class BridgeManager {
 
                 if (cachedImage?.telegramFileId) {
                   log(`Using cached Telegram fileId for ${attachment.url} in ticket ${ticketId}`);
-                  await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] Image from ${username}`);
+                  await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `Image from ${username}`);
                   attachmentSuccess = true;
                   continue;
                 }
@@ -2066,7 +2066,7 @@ export class BridgeManager {
 
             if (cachedImage?.telegramFileId) {
               log(`Using cached Telegram fileId for ${imageUrl} in ticket ${ticketId}`);
-              await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] Image from ${username}`);
+              await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `Image from ${username}`);
               
               log(`Successfully sent cached image to Telegram user ${user.telegramId} for ticket ${ticketId}`);
               return {
@@ -2082,7 +2082,7 @@ export class BridgeManager {
             }
             log(`Successfully processed image, size: ${buffer.length} bytes for ticket ${ticketId}`);
 
-            const caption = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] Image from ${username}`;
+            const caption = `Image from ${username}`;
             const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, caption);
 
             if (fileId) {
@@ -2428,7 +2428,7 @@ export class BridgeManager {
               await this.discordBot.sendMessage(
                 ticket.discordChannelId,
                 {
-                  content: `${categoryPrefix}${content.toString().trim()}`,
+                  content: content.toString().trim(),
                   username: displayName,
                   avatarURL: avatarUrl
                 },
@@ -2459,8 +2459,8 @@ export class BridgeManager {
             try {
               // Create a message indicating photo was sent but couldn't be processed
               const photoNotification = content?.trim() 
-                ? `${categoryPrefix}${content.toString().trim()}\n\n(User sent a photo that couldn't be processed)`
-                : `${categoryPrefix}User sent a photo (couldn't be processed)`;
+                ? `${content.toString().trim()}\n\n(User sent a photo that couldn't be processed)`
+                : `User sent a photo (couldn't be processed)`;
                 
               // Send the message with notification
               log(`Attempting to send fallback message to Discord channel ${ticket.discordChannelId} for ticket ${ticketId}`);
@@ -2513,7 +2513,7 @@ export class BridgeManager {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: content ? `${categoryPrefix}${content.toString().trim()}` : "\u200B",
+                content: content ? content.toString().trim() : "\u200B",
                 username: displayName,
                 avatarURL: avatarUrl,
                 components
