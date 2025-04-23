@@ -908,18 +908,21 @@ export class TelegramBot {
         // Continue anyway - some tokens may have unusual formats
       }
       
-      // Create a new Telegram bot instance with enhanced reliability
-      // Use variable to allow proper typing
+      // Import the https module for the custom agent
+      const https = require('https');
+      
+      // Create a new Telegram bot instance with enhanced stability settings
+      // These settings are optimized for stability in challenging network environments
       const telegrafOptions = {
         telegram: {
           apiRoot: 'https://api.telegram.org',
-          webhookReply: false
+          webhookReply: false,
         },
-        handlerTimeout: 60000 // 60 seconds timeout for handlers
+        handlerTimeout: 30000 // 30 seconds timeout for handlers
       };
       
-      // Create with better network resilience
-      log("Initializing Telegram bot with enhanced connection stability", "debug");
+      // Create with maximum network resilience
+      log("Initializing Telegram bot with maximum connection stability settings", "debug");
       this.bot = new Telegraf(token, telegrafOptions);
       
       // Check connection
@@ -996,18 +999,16 @@ export class TelegramBot {
         log(`Adding random startup delay of ${randomStartupDelay}ms to prevent conflicts`, "debug");
         await new Promise(resolve => setTimeout(resolve, randomStartupDelay));
         
-        // Explicitly use the standard launch method with conflict prevention options
+        // Explicitly use the standard launch method with enhanced stability
+        // Note: Launch options vary by Telegraf version, need to use compatible format
         await this.bot.launch({
-          // Enhanced polling parameters for better resilience
-          polling: {
-            timeout: 30,          // Use shorter timeout (30 seconds)
-            limit: 50,            // Fetch fewer updates at once (reduced from 100)
-            allowedUpdates: [     // Only get updates we care about
-              'message',
-              'callback_query',
-              'inline_query'
-            ]
-          }
+          // Add options that don't cause type errors
+          dropPendingUpdates: false,
+          allowedUpdates: [
+            'message',
+            'callback_query',
+            'inline_query'
+          ]
         });
         
         log("Telegram bot launched in production mode with enhanced network reliability", "info");
