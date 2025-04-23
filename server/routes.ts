@@ -1309,31 +1309,77 @@ export async function registerRoutes(app: Express) {
       if (verifyDiscordStatus && bridge && allTickets.length > 0) {
         log(`Verifying Discord channel status for ${allTickets.length} tickets`);
         
-        const verifiedTickets = await Promise.all(
-          allTickets.map(async (ticket) => {
-            // Only verify tickets with Discord channel IDs that aren't already closed/deleted
-            if (ticket.discordChannelId && !['closed', 'deleted', 'transcript'].includes(ticket.status) && bridge) {
-              try {
-                const channelStatus = await bridge.checkDiscordChannelStatus(ticket.discordChannelId);
-                
-                // If channel doesn't exist or is in transcripts category, update ticket status
-                if (!channelStatus.exists || channelStatus.inTranscripts) {
-                  // Update ticket status in database
-                  const newStatus = channelStatus.inTranscripts ? 'transcript' : 'closed';
-                  await storage.updateTicketStatus(ticket.id, newStatus);
+        // Process all tickets in batches to avoid overwhelming the Discord API
+        const BATCH_SIZE = 10;
+        let verifiedTickets = [];
+        
+        // Clone the tickets array to avoid mutation during processing
+        const ticketsToProcess = [...allTickets];
+        
+        // Process in batches
+        for (let i = 0; i < ticketsToProcess.length; i += BATCH_SIZE) {
+          const batch = ticketsToProcess.slice(i, i + BATCH_SIZE);
+          
+          // Process this batch
+          const batchResults = await Promise.all(
+            batch.map(async (ticket) => {
+              // Special handling for tickets that should be checked
+              // Check ALL tickets with Discord channel IDs, regardless of status
+              if (ticket.discordChannelId && bridge) {
+                try {
+                  const channelStatus = await bridge.checkDiscordChannelStatus(ticket.discordChannelId);
                   
-                  // Update status in the response
-                  log(`Updating ticket #${ticket.id} status from "${ticket.status}" to "${newStatus}" based on Discord channel verification`);
-                  return { ...ticket, status: newStatus };
+                  // CASE 1: Channel doesn't exist anymore, but ticket isn't closed
+                  if (!channelStatus.exists && !['closed', 'deleted', 'transcript'].includes(ticket.status)) {
+                    // Update ticket status in database to closed
+                    await storage.updateTicket(ticket.id, { 
+                      status: 'closed',
+                      completedAt: new Date()
+                    });
+                    
+                    // Update ticket in response
+                    log(`Updating ticket #${ticket.id} status from "${ticket.status}" to "closed" - Discord channel no longer exists`);
+                    return { ...ticket, status: 'closed' };
+                  }
+                  
+                  // CASE 2: Channel is in transcripts, but ticket status doesn't reflect this
+                  else if (channelStatus.inTranscripts && !['transcript', 'closed', 'deleted'].includes(ticket.status)) {
+                    // Update ticket status in database to transcript
+                    await storage.updateTicket(ticket.id, { 
+                      status: 'transcript',
+                      completedAt: new Date()
+                    });
+                    
+                    // Update status in the response
+                    log(`Updating ticket #${ticket.id} status from "${ticket.status}" to "transcript" - channel moved to transcripts`);
+                    return { ...ticket, status: 'transcript' };
+                  }
+                  
+                  // CASE 3: Channel exists in active category but ticket is marked as closed/transcript
+                  else if (!channelStatus.inTranscripts && channelStatus.exists && 
+                           ['transcript', 'closed'].includes(ticket.status)) {
+                    // Update ticket status in database to open
+                    await storage.updateTicket(ticket.id, { 
+                      status: 'open',
+                      completedAt: null
+                    });
+                    
+                    // Update status in the response
+                    log(`Updating ticket #${ticket.id} status from "${ticket.status}" to "open" - channel is active`);
+                    return { ...ticket, status: 'open' };
+                  }
+                } catch (verificationError) {
+                  log(`Error verifying Discord channel status for ticket #${ticket.id}: ${verificationError}`, "warn");
+                  // Continue with original ticket data on error
                 }
-              } catch (verificationError) {
-                log(`Error verifying Discord channel status for ticket #${ticket.id}: ${verificationError}`, "warn");
-                // Continue with original ticket data on error
               }
-            }
-            return ticket;
-          })
-        );
+              return ticket;
+            })
+          );
+          
+          // Add processed batch results to verified tickets
+          verifiedTickets = [...verifiedTickets, ...batchResults];
+        }
         
         allTickets = verifiedTickets;
       }
