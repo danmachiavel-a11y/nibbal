@@ -568,11 +568,76 @@ export class BridgeManager {
     }
   }
 
+  /**
+   * Specialized method to reconnect the Telegram bot with conflict handling
+   * This handles the situation where we're getting 409 Conflict errors
+   */
+  async reconnectTelegram(): Promise<void> {
+    if (!this.telegramBot) {
+      log("Cannot reconnect Telegram, bot is not initialized", "error");
+      return;
+    }
+    
+    // Record attempt time for rate limiting
+    this.lastTelegramReconnectAttempt = Date.now();
+    
+    try {
+      log("Attempting to reconnect Telegram bot with conflict handling...", "express");
+      
+      // First stop the bot completely with timeout protection
+      try {
+        await Promise.race([
+          this.telegramBot.stop(),
+          new Promise<void>(resolve => setTimeout(resolve, 5000)) // 5s timeout
+        ]);
+      } catch (stopError) {
+        log(`Error stopping Telegram bot before reconnect: ${stopError}`, "warn");
+        // Continue with reconnect anyway
+      }
+      
+      // Give the system time to fully release connections
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // Try to start the bot with special conflict detection
+      try {
+        // Start the Telegram bot
+        await this.telegramBot.start();
+        log("Telegram bot reconnected successfully", "info");
+      } catch (startError) {
+        const errorStr = String(startError).toLowerCase();
+        
+        if (errorStr.includes('409') || errorStr.includes('conflict')) {
+          log("409 Conflict detected during reconnection - another instance is running", "error");
+          
+          // If we have access to the cleanup method, try it
+          try {
+            await this.cleanupTelegramConnections();
+          } catch (cleanupError) {
+            log(`Error during connection cleanup: ${cleanupError}`, "error");
+          }
+          
+          // Don't rethrow - we'll retry on the next health check
+          return;
+        }
+        
+        throw startError; // Rethrow other errors
+      }
+    } catch (error) {
+      log(`Error reconnecting Telegram bot: ${error}`, "error");
+      throw error;
+    }
+  }
+
   private async startBotWithRetry(
     startFn: () => Promise<void>,
-    botName: string
+    botName: string,
+    maxRetries?: number,
+    handleConflicts?: boolean
   ): Promise<void> {
-    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+    // Use provided maxRetries or default to this.maxRetries
+    const retryLimit = maxRetries || this.maxRetries;
+    
+    for (let attempt = 1; attempt <= retryLimit; attempt++) {
       try {
         // Add significant delay between attempts
         if (attempt > 1) {
@@ -580,7 +645,7 @@ export class BridgeManager {
           await new Promise(resolve => setTimeout(resolve, this.retryTimeout));
         }
 
-        log(`Starting ${botName} bot (attempt ${attempt}/${this.maxRetries})...`);
+        log(`Starting ${botName} bot (attempt ${attempt}/${retryLimit})...`);
         await startFn();
 
         this.retryAttempts = 0; // Reset on success
@@ -595,6 +660,17 @@ export class BridgeManager {
         return;
       } catch (error) {
         handleBridgeError(error as BridgeError, `startBotWithRetry-${botName}-${attempt}`);
+        
+        // Check for conflict errors if handling is enabled
+        if (handleConflicts && botName === "Telegram") {
+          const errorStr = String(error).toLowerCase();
+          if (errorStr.includes('409') || errorStr.includes('conflict')) {
+            log(`409 Conflict detected during ${botName} startup - another instance is running`, "error");
+            
+            // For conflict errors, we'll throw with a special message
+            throw new Error(`409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running`);
+          }
+        }
 
         // If Discord failed to start, mark it as unavailable
         if (botName === "Discord") {
@@ -602,13 +678,20 @@ export class BridgeManager {
           this.isDiscordAvailable = false;
         }
 
-        if (attempt === this.maxRetries) {
-          log(`${botName} bot failed to start after ${this.maxRetries} attempts`, "error");
+        if (attempt === retryLimit) {
+          log(`${botName} bot failed to start after ${retryLimit} attempts`, "error");
           throw error;
         }
 
-        // Add longer delay after failure
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        // Add longer delay after failure - use longer delay for network errors
+        const errorStr = String(error).toLowerCase();
+        const networkError = errorStr.includes('network') || 
+                             errorStr.includes('econnreset') || 
+                             errorStr.includes('timeout');
+        
+        const delay = networkError ? 15000 : 5000;
+        log(`Waiting ${delay/1000}s before next attempt${networkError ? ' (network error)' : ''}...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
   }
