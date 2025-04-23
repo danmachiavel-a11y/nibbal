@@ -1819,7 +1819,7 @@ export class BridgeManager {
       
       // Create a more robust deduplication key without timestamp component
       // Include a version number to make it easier to change deduplication behavior in the future
-      const dedupVersion = "v2";
+      const dedupVersion = "v3"; // Updated version to reflect changes
       
       // Add a sequential counter to allow duplicate identical messages
       // This will create a unique key for each message, but we'll still check timing
@@ -1879,160 +1879,306 @@ export class BridgeManager {
         log(`Cleaned ${cleanedCount} entries from message deduplication cache`);
       }
       
+      // First get the ticket
       const ticket = await storage.getTicket(ticketId);
-      log(`Forwarding to Telegram - Ticket: ${JSON.stringify(ticket)}`);
+      log(`Forwarding to Telegram - Ticket ID: ${ticketId}, Status: ${ticket?.status}`);
 
+      // Validate ticket
       if (!ticket || !ticket.userId) {
         log(`Invalid ticket or missing user ID: ${ticketId}`, "error");
-        return;
+        return {
+          sent: false,
+          error: "invalid_ticket"
+        };
+      }
+      
+      // Skip if ticket is already closed/deleted/transcript
+      if (ticket.status === 'closed' || ticket.status === 'deleted' || ticket.status === 'transcript') {
+        log(`Not forwarding message for closed ticket #${ticketId}`, "warn");
+        return {
+          sent: false,
+          error: "ticket_closed"
+        };
       }
 
+      // Get the user associated with this ticket
       const user = await storage.getUser(ticket.userId);
-      log(`Found user: ${JSON.stringify(user)}`);
+      log(`Found user: ${user?.id}, Telegram ID: ${user?.telegramId}`);
 
+      // Validate user
       if (!user || !user.telegramId) {
         log(`Invalid user or missing Telegram ID for ticket: ${ticketId}`, "error");
-        return;
+        return {
+          sent: false,
+          error: "invalid_user"
+        };
       }
 
-      // Since telegramId is now a number, we don't need to check its format
+      // Validate Telegram ID format
       if (!Number.isFinite(user.telegramId)) {
         log(`Invalid Telegram ID format for user: ${user.id}`, "error");
-        return;
+        return {
+          sent: false,
+          error: "invalid_telegram_id"
+        };
+      }
+      
+      // Check if user is banned
+      if (user.isBanned) {
+        log(`Not forwarding message to banned user: ${user.id}`, "warn");
+        return {
+          sent: false,
+          error: "user_banned"
+        };
       }
 
-      // Handle attachments if present
-      if (attachments && attachments.length > 0) {
-        // Store message with attachment indication
-        await storage.createMessage({
-          ticketId,
-          content: content || "Image sent",
-          authorId: user.id,
-          platform: "discord",
-          timestamp: new Date(),
-          senderName: username
-        });
+      try {
+        // Retry the message from this ticket but with improved error handling and logging
+        
+        // Track which forwarding we are actually doing
+        let forwardType = "text"; // Default to text
+        
+        // Handle attachments if present
+        if (attachments && attachments.length > 0) {
+          forwardType = "attachment";
+          
+          // Store message with attachment indication
+          await storage.createMessage({
+            ticketId,
+            content: content || "Image sent",
+            authorId: user.id,
+            platform: "discord",
+            timestamp: new Date(),
+            senderName: username
+          });
+          
+          log(`Stored Discord message with attachments in database for ticket ${ticketId}`);
 
-        // Send text content if any
-        if (content?.trim()) {
-          await this.telegramBot.sendMessage(user.telegramId, `${username}: ${cleanedContent}`);
-        }
-
-        // Process each attachment
-        for (const attachment of attachments) {
-          if (attachment.url) {
+          // Send text content if any
+          if (content?.trim()) {
             try {
-              const cacheKey = attachment.url;
-              const cachedImage = this.getCachedImage(cacheKey);
-
-              if (cachedImage?.telegramFileId) {
-                log(`Using cached Telegram fileId for ${attachment.url}`);
-                await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `Image from ${username}`);
-                continue;
-              }
-
-              log(`Processing Discord attachment: ${attachment.url}`);
-              const buffer = await this.processDiscordToTelegram(attachment.url);
-              if (!buffer) {
-                throw new BridgeError("Failed to process image", { context: "forwardToTelegram" });
-              }
-              log(`Successfully processed image, size: ${buffer.length} bytes`);
-
-              const caption = `Image from ${username}`;
-              const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, caption);
-
-              if (fileId) {
-                this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
-              }
-
-              log(`Successfully sent photo to Telegram user ${user.telegramId}`);
-            } catch (error) {
-              handleBridgeError(error as BridgeError, "forwardToTelegram-attachment");
+              const messagePrefix = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] ${username}: `;
+              await this.telegramBot.sendMessage(user.telegramId, `${messagePrefix}${cleanedContent}`);
+              log(`Sent text portion of message with attachments to Telegram user ${user.telegramId} for ticket ${ticketId}`);
+            } catch (textError) {
+              log(`Error sending text portion of message with attachments: ${textError}`, "error");
+              // Continue with attachments even if text fails
             }
           }
-        }
-        return;
-      }
 
-      // Handle text messages with image URLs
-      const imageUrlMatch = content.match(/(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif))/i);
-      if (imageUrlMatch) {
-        const imageUrl = imageUrlMatch[0];
-        const textContent = content.replace(imageUrl, '').trim();
+          // Process each attachment
+          let attachmentSuccess = false;
+          for (const attachment of attachments) {
+            if (attachment.url) {
+              try {
+                const cacheKey = attachment.url;
+                const cachedImage = this.getCachedImage(cacheKey);
 
-        // Store message
-        await storage.createMessage({
-          ticketId,
-          content: textContent || "Image sent",
-          authorId: user.id,
-          platform: "discord",
-          timestamp: new Date(),
-          senderName: username
-        });
+                if (cachedImage?.telegramFileId) {
+                  log(`Using cached Telegram fileId for ${attachment.url} in ticket ${ticketId}`);
+                  await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] Image from ${username}`);
+                  attachmentSuccess = true;
+                  continue;
+                }
 
-        // Send text if any
-        if (textContent) {
-          // Clean Discord mentions from the content - remove completely
-          let cleanedTextContent = textContent
-            .replace(/<@!?(\d+)>/g, "")
-            .replace(/<@&(\d+)>/g, "")
-            .replace(/<#(\d+)>/g, "")
-            .replace(/\s+/g, " ").trim();
+                log(`Processing Discord attachment: ${attachment.url} for ticket ${ticketId}`);
+                const buffer = await this.processDiscordToTelegram(attachment.url);
+                if (!buffer) {
+                  throw new BridgeError("Failed to process image", { context: "forwardToTelegram" });
+                }
+                log(`Successfully processed image, size: ${buffer.length} bytes for ticket ${ticketId}`);
+
+                const caption = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] Image from ${username}`;
+                const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, caption);
+
+                if (fileId) {
+                  this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
+                  attachmentSuccess = true;
+                }
+
+                log(`Successfully sent photo to Telegram user ${user.telegramId} for ticket ${ticketId}`);
+              } catch (attachmentError) {
+                log(`Error processing attachment: ${attachment.url} for ticket ${ticketId}: ${attachmentError}`, "error");
+                // Continue with other attachments even if one fails
+              }
+            }
+          }
           
-          await this.telegramBot.sendMessage(user.telegramId, `${username}: ${cleanedTextContent}`);
+          if (attachmentSuccess) {
+            log(`Successfully forwarded at least one attachment to Telegram for ticket ${ticketId}`);
+            return {
+              sent: true,
+              type: "attachment"
+            };
+          } else {
+            log(`Failed to forward any attachments to Telegram for ticket ${ticketId}`, "warn");
+            return {
+              sent: false,
+              error: "attachment_failed"
+            };
+          }
         }
 
-        // Process and send the image
-        try {
-          const cacheKey = imageUrl;
-          const cachedImage = this.getCachedImage(cacheKey);
+        // Handle text messages with image URLs
+        const imageUrlMatch = content.match(/(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif))/i);
+        if (imageUrlMatch) {
+          forwardType = "image-url";
+          const imageUrl = imageUrlMatch[0];
+          const textContent = content.replace(imageUrl, '').trim();
 
-          if (cachedImage?.telegramFileId) {
-            log(`Using cached Telegram fileId for ${imageUrl}`);
-            await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `Image from ${username}`);
-            return;
-          }
-
-          log(`Processing Discord image URL: ${imageUrl}`);
-          const buffer = await this.processDiscordToTelegram(imageUrl);
-          if (!buffer) {
-            throw new BridgeError("Failed to process image", { context: "forwardToTelegram" });
-          }
-          log(`Successfully processed image, size: ${buffer.length} bytes`);
-
-          const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, `Image from ${username}`);
-
-          if (fileId) {
-            this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
-          }
-
-          log(`Successfully sent photo to Telegram user ${user.telegramId}`);
-        } catch (error) {
-          handleBridgeError(error as BridgeError, "forwardToTelegram-image");
-        }
-      } else {
-        // Regular text message handling
-        await storage.createMessage({
-          ticketId,
-          content,
-          authorId: user.id,
-          platform: "discord",
-          timestamp: new Date(),
-          senderName: username
-        });
-        // Clean Discord mentions in the content - remove completely
-        let cleanedContent = content
-          .replace(/<@!?(\d+)>/g, "")
-          .replace(/<@&(\d+)>/g, "")
-          .replace(/<#(\d+)>/g, "")
-          .replace(/\s+/g, " ").trim();
+          // Store message
+          await storage.createMessage({
+            ticketId,
+            content: textContent || "Image sent",
+            authorId: user.id,
+            platform: "discord",
+            timestamp: new Date(),
+            senderName: username
+          });
           
-        await this.telegramBot.sendMessage(user.telegramId, `${username}: ${cleanedContent}`);
-      }
+          log(`Stored Discord message with image URL in database for ticket ${ticketId}`);
 
-      log(`Successfully sent message to Telegram user: ${user.username}`);
+          // Send text if any
+          let textSuccess = false;
+          if (textContent) {
+            try {
+              // Clean Discord mentions from the content - remove completely
+              let cleanedTextContent = textContent
+                .replace(/<@!?(\d+)>/g, "")
+                .replace(/<@&(\d+)>/g, "")
+                .replace(/<#(\d+)>/g, "")
+                .replace(/\s+/g, " ").trim();
+              
+              const messagePrefix = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] ${username}: `;
+              await this.telegramBot.sendMessage(user.telegramId, `${messagePrefix}${cleanedTextContent}`);
+              textSuccess = true;
+              log(`Sent text portion of message with image URL to Telegram user ${user.telegramId} for ticket ${ticketId}`);
+            } catch (textError) {
+              log(`Error sending text portion of message with image URL: ${textError}`, "error");
+              // Continue with image even if text fails
+            }
+          }
+
+          // Process and send the image
+          try {
+            const cacheKey = imageUrl;
+            const cachedImage = this.getCachedImage(cacheKey);
+
+            if (cachedImage?.telegramFileId) {
+              log(`Using cached Telegram fileId for ${imageUrl} in ticket ${ticketId}`);
+              await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] Image from ${username}`);
+              
+              log(`Successfully sent cached image to Telegram user ${user.telegramId} for ticket ${ticketId}`);
+              return {
+                sent: true,
+                type: "image-url"
+              };
+            }
+
+            log(`Processing Discord image URL: ${imageUrl} for ticket ${ticketId}`);
+            const buffer = await this.processDiscordToTelegram(imageUrl);
+            if (!buffer) {
+              throw new BridgeError("Failed to process image", { context: "forwardToTelegram" });
+            }
+            log(`Successfully processed image, size: ${buffer.length} bytes for ticket ${ticketId}`);
+
+            const caption = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] Image from ${username}`;
+            const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, caption);
+
+            if (fileId) {
+              this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
+            }
+
+            log(`Successfully sent image URL to Telegram user ${user.telegramId} for ticket ${ticketId}`);
+            return {
+              sent: true,
+              type: "image-url"
+            };
+          } catch (imageError) {
+            log(`Error processing image URL: ${imageUrl} for ticket ${ticketId}: ${imageError}`, "error");
+            // If text was successful but image failed, we still consider it partial success
+            if (textSuccess) {
+              return {
+                sent: true,
+                partial: true,
+                type: "text-only"
+              };
+            }
+            return {
+              sent: false,
+              error: "image_url_failed"
+            };
+          }
+        } else {
+          // Regular text message handling
+          forwardType = "text";
+          
+          try {
+            await storage.createMessage({
+              ticketId,
+              content,
+              authorId: user.id,
+              platform: "discord",
+              timestamp: new Date(),
+              senderName: username
+            });
+            
+            log(`Stored Discord text message in database for ticket ${ticketId}`);
+            
+            // Add ticket category to message for context when user has multiple tickets
+            const messagePrefix = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] ${username}: `;
+            
+            // Clean Discord mentions in the content - remove completely
+            let cleanedContent = content
+              .replace(/<@!?(\d+)>/g, "")
+              .replace(/<@&(\d+)>/g, "")
+              .replace(/<#(\d+)>/g, "")
+              .replace(/\s+/g, " ").trim();
+              
+            await this.telegramBot.sendMessage(user.telegramId, `${messagePrefix}${cleanedContent}`);
+            
+            log(`Successfully sent text message to Telegram user ${user.telegramId} for ticket ${ticketId}`);
+            return {
+              sent: true,
+              type: "text"
+            };
+          } catch (textError) {
+            log(`Error sending text message to Telegram: ${textError}`, "error");
+            return {
+              sent: false,
+              error: "text_failed"
+            };
+          }
+        }
+      } catch (innerError) {
+        log(`Error in forwardToTelegram for ticket ${ticketId}: ${innerError}`, "error");
+        return {
+          sent: false,
+          error: "unknown_error"
+        };
+      }
     } catch (error) {
-      handleBridgeError(error as BridgeError, "forwardToTelegram");
+      // Track failures for backoff
+      this.telegramConsecutiveFailures++;
+      log(`Telegram forward error (failures: ${this.telegramConsecutiveFailures}): ${error}`, "error");
+      
+      // Add to retry queue if appropriate
+      if (this.messageRetryQueue.length < this.MAX_RETRY_QUEUE_SIZE) {
+        this.messageRetryQueue.push({
+          attempt: 0,
+          content,
+          ticketId,
+          username,
+          timestamp: Date.now(),
+          target: 'telegram'
+        });
+        log(`Added failed message to retry queue for ticket ${ticketId}`);
+      }
+      
+      return {
+        sent: false,
+        error: String(error)
+      };
     }
   }
 
@@ -2076,12 +2222,15 @@ export class BridgeManager {
             timestamp: Date.now(),
             target: 'discord' // Specify target platform for proper handling
           });
-          log(`Added message to retry queue for ticket ${ticketId}, queue size: ${this.messageRetryQueue.length}`);
+          log(`Added message to Discord retry queue for ticket ${ticketId}, queue size: ${this.messageRetryQueue.length}`);
         } else {
           log(`Retry queue full (${this.messageRetryQueue.length}), discarding message for ticket ${ticketId}`, "warn");
         }
         
-        return;
+        return {
+          sent: false,
+          error: "discord_unavailable"
+        };
       }
       
       // Check connection strength before sending
@@ -2111,7 +2260,7 @@ export class BridgeManager {
       
       // Create a more robust deduplication key without timestamp component
       // Include a version number to make it easier to change deduplication behavior in the future
-      const dedupVersion = "v2";
+      const dedupVersion = "v3"; // Updated version to reflect changes
       
       // Add a sequential counter to allow duplicate identical messages
       // This will create a unique key for each message, but we'll still check timing
@@ -2136,7 +2285,10 @@ export class BridgeManager {
       // If we've exceeded the allowed duplicates, warn and drop the message
       if (currentDuplicateCount >= maxDuplicatesAllowed) {
         log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." exceeded max allowed duplicates (${maxDuplicatesAllowed})`, "warn");
-        return;
+        return {
+          sent: false,
+          error: "duplicate_message"
+        };
       }
       
       // Log duplicate detection for debugging
@@ -2168,123 +2320,251 @@ export class BridgeManager {
         log(`Cleaned ${cleanedCount} entries from message deduplication cache`);
       }
       
+      // First get the ticket
       const ticket = await storage.getTicket(ticketId);
-      log(`Forwarding to Discord - Ticket: ${JSON.stringify(ticket)}`);
+      log(`Forwarding to Discord - Ticket ID: ${ticketId}, Status: ${ticket?.status}`);
 
+      // Validate ticket
       if (!ticket) {
-        throw new BridgeError(`Invalid ticket: ${ticketId}`, { context: "forwardToDiscord" });
+        log(`Invalid ticket: ${ticketId}`, "error");
+        return {
+          sent: false,
+          error: "invalid_ticket"
+        };
       }
       
+      // Skip if ticket is closed/deleted/transcript
+      if (ticket.status === 'closed' || ticket.status === 'deleted' || ticket.status === 'transcript') {
+        log(`Not forwarding message for closed ticket #${ticketId}`, "warn");
+        return {
+          sent: false,
+          error: "ticket_closed"
+        };
+      }
+      
+      // Handle pending tickets that don't have channels yet
       if (!ticket.discordChannelId) {
-        // Handle pending tickets that don't have channels yet
         if (ticket.status === 'pending') {
           log(`Ticket ${ticketId} is in pending state, storing message but not forwarding to Discord`, "warn");
           // We've already stored the message in the database in the handler
-          return;
+          return {
+            sent: false,
+            error: "ticket_pending"
+          };
         } else {
-          throw new BridgeError(`Missing Discord channel for ticket: ${ticketId} with status: ${ticket.status}`, { context: "forwardToDiscord" });
+          log(`Missing Discord channel for ticket: ${ticketId} with status: ${ticket.status}`, "error");
+          return {
+            sent: false,
+            error: "missing_channel"
+          };
         }
       }
+      
+      // Verify the Discord channel still exists before attempting to send
+      try {
+        const channelStatus = await this.checkDiscordChannelStatus(ticket.discordChannelId);
+        if (!channelStatus.exists) {
+          log(`Discord channel ${ticket.discordChannelId} for ticket ${ticketId} does not exist`, "error");
+          return {
+            sent: false,
+            error: "channel_not_found"
+          };
+        }
+        
+        if (channelStatus.inTranscripts && ticket.status !== 'transcript') {
+          log(`Discord channel ${ticket.discordChannelId} for ticket ${ticketId} is in transcripts but ticket status is ${ticket.status}`, "warn");
+          // Update ticket status to match reality
+          await storage.updateTicket(ticketId, { status: 'transcript' });
+          return {
+            sent: false,
+            error: "ticket_in_transcripts"
+          };
+        }
+      } catch (channelError) {
+        log(`Error checking Discord channel status: ${channelError}`, "error");
+        // Continue anyway, the message send will fail if the channel is truly invalid
+      }
 
-      const displayName = [firstName, lastName]
-        .filter(Boolean)
-        .join(' ') || username;
-
-      if (photo) {
-        try {
-          // Process the image first
-          const buffer = await this.processTelegramToDiscord(photo);
-          if (!buffer) {
-            throw new BridgeError("Failed to process image", { context: "forwardToDiscord" });
+      try {
+        // Get user display name
+        const displayName = [firstName, lastName]
+          .filter(Boolean)
+          .join(' ') || username;
+  
+        // Get category name for context
+        const category = await storage.getCategory(ticket.categoryId);
+        const categoryName = category?.name || `#${ticket.categoryId}`;
+        
+        // Add prefix to show which ticket/category the message is coming from (for context)
+        const categoryPrefix = `(${categoryName}) `;
+        
+        // Process based on message type
+        if (photo) {
+          try {
+            // First store message in database
+            await storage.createMessage({
+              ticketId,
+              content: content || "Image sent",
+              authorId: ticket.userId,
+              platform: "telegram",
+              timestamp: new Date(),
+              senderName: username
+            });
+            
+            log(`Stored Telegram message with photo in database for ticket ${ticketId}`);
+            
+            // Process the image
+            const buffer = await this.processTelegramToDiscord(photo);
+            if (!buffer) {
+              throw new BridgeError("Failed to process image", { context: "forwardToDiscord" });
+            }
+  
+            // Only send a separate text message if we have actual content
+            // This prevents sending "Image sent" placeholder text
+            if (content?.trim()) {
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                {
+                  content: `${categoryPrefix}${content.toString().trim()}`,
+                  username: displayName,
+                  avatarURL: avatarUrl
+                },
+                displayName
+              );
+              
+              log(`Successfully sent text portion of image message to Discord channel ${ticket.discordChannelId} for ticket ${ticketId}`);
+            }
+  
+            // Now send the actual image
+            await this.forwardImageToDiscord(
+              ticket.discordChannelId,
+              buffer,
+              null,
+              displayName,
+              avatarUrl
+            );
+            
+            log(`Photo forwarded from Telegram to Discord for ticket ${ticketId}`);
+            return {
+              sent: true,
+              type: "photo"
+            };
+          } catch (error) {
+            handleBridgeError(error as BridgeError, "forwardToDiscord-photo");
+            
+            // If image processing failed, send a notification with the content
+            try {
+              // Create a message indicating photo was sent but couldn't be processed
+              const photoNotification = content?.trim() 
+                ? `${categoryPrefix}${content.toString().trim()}\n\n(User sent a photo that couldn't be processed)`
+                : `${categoryPrefix}User sent a photo (couldn't be processed)`;
+                
+              // Send the message with notification
+              log(`Attempting to send fallback message to Discord channel ${ticket.discordChannelId} for ticket ${ticketId}`);
+              
+              const messageOptions = {
+                content: photoNotification,
+                username: displayName,
+                avatarURL: avatarUrl
+              };
+              
+              await this.discordBot.sendMessage(
+                ticket.discordChannelId,
+                messageOptions,
+                displayName
+              );
+              
+              log(`Successfully sent fallback message to Discord channel ${ticket.discordChannelId} for ticket ${ticketId}`);
+              return {
+                sent: true,
+                partial: true,
+                type: "photo-fallback"
+              };
+            } catch (secondaryError) {
+              handleBridgeError(secondaryError as BridgeError, "forwardToDiscord-photo-fallback");
+              return {
+                sent: false,
+                error: "photo_fallback_failed"
+              };
+            }
           }
-
-          // Only send a separate text message if we have actual content
-          // This prevents sending "Image sent" placeholder text
-          if (content?.trim()) {
+        } else {
+          try {
+            // Regular text message (no photo)
+            // Store message in database
+            await storage.createMessage({
+              ticketId,
+              content: content,
+              authorId: ticket.userId,
+              platform: "telegram",
+              timestamp: new Date(),
+              senderName: username
+            });
+            
+            log(`Stored Telegram text message in database for ticket ${ticketId}`);
+            
+            // Don't add a Force Switch button to regular messages
+            // The button will only be added to specific system messages about ticket switching
+            const components = undefined;
+              
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: content.toString().trim(),
+                content: content ? `${categoryPrefix}${content.toString().trim()}` : "\u200B",
                 username: displayName,
-                avatarURL: avatarUrl
+                avatarURL: avatarUrl,
+                components
               },
               displayName
             );
-          }
-
-          // Now send the actual image
-          await this.forwardImageToDiscord(
-            ticket.discordChannelId,
-            buffer,
-            null,
-            displayName,
-            avatarUrl
-          );
-          
-          log(`Photo forwarded from Telegram to Discord for ticket ${ticketId}`);
-
-        } catch (error) {
-          handleBridgeError(error as BridgeError, "forwardToDiscord-photo");
-          
-          // If image processing failed, send a notification with the content
-          try {
-            // Create a message indicating photo was sent but couldn't be processed
-            const photoNotification = content?.trim() 
-              ? `${content.toString().trim()}\n\n(User sent a photo that couldn't be processed)`
-              : "User sent a photo (couldn't be processed)";
-              
-            // Send the message with notification
-            log(`Attempting to send message to Discord channel ${ticket.discordChannelId}`);
             
-            const messageOptions = {
-              content: photoNotification,
-              username: displayName,
-              avatarURL: avatarUrl
+            log(`Successfully sent text message to Discord channel ${ticket.discordChannelId} for ticket ${ticketId}`);
+            return {
+              sent: true,
+              type: "text"
             };
-            
-            log(`Sending message with options: ${JSON.stringify({
-              username: displayName,
-              avatarURL: avatarUrl ? "avatarURL present" : "no avatar",
-              content: photoNotification,
-              files: "no files",
-              embeds: "no embeds"
-            })}`);
-            
-            await this.discordBot.sendMessage(
-              ticket.discordChannelId,
-              messageOptions,
-              displayName
-            );
-            
-            log(`Successfully sent message to Discord channel ${ticket.discordChannelId}`);
-          } catch (secondaryError) {
-            handleBridgeError(secondaryError as BridgeError, "forwardToDiscord-photo-fallback");
+          } catch (textError) {
+            handleBridgeError(textError as BridgeError, "forwardToDiscord-text");
+            return {
+              sent: false,
+              error: "text_failed"
+            };
           }
         }
-      } else {
-        // Regular text message (no photo)
-        // Get the ticket user info
-        const user = await storage.getUser(ticket.userId!);
-        
-        // Don't add a Force Switch button to regular messages
-        // The button will only be added to specific system messages about ticket switching
-        const components = undefined;
-          
-        await this.discordBot.sendMessage(
-          ticket.discordChannelId,
-          {
-            content: content ? content.toString().trim() : "\u200B",
-            username: displayName,
-            avatarURL: avatarUrl,
-            components
-          },
-          displayName
-        );
+      } catch (innerError) {
+        log(`Error in forwardToDiscord for ticket ${ticketId}: ${innerError}`, "error");
+        return {
+          sent: false,
+          error: "unknown_error"
+        };
       }
-
-      log(`Successfully forwarded message to Discord channel: ${ticket.discordChannelId}`);
     } catch (error) {
-      handleBridgeError(error as BridgeError, "forwardToDiscord");
+      // Track failures for backoff
+      this.discordConsecutiveFailures++;
+      log(`Discord forward error (failures: ${this.discordConsecutiveFailures}): ${error}`, "error");
+      
+      // Add to retry queue if appropriate
+      if (this.messageRetryQueue.length < this.MAX_RETRY_QUEUE_SIZE) {
+        this.messageRetryQueue.push({
+          attempt: 0,
+          content,
+          ticketId,
+          username,
+          avatarUrl,
+          photo,
+          firstName,
+          lastName,
+          telegramId,
+          timestamp: Date.now(),
+          target: 'discord'
+        });
+        log(`Added failed message to retry queue for ticket ${ticketId}`);
+      }
+      
+      return {
+        sent: false,
+        error: String(error)
+      };
     }
   }
 
