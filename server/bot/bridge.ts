@@ -141,6 +141,60 @@ export class BridgeManager {
     
     return next;
   }
+  
+  /**
+   * Clean the deduplication cache to prevent memory leaks
+   * Handles both timestamp-based entries and counter-based entries
+   */
+  private cleanDedupCache(): void {
+    if (this.messageDedupCache.size <= this.MAX_DEDUP_CACHE_SIZE) {
+      return; // Cache is not too large yet
+    }
+    
+    const now = Date.now();
+    const expireTime = now - this.messageDedupWindow;
+    let cleanedCount = 0;
+    
+    // First, clean up keys that are definitely expired
+    for (const [key, value] of this.messageDedupCache.entries()) {
+      // If the entry is a timestamp (greater than 1000000000000 - meaning a Unix timestamp after 2001)
+      if (typeof value === 'number' && value > 1000000000000 && value < expireTime) {
+        this.messageDedupCache.delete(key);
+        cleanedCount++;
+      }
+      
+      // If we've cleaned at least 10% of the cache, move to next phase
+      if (cleanedCount >= this.MAX_DEDUP_CACHE_SIZE * 0.1) break;
+    }
+    
+    // If we still need to clean more and the cache is still too large
+    if (this.messageDedupCache.size > this.MAX_DEDUP_CACHE_SIZE * 0.9) {
+      // Find keys that are counter-based (starting with dc-exact: or tg-exact:)
+      const exactKeys = Array.from(this.messageDedupCache.keys())
+        .filter(key => key.startsWith('dc-exact:') || key.startsWith('tg-exact:'))
+        .sort((a, b) => {
+          // Try to sort by message counter value (higher values are newer)
+          const valueA = this.messageDedupCache.get(a) || 0;
+          const valueB = this.messageDedupCache.get(b) || 0;
+          return valueA - valueB; // Sort ascending so oldest (lowest counter) are first
+        });
+      
+      // Delete oldest exact match counters (up to 10% more)
+      const moreToClean = Math.min(
+        exactKeys.length, 
+        Math.ceil(this.MAX_DEDUP_CACHE_SIZE * 0.1)
+      );
+      
+      for (let i = 0; i < moreToClean; i++) {
+        this.messageDedupCache.delete(exactKeys[i]);
+        cleanedCount++;
+      }
+    }
+    
+    if (cleanedCount > 0) {
+      log(`Cleaned ${cleanedCount} entries from message deduplication cache`);
+    }
+  }
 
   private cleanupImageCache(): void {
     const now = Date.now();
@@ -1563,21 +1617,22 @@ export class BridgeManager {
         log(`[DEDUP] Generated key for Telegram: ${dedupKey}`, "debug");
       }
       
-      // Still check for extremely rapid duplicate messages (within 1 second)
-      // to prevent spam but allow intentional duplicates
-      const shortDedupKey = `tg:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}`;
-      const shortWindow = 1000; // 1 second window for exact duplicates
+      // Allow a certain number of duplicate messages from the same user
+      // This pattern will still protect against bots sending the exact same message dozens of times
+      const duplicateKey = `tg-exact:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}`;
+      const maxDuplicatesAllowed = 5; // Allow 5 identical messages per conversation
       
-      if (this.messageDedupCache.has(shortDedupKey)) {
-        const lastSent = this.messageDedupCache.get(shortDedupKey);
-        if (now - lastSent! < shortWindow) {
-          log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." sent again within ${shortWindow}ms`, "warn");
-          return;
-        }
+      // Each duplicate message gets a counter rather than a timestamp
+      const currentDuplicateCount = this.messageDedupCache.get(duplicateKey) || 0;
+      
+      // If we've exceeded the allowed duplicates, warn and drop the message
+      if (currentDuplicateCount >= maxDuplicatesAllowed) {
+        log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." exceeded max allowed duplicates (${maxDuplicatesAllowed})`, "warn");
+        return;
       }
       
-      // Update the short deduplication key to prevent spam
-      this.messageDedupCache.set(shortDedupKey, now);
+      // Update the duplicate counter for this exact message
+      this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
       
       // Update deduplication cache
       this.messageDedupCache.set(dedupKey, now);
@@ -1845,21 +1900,22 @@ export class BridgeManager {
         log(`[DEDUP] Generated key for Discord: ${dedupKey}`, "debug");
       }
       
-      // Still check for extremely rapid duplicate messages (within 1 second)
-      // to prevent spam but allow intentional duplicates
-      const shortDedupKey = `dc:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}`;
-      const shortWindow = 1000; // 1 second window for exact duplicates
+      // Allow a certain number of duplicate messages from the same user
+      // This pattern will still protect against bots sending the exact same message dozens of times
+      const duplicateKey = `dc-exact:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}`;
+      const maxDuplicatesAllowed = 5; // Allow 5 identical messages per conversation
       
-      if (this.messageDedupCache.has(shortDedupKey)) {
-        const lastSent = this.messageDedupCache.get(shortDedupKey);
-        if (now - lastSent! < shortWindow) {
-          log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." sent again within ${shortWindow}ms`, "warn");
-          return;
-        }
+      // Each duplicate message gets a counter rather than a timestamp
+      const currentDuplicateCount = this.messageDedupCache.get(duplicateKey) || 0;
+      
+      // If we've exceeded the allowed duplicates, warn and drop the message
+      if (currentDuplicateCount >= maxDuplicatesAllowed) {
+        log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." exceeded max allowed duplicates (${maxDuplicatesAllowed})`, "warn");
+        return;
       }
       
-      // Update the short deduplication key to prevent spam
-      this.messageDedupCache.set(shortDedupKey, now);
+      // Update the duplicate counter for this exact message
+      this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
       
       // Update deduplication cache
       this.messageDedupCache.set(dedupKey, now);
