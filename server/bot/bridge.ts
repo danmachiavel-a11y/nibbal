@@ -99,6 +99,9 @@ export class BridgeManager {
   private discordConsecutiveFailures = 0; // Track failures for backoff
   private memoryCache = new Map<string, any>();
   private readonly MEMORY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+  
+  // Message counter for deduplication (allows sending duplicate messages while preventing spam)
+  private messageCounters: Map<string, number> = new Map();
 
   constructor() {
     log("Initializing Bridge Manager");
@@ -113,6 +116,30 @@ export class BridgeManager {
 
   private startImageCacheCleanup(): void {
     setInterval(() => this.cleanupImageCache(), this.imageCacheCleanupInterval);
+  }
+  
+  /**
+   * Get a sequential counter for a given ticket and user
+   * This allows users to send duplicate messages while still protecting against spam bots
+   * @param ticketId The ID of the ticket
+   * @param username The username to track
+   * @returns An incremented counter value
+   */
+  private getMessageCounter(ticketId: number, username: string): number {
+    const counterKey = `${ticketId}:${username}`;
+    const current = this.messageCounters.get(counterKey) || 0;
+    const next = current + 1;
+    this.messageCounters.set(counterKey, next);
+    
+    // Clean up counters if we have too many (avoid memory leaks)
+    if (this.messageCounters.size > 10000) {
+      const oldestKeys = Array.from(this.messageCounters.keys()).slice(0, 5000);
+      for (const key of oldestKeys) {
+        this.messageCounters.delete(key);
+      }
+    }
+    
+    return next;
   }
 
   private cleanupImageCache(): void {
@@ -1521,21 +1548,36 @@ export class BridgeManager {
       const attachmentInfo = attachments ? `${attachments.length}:${JSON.stringify(attachments).length}` : '0';
       
       // Create a more robust deduplication key without timestamp component
-      const dedupKey = `tg:${ticketId}:${contentHash}:${contentForKey}:${attachmentInfo}:${username}`;
+      // Include a version number to make it easier to change deduplication behavior in the future
+      const dedupVersion = "v2";
+      
+      // Add a sequential counter to allow duplicate identical messages
+      // This will create a unique key for each message, but we'll still check timing
+      const messageCounter = this.getMessageCounter(ticketId, username);
+      
+      // Generate deduplication key with uniqueness counter
+      const dedupKey = `tg:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}:${attachmentInfo}:${username}:${messageCounter}`;
       const now = Date.now();
       
       if (this.ENABLE_DEDUP_LOGGING) {
         log(`[DEDUP] Generated key for Telegram: ${dedupKey}`, "debug");
       }
       
-      // Check if this message was recently sent
-      if (this.messageDedupCache.has(dedupKey)) {
-        const lastSent = this.messageDedupCache.get(dedupKey);
-        if (now - lastSent! < this.messageDedupWindow) {
-          log(`Skipping duplicate message to Telegram within ${this.messageDedupWindow}ms window: ${contentForKey.substring(0, 20)}...`, "warn");
+      // Still check for extremely rapid duplicate messages (within 1 second)
+      // to prevent spam but allow intentional duplicates
+      const shortDedupKey = `tg:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}`;
+      const shortWindow = 1000; // 1 second window for exact duplicates
+      
+      if (this.messageDedupCache.has(shortDedupKey)) {
+        const lastSent = this.messageDedupCache.get(shortDedupKey);
+        if (now - lastSent! < shortWindow) {
+          log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." sent again within ${shortWindow}ms`, "warn");
           return;
         }
       }
+      
+      // Update the short deduplication key to prevent spam
+      this.messageDedupCache.set(shortDedupKey, now);
       
       // Update deduplication cache
       this.messageDedupCache.set(dedupKey, now);
@@ -1788,21 +1830,36 @@ export class BridgeManager {
       const photoInfo = photo ? 'photo:' + photo.substring(0, 10) : 'text';
       
       // Create a more robust deduplication key without timestamp component
-      const dedupKey = `dc:${ticketId}:${contentHash}:${contentForKey}:${photoInfo}:${username}`;
+      // Include a version number to make it easier to change deduplication behavior in the future
+      const dedupVersion = "v2";
+      
+      // Add a sequential counter to allow duplicate identical messages
+      // This will create a unique key for each message, but we'll still check timing
+      const messageCounter = this.getMessageCounter(ticketId, username);
+      
+      // Generate deduplication key with uniqueness counter
+      const dedupKey = `dc:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}:${photoInfo}:${username}:${messageCounter}`;
       const now = Date.now();
       
       if (this.ENABLE_DEDUP_LOGGING) {
         log(`[DEDUP] Generated key for Discord: ${dedupKey}`, "debug");
       }
       
-      // Check if this message was recently sent
-      if (this.messageDedupCache.has(dedupKey)) {
-        const lastSent = this.messageDedupCache.get(dedupKey);
-        if (now - lastSent! < this.messageDedupWindow) {
-          log(`Skipping duplicate message to Discord within ${this.messageDedupWindow}ms window: ${contentForKey.substring(0, 20)}...`, "warn");
+      // Still check for extremely rapid duplicate messages (within 1 second)
+      // to prevent spam but allow intentional duplicates
+      const shortDedupKey = `dc:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}`;
+      const shortWindow = 1000; // 1 second window for exact duplicates
+      
+      if (this.messageDedupCache.has(shortDedupKey)) {
+        const lastSent = this.messageDedupCache.get(shortDedupKey);
+        if (now - lastSent! < shortWindow) {
+          log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." sent again within ${shortWindow}ms`, "warn");
           return;
         }
       }
+      
+      // Update the short deduplication key to prevent spam
+      this.messageDedupCache.set(shortDedupKey, now);
       
       // Update deduplication cache
       this.messageDedupCache.set(dedupKey, now);
