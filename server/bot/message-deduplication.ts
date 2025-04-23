@@ -9,6 +9,7 @@ import crypto from 'crypto';
 export class MessageDeduplication {
   private readonly dedupCache = new Map<string, any>();
   private readonly MAX_CACHE_SIZE = 10000;
+  // Match the allowed number in bridge.ts
   private readonly MAX_DUPLICATES_ALLOWED = 5; // Allow 5 identical messages per conversation
   private readonly DEDUP_WINDOW_MS = 180000; // 3 minutes
   private readonly ENABLE_LOGGING = true;
