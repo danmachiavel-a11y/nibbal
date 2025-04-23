@@ -201,16 +201,20 @@ export class BridgeManager {
    * Clean the deduplication cache to prevent memory leaks
    * Handles both timestamp-based entries and counter-based entries
    */
+  /**
+   * Clean deduplication cache more aggressively to handle rapid message sequences
+   * Two-phase cleaning first handles expired entries, then oldest counter-based entries if needed
+   */
   private cleanDedupCache(): void {
-    if (this.messageDedupCache.size <= this.MAX_DEDUP_CACHE_SIZE) {
-      return; // Cache is not too large yet
+    if (this.messageDedupCache.size <= this.MAX_DEDUP_CACHE_SIZE * 0.8) {
+      return; // Only clean when we reach 80% capacity to reduce overhead
     }
     
     const now = Date.now();
     const expireTime = now - this.messageDedupWindow;
     let cleanedCount = 0;
     
-    // First, clean up keys that are definitely expired
+    // Phase 1: Clean up keys that are definitely expired by timestamp
     for (const [key, value] of this.messageDedupCache.entries()) {
       // If the entry is a timestamp (greater than 1000000000000 - meaning a Unix timestamp after 2001)
       if (typeof value === 'number' && value > 1000000000000 && value < expireTime) {
@@ -218,36 +222,58 @@ export class BridgeManager {
         cleanedCount++;
       }
       
-      // If we've cleaned at least 10% of the cache, move to next phase
-      if (cleanedCount >= this.MAX_DEDUP_CACHE_SIZE * 0.1) break;
+      // If we've cleaned at least 20% of the cache (doubled from 10%), move to next phase
+      if (cleanedCount >= this.MAX_DEDUP_CACHE_SIZE * 0.2) break;
     }
     
-    // If we still need to clean more and the cache is still too large
+    // Phase 2: If we still need to clean more entries (cache > 90% full)
     if (this.messageDedupCache.size > this.MAX_DEDUP_CACHE_SIZE * 0.9) {
-      // Find keys that are counter-based (starting with dc-exact: or tg-exact:)
+      // Find keys for exact match counters (used for allowing duplicate messages)
       const exactKeys = Array.from(this.messageDedupCache.keys())
         .filter(key => key.startsWith('dc-exact:') || key.startsWith('tg-exact:'))
         .sort((a, b) => {
-          // Try to sort by message counter value (higher values are newer)
+          // Sort by counter value - older entries (lower counters) get cleaned first
           const valueA = this.messageDedupCache.get(a) || 0;
           const valueB = this.messageDedupCache.get(b) || 0;
-          return valueA - valueB; // Sort ascending so oldest (lowest counter) are first
+          return valueA - valueB; // Sort ascending so oldest are first
         });
       
-      // Delete oldest exact match counters (up to 10% more)
-      const moreToClean = Math.min(
-        exactKeys.length, 
-        Math.ceil(this.MAX_DEDUP_CACHE_SIZE * 0.1)
-      );
+      // Find regular timestamp keys to clean by age
+      const timestampKeys = Array.from(this.messageDedupCache.entries())
+        .filter(([key, val]) => 
+          !key.startsWith('dc-exact:') && 
+          !key.startsWith('tg-exact:') && 
+          typeof val === 'number'
+        )
+        .sort((a, b) => a[1] - b[1]) // Sort by timestamp value (oldest first)
+        .map(([key]) => key); // Extract just the keys
       
-      for (let i = 0; i < moreToClean; i++) {
+      // Determine how many more entries to clean (up to 20% of cache size)
+      const moreToClean = Math.ceil(this.MAX_DEDUP_CACHE_SIZE * 0.2);
+      let additionalCleaned = 0;
+      
+      // First try to clean older exact match counter entries
+      for (let i = 0; i < Math.min(exactKeys.length, moreToClean); i++) {
         this.messageDedupCache.delete(exactKeys[i]);
-        cleanedCount++;
+        additionalCleaned++;
+        
+        // If we've cleaned enough, stop
+        if (additionalCleaned >= moreToClean) break;
       }
+      
+      // If we still need to clean more, try timestamp entries too
+      if (additionalCleaned < moreToClean) {
+        for (let i = 0; i < Math.min(timestampKeys.length, moreToClean - additionalCleaned); i++) {
+          this.messageDedupCache.delete(timestampKeys[i]);
+          additionalCleaned++;
+        }
+      }
+      
+      cleanedCount += additionalCleaned;
     }
     
     if (cleanedCount > 0) {
-      log(`Cleaned ${cleanedCount} entries from message deduplication cache`);
+      log(`Cleaned ${cleanedCount} entries from message deduplication cache, size now: ${this.messageDedupCache.size}`);
     }
   }
 
@@ -1706,6 +1732,56 @@ export class BridgeManager {
 
   async forwardToTelegram(content: string, ticketId: number, username: string, attachments?: any[]) {
     try {
+      // If Telegram bot is not connected, queue the message for later
+      if (!this.telegramBot.getIsConnected()) {
+        log(`Telegram bot is not connected, storing message but not forwarding ticket ${ticketId}`, "warn");
+        
+        // Store the message in the database for transcript history
+        try {
+          const ticket = await storage.getTicket(ticketId);
+          if (ticket?.userId) {
+            await storage.createMessage({
+              ticketId,
+              content: `[QUEUED] ${content}`, // Mark as queued 
+              authorId: ticket.userId,
+              platform: "discord",
+              timestamp: new Date(),
+              senderName: username
+            });
+            
+            log(`Message stored in database, will be forwarded when Telegram reconnects: ${ticketId}`);
+          }
+        } catch (dbError) {
+          log(`Failed to store message in database: ${dbError}`, "error");
+        }
+        
+        // Add to retry queue to send when Telegram becomes available
+        if (this.messageRetryQueue.length < this.MAX_RETRY_QUEUE_SIZE) {
+          this.messageRetryQueue.push({
+            attempt: 0,
+            content,
+            ticketId,
+            username,
+            timestamp: Date.now(),
+            target: 'telegram' // Specify the target platform
+          });
+          log(`Added message to Telegram retry queue for ticket ${ticketId}, queue size: ${this.messageRetryQueue.length}`);
+        } else {
+          log(`Retry queue full (${this.messageRetryQueue.length}), discarding message for ticket ${ticketId}`, "warn");
+        }
+        
+        return {
+          sent: false,
+          error: "telegram_unavailable"
+        };
+      }
+      
+      // Add delay if there have been recent failures
+      if (this.telegramConsecutiveFailures > 0) {
+        const backoffDelay = Math.min(this.telegramConsecutiveFailures * 200, 2000); // 200ms per failure, max 2s
+        log(`Adding ${backoffDelay}ms delay due to ${this.telegramConsecutiveFailures} consecutive Telegram failures`);
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
+      }
       // Clean Discord mentions from the content before sending to Telegram
       // This prevents <@1234567890> format mentions from being forwarded
       let cleanedContent = content;
@@ -1997,7 +2073,8 @@ export class BridgeManager {
             firstName,
             lastName,
             telegramId,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            target: 'discord' // Specify target platform for proper handling
           });
           log(`Added message to retry queue for ticket ${ticketId}, queue size: ${this.messageRetryQueue.length}`);
         } else {
