@@ -1059,8 +1059,8 @@ export class DatabaseStorage implements IStorage {
   async getActiveTicketByUserId(userId: number): Promise<Ticket | undefined> {
     console.log(`[DB] Checking for active tickets for user ${userId}`);
     
-    // Get all tickets for this user that are not in a finalized state
-    // This includes 'open', 'in-progress', 'pending', 'paid', but not 'closed', 'deleted', etc.
+    // Get all tickets for this user that are in an active state
+    // This should include 'open', 'in-progress', 'pending', but NOT 'paid', 'closed', 'deleted', etc.
     try {
       // First, let's retrieve all active tickets to debug multiple ticket scenarios
       const activeTickets = await db
@@ -1069,9 +1069,9 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             eq(tickets.userId, userId),
-            // Consider any ticket not in a finalized state as "active"
-            // Note: 'paid' status is included as active for user interaction purposes
-            sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
+            // Only consider tickets with active statuses
+            // Exclude 'paid' status for the purpose of creating new tickets
+            sql`(${tickets.status} IN ('open', 'in-progress', 'pending'))`
           )
         )
         .orderBy(desc(tickets.id)); // Most recent first
@@ -1103,16 +1103,16 @@ export class DatabaseStorage implements IStorage {
     console.log(`[DB] Retrieving all active tickets for user ${userId}`);
     
     // Get all tickets for this user that are not in a finalized state
-    // This includes 'open', 'in-progress', 'pending', 'paid', but not 'closed', 'deleted', etc.
+    // This should include only 'open', 'in-progress', and 'pending', but NOT 'paid', 'closed', 'deleted', etc.
     const activeTickets = await db
       .select()
       .from(tickets)
       .where(
         and(
           eq(tickets.userId, userId),
-          // Consider any ticket not in a finalized state as "active"
-          // Note: 'paid' status is included as active for user interaction purposes
-          sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
+          // Consider only tickets with active statuses
+          // Note: 'paid' status is now excluded because it should be treated as completed for ticket creation purposes
+          sql`(${tickets.status} IN ('open', 'in-progress', 'pending'))`
         )
       )
       .orderBy(desc(tickets.id)); // Most recent first
@@ -1128,20 +1128,22 @@ export class DatabaseStorage implements IStorage {
     return activeTickets;
   }
 
-  // Alternative method for photo handling, functionally equivalent to getActiveTicketByUserId
+  // Alternative method for photo handling - allows paid tickets for continued messaging
   async getNonClosedTicketByUserId(userId: number): Promise<Ticket | undefined> {
     console.log(`[DB] Checking for non-closed tickets for user ${userId} (for photo handling)`);
     
     // Get all non-closed tickets for this user
     // This includes 'open', 'in-progress', 'pending', 'paid', but not 'closed', 'deleted', etc.
+    // We keep this separate from getActiveTicketsByUserId since it SHOULD include 'paid' status
+    // because users should still be able to send photos to paid tickets
     const [ticket] = await db
       .select()
       .from(tickets)
       .where(
         and(
           eq(tickets.userId, userId),
-          // Consider any ticket not in a finalized state as "active"
-          // Note: 'paid' status is included as active for user interaction purposes
+          // Consider any ticket not in a finalized state as "active" for photo/message handling
+          // Note: 'paid' status is included because users should still be able to interact with paid tickets
           sql`(${tickets.status} NOT IN ('closed', 'deleted', 'transcript', 'completed'))`
         )
       )

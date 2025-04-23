@@ -1958,8 +1958,14 @@ You have two options:
 
 Only one active ticket per service is allowed.`);
         
-        // Provide context about using /switch
-        await ctx.reply("Use /switch to see all your active tickets and choose which one to continue.");
+        // Provide context about using /switch and check if user has other tickets
+        const otherActiveTickets = activeTickets.filter(t => t.id !== existingTicketInCategory.id);
+        if (otherActiveTickets.length > 0) {
+          // User has other active tickets besides this one
+          await ctx.reply("You have multiple active tickets. Use /switch to see all your active tickets and choose which one to continue.");
+        } else {
+          await ctx.reply("Use /switch if you need to see your active ticket details.");
+        }
         
         return;
       }
