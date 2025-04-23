@@ -3434,8 +3434,8 @@ Images/photos are also supported.
             this.userStates.set(userId, userState);
           }
           
-          if (switchOption === 'new') {
-            // User wants to create a new ticket
+          if (switchOption === 'new' || data === 'start_new') {
+            // User wants to create a new ticket, either from switch menu or from start menu
             await ctx.answerCbQuery("Creating a new ticket");
             
             // Important: We no longer bypass the duplicate ticket check
