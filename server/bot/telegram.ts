@@ -410,9 +410,12 @@ export class TelegramBot {
   /**
    * Perform a complete forced reconnection of the Telegram bot
    * This is called when we detect severe connection issues
+   * Enhanced with multi-strategy approach for maximum resilience
    */
   private async performForcedReconnection(): Promise<void> {
     try {
+      log("Starting enhanced forced reconnection procedure", "info");
+      
       // First, update the connection state immediately
       this.updateConnectionState('reconnecting');
       
@@ -441,31 +444,139 @@ export class TelegramBot {
         this._isConnected = false;
       }
       
-      // Allow a brief cooldown before reconnecting
-      log("Pausing briefly before reconnection attempt...", "debug");
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Trigger bridge's reconnection procedure with error handling
+      // Additional steps to ensure clean reconnection
       try {
-        log("Initiating Telegram reconnection through bridge manager", "info");
-        await this.bridge.reconnectTelegram();
-        log("Telegram bot reconnection initiated successfully", "info");
-      } catch (reconnectError) {
-        log(`Failed to initiate Telegram reconnection: ${reconnectError}`, "error");
+        // Pre-check: Verify the API is responsive before reconnection attempt
+        log("Performing API availability pre-check...", "debug");
         
-        // Schedule a retry with exponential backoff
-        const backoffDelay = this.calculateBackoffDelay();
-        log(`Scheduling reconnection retry in ${backoffDelay/1000}s`, "info");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
         
-        setTimeout(() => {
-          log("Attempting reconnection retry after backoff", "info");
-          this.bridge.reconnectTelegram().catch(e => {
-            log(`Reconnection retry also failed: ${e}`, "error");
-          });
-        }, backoffDelay);
+        const preCheckResponse = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getMe', {
+          method: 'GET',
+          headers: { 
+            'Content-Type': 'application/json',
+            'User-Agent': 'TelegramBotBridge/2.0 (Reconnection)' 
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!preCheckResponse.ok) {
+          log(`API returned ${preCheckResponse.status} during pre-check, delaying reconnection`, "warn");
+          // Wait longer before attempting reconnection if API is having issues
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        } else {
+          log("API pre-check successful, proceeding with reconnection", "debug");
+          // Shorter delay if API is responsive
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } catch (preCheckError) {
+        log(`API pre-check failed: ${preCheckError}, still attempting reconnection`, "warn");
+        // Longer cooldown if API is completely unreachable
+        await new Promise(resolve => setTimeout(resolve, 8000));
+      }
+      
+      // Try multiple reconnection strategies in sequence
+      let reconnected = false;
+      
+      // Strategy 1: Bridge-managed reconnection (preferred)
+      if (!reconnected) {
+        try {
+          log("Strategy 1: Initiating Telegram reconnection through bridge manager", "info");
+          await this.bridge.reconnectTelegram();
+          log("Telegram bot reconnected successfully via bridge", "info");
+          reconnected = true;
+        } catch (bridgeError) {
+          log(`Bridge-initiated reconnection failed: ${bridgeError}`, "error");
+        }
+      }
+      
+      // Strategy 2: Direct reconnection if bridge method fails
+      if (!reconnected) {
+        try {
+          log("Strategy 2: Attempting direct reconnection...", "info");
+          this.reconnectAttempts++;
+          await this.start();
+          log("Direct reconnection successful", "info");
+          reconnected = true;
+        } catch (directError) {
+          log(`Direct reconnection failed: ${directError}`, "error");
+          
+          // If direct reconnection fails, try after a short delay
+          try {
+            const backoffDelay = Math.min(2000 * this.reconnectAttempts, 10000);
+            log(`Waiting ${backoffDelay/1000}s before retry...`, "info");
+            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+            
+            log("Retrying direct reconnection...", "info");
+            await this.start();
+            log("Retry reconnection successful", "info");
+            reconnected = true;
+          } catch (retryError) {
+            log(`Retry reconnection also failed: ${retryError}`, "error");
+          }
+        }
+      }
+      
+      // Strategy 3: Last resort - clean restart with webhook reset
+      if (!reconnected) {
+        try {
+          log("Strategy 3: Performing clean restart with webhook reset...", "info");
+          
+          // Force cleanup of any existing webhooks
+          try {
+            const webhookResponse = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook?drop_pending_updates=true', {
+              method: 'GET',
+              headers: { 'User-Agent': 'TelegramBotBridge/2.0 (EmergencyReconnect)' }
+            });
+            
+            if (webhookResponse.ok) {
+              log("Successfully cleaned webhook configuration before emergency restart", "debug");
+            }
+          } catch (webhookError) {
+            log(`Webhook cleanup failed: ${webhookError}`, "warn");
+          }
+          
+          // Wait a bit longer to ensure clean state
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Final attempt with original reconnection logic as backup
+          this.reconnectAttempts++;
+          log("Scheduling fallback bridge reconnection after webhook cleanup", "info"); 
+          
+          const backoffDelay = this.calculateBackoffDelay();
+          log(`Using ${backoffDelay/1000}s backoff delay for emergency retry`, "info");
+          
+          setTimeout(() => {
+            log("Executing emergency reconnection via bridge", "info");
+            this.bridge.reconnectTelegram().catch(e => {
+              log(`Emergency reconnection also failed: ${e}`, "error");
+            });
+          }, backoffDelay);
+        } catch (emergencyError) {
+          log(`Emergency reconnection failed: ${emergencyError}`, "error");
+        }
+      }
+      
+      if (reconnected) {
+        log("Telegram reconnection completed successfully", "info");
+        this.failedHeartbeats = 0;
+        this.lastHeartbeatSuccess = Date.now();
+      } else {
+        log("All immediate reconnection strategies failed, waiting for scheduled retries", "warn");
       }
     } catch (error) {
       log(`Unexpected error during forced reconnection: ${error}`, "error");
+      // Even on complete failure, schedule one more attempt with maximum backoff
+      const maxBackoff = this.backoffConfig.maxDelay;
+      setTimeout(() => {
+        log("Last-chance reconnection attempt after complete failure", "info");
+        this.bridge.reconnectTelegram().catch(() => {
+          this.updateConnectionState('disconnected', "All reconnection attempts failed");
+        });
+      }, maxBackoff);
     }
   }
 
