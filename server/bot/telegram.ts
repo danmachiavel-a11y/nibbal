@@ -2008,19 +2008,9 @@ Only one active ticket per service is allowed.`);
       try {
         await this.bridge.createTicketChannel(ticket);
         
+        // Only send confirmation message, no ticket summary
         await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n✅ *Ticket created successfully!*\n\n*You are now in:* ${category.name} (#${ticket.id})\n\n⚠️ *All your messages will be sent to our staff in this ticket. They will respond here.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
           parse_mode: 'Markdown'
-        });
-        
-        // Send summary of the ticket
-        const ticketSummary = [
-          "**Ticket Summary**",
-          `**Category:** ${category.name}`,
-          ...category.questions.map((q, i) => `**${q}**\n${state.answers[i] || 'No answer provided'}`)
-        ].join("\n\n");
-        
-        await ctx.reply(preserveMarkdown(ticketSummary), {
-          parse_mode: "MarkdownV2"
         });
       } catch (error) {
         log(`Error creating Discord channel: ${error}`, "error");
