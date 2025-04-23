@@ -1,4 +1,4 @@
-import { log } from './logger';
+import { log } from '../vite';
 import crypto from 'crypto';
 
 /**

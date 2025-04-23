@@ -7,6 +7,7 @@ import { log } from "../vite";
 import fetch, { RequestInit } from 'node-fetch';
 import { TextChannel } from 'discord.js';
 import crypto from 'crypto';
+import { messageDeduplication } from './message-deduplication';
 
 export class BridgeError extends Error {
   code?: string;
@@ -1670,7 +1671,7 @@ export class BridgeManager {
       // Allow a certain number of duplicate messages from the same user
       // This pattern will still protect against bots sending the exact same message dozens of times
       const duplicateKey = `tg-exact:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}`;
-      const maxDuplicatesAllowed = 5; // Allow 5 identical messages per conversation
+      const maxDuplicatesAllowed = this.MAX_DUPLICATES_ALLOWED; // Use the class constant (5)
       
       // Each duplicate message gets a counter rather than a timestamp
       const currentDuplicateCount = this.messageDedupCache.get(duplicateKey) || 0;
@@ -1678,7 +1679,15 @@ export class BridgeManager {
       // If we've exceeded the allowed duplicates, warn and drop the message
       if (currentDuplicateCount >= maxDuplicatesAllowed) {
         log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." exceeded max allowed duplicates (${maxDuplicatesAllowed})`, "warn");
-        return;
+        return {
+          sent: false,
+          error: "duplicate_message"
+        };
+      }
+      
+      // Log duplicate detection for debugging
+      if (currentDuplicateCount > 0 && this.ENABLE_DEDUP_LOGGING) {
+        log(`[DEDUP] Processing duplicate message #${currentDuplicateCount+1} of "${contentForKey.substring(0, 20)}..." in ticket #${ticketId}`, "debug");
       }
       
       // Update the duplicate counter for this exact message
@@ -1953,7 +1962,7 @@ export class BridgeManager {
       // Allow a certain number of duplicate messages from the same user
       // This pattern will still protect against bots sending the exact same message dozens of times
       const duplicateKey = `dc-exact:${dedupVersion}:${ticketId}:${contentHash}:${contentForKey}`;
-      const maxDuplicatesAllowed = 5; // Allow 5 identical messages per conversation
+      const maxDuplicatesAllowed = this.MAX_DUPLICATES_ALLOWED; // Use the class constant (5)
       
       // Each duplicate message gets a counter rather than a timestamp
       const currentDuplicateCount = this.messageDedupCache.get(duplicateKey) || 0;
@@ -1962,6 +1971,11 @@ export class BridgeManager {
       if (currentDuplicateCount >= maxDuplicatesAllowed) {
         log(`Preventing spam: message "${contentForKey.substring(0, 20)}..." exceeded max allowed duplicates (${maxDuplicatesAllowed})`, "warn");
         return;
+      }
+      
+      // Log duplicate detection for debugging
+      if (currentDuplicateCount > 0 && this.ENABLE_DEDUP_LOGGING) {
+        log(`[DEDUP] Processing duplicate message #${currentDuplicateCount+1} of "${contentForKey.substring(0, 20)}..." in ticket #${ticketId}`, "debug");
       }
       
       // Update the duplicate counter for this exact message
