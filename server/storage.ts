@@ -72,6 +72,7 @@ export interface IStorage {
   getTicket(id: number): Promise<Ticket | undefined>;
   getTicketByDiscordChannel(channelId: string): Promise<Ticket | undefined>;
   getAllTicketsWithStatuses(statuses: string[]): Promise<Ticket[]>; // Get tickets by their status values
+  updateTicket(id: number, data: Partial<InsertTicket>): Promise<Ticket | undefined>; // Generic update method
   updateTicketStatus(id: number, status: string, claimedBy?: string): Promise<void>;
   updateTicketAmount(id: number, amount: number): Promise<void>;
   updateTicketDiscordChannel(id: number, channelId: string): Promise<void>;
@@ -459,6 +460,38 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.error(`[DB] Error getting tickets by statuses: ${error}`);
       return [];
+    }
+  }
+
+  /**
+   * Generic method to update any ticket properties
+   * @param id Ticket ID
+   * @param data Partial ticket data to update
+   * @returns The updated ticket or undefined if not found
+   */
+  async updateTicket(id: number, data: Partial<InsertTicket>): Promise<Ticket | undefined> {
+    try {
+      console.log(`[DB] Updating ticket ${id} with data: ${JSON.stringify(data)}`);
+      
+      // First query to verify ticket exists
+      const [ticketBefore] = await db.select().from(tickets).where(eq(tickets.id, id));
+      if (!ticketBefore) {
+        console.error(`[DB] Failed to update ticket: Ticket ${id} not found`);
+        return undefined;
+      }
+      
+      // Perform the update
+      const [updatedTicket] = await db
+        .update(tickets)
+        .set(data)
+        .where(eq(tickets.id, id))
+        .returning();
+        
+      console.log(`[DB] Successfully updated ticket ${id}`);
+      return updatedTicket;
+    } catch (error) {
+      console.error(`[DB] Error in updateTicket: ${error}`);
+      throw error;
     }
   }
 

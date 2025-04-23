@@ -2392,8 +2392,11 @@ export class BridgeManager {
           .join(' ') || username;
   
         // Get category name for context
-        const category = await storage.getCategory(ticket.categoryId);
-        const categoryName = category?.name || `#${ticket.categoryId}`;
+        let categoryName = "Unknown";
+        if (ticket.categoryId) {
+          const category = await storage.getCategory(ticket.categoryId);
+          categoryName = category?.name || `#${ticket.categoryId}`;
+        }
         
         // Add prefix to show which ticket/category the message is coming from (for context)
         const categoryPrefix = `(${categoryName}) `;
