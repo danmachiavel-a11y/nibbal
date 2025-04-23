@@ -2568,14 +2568,23 @@ Images/photos are also supported.
                 const categoryId = ticket.categoryId || 0;
                 const category = categoriesMap.get(categoryId);
                 const categoryName = category ? category.name : `Category #${categoryId}`;
-                return `${i + 1}. Ticket #${ticket.id} (${categoryName})`;
+                const statusEmoji = ticket.status === 'open' ? '🔵' : 
+                                    ticket.status === 'in-progress' ? '🟡' : 
+                                    ticket.status === 'pending' ? '🟠' : 
+                                    ticket.status === 'paid' ? '💲' : '⚪';
+                return `${i + 1}. ${statusEmoji} Ticket #${ticket.id} (${categoryName}) - ${ticket.status}`;
               }).join('\n');
               
               // Create inline keyboard buttons for each ticket plus New Ticket option
-              const buttons = activeTickets.map(ticket => [{
-                text: `Select Ticket #${ticket.id}`,
-                callback_data: `switch_${ticket.id}`
-              }]);
+              const buttons = activeTickets.map(ticket => {
+                const categoryId = ticket.categoryId || 0;
+                const category = categoriesMap.get(categoryId);
+                const categoryName = category ? category.name : `Category #${categoryId}`;
+                return [{
+                  text: `#${ticket.id}: ${categoryName}`,
+                  callback_data: `switch_${ticket.id}`
+                }];
+              });
               
               // Add the "Create New Ticket" button
               buttons.push([{
@@ -2584,8 +2593,9 @@ Images/photos are also supported.
               }]);
               
               await ctx.reply(
-                `ℹ️ You have ${activeTickets.length} active ticket(s):\n\n${ticketList}\n\nPlease select a ticket to continue, or create a new one:`,
+                `🎫 *Your active tickets*\n\nYou have ${activeTickets.length} active ticket(s):\n\n${ticketList}\n\n*Please select a ticket to continue working with, or create a new one:*`,
                 {
+                  parse_mode: 'Markdown',
                   reply_markup: {
                     inline_keyboard: buttons
                   }
@@ -2731,11 +2741,17 @@ Images/photos are also supported.
           const category = ticket.categoryId ? categoriesMap.get(ticket.categoryId) : undefined;
           const categoryName = category ? category.name : "Unknown category";
           
+          // Get status emoji for ticket status
+          const statusEmoji = ticket.status === 'open' ? '🔵' : 
+                              ticket.status === 'in-progress' ? '🟡' : 
+                              ticket.status === 'pending' ? '🟠' : 
+                              ticket.status === 'paid' ? '💲' : '⚪';
+          
           // Mark currently active ticket
           const isActive = currentTicketId === ticket.id;
           const buttonLabel = isActive 
-            ? `✅ #${ticket.id}: ${categoryName} (current)` 
-            : `#${ticket.id}: ${categoryName}`;
+            ? `✅ ${statusEmoji} #${ticket.id}: ${categoryName} (current)` 
+            : `${statusEmoji} #${ticket.id}: ${categoryName}`;
           
           buttons.push([{
             text: buttonLabel,
@@ -2926,7 +2942,14 @@ Images/photos are also supported.
           for (const ticket of activeTickets) {
             const category = categoriesMap.get(ticket.categoryId);
             const categoryName = category ? category.name : "Unknown category";
-            const buttonLabel = `#${ticket.id}: ${categoryName}`;
+            
+            // Get status emoji for ticket status
+            const statusEmoji = ticket.status === 'open' ? '🔵' : 
+                                ticket.status === 'in-progress' ? '🟡' : 
+                                ticket.status === 'pending' ? '🟠' : 
+                                ticket.status === 'paid' ? '💲' : '⚪';
+                                
+            const buttonLabel = `${statusEmoji} #${ticket.id}: ${categoryName}`;
             
             buttons.push([{
               text: buttonLabel,
@@ -3075,7 +3098,14 @@ Images/photos are also supported.
           for (const ticket of remainingActiveTickets) {
             const ticket_category = categoriesMap.get(ticket.categoryId);
             const ticket_categoryName = ticket_category ? ticket_category.name : "Unknown category";
-            const buttonLabel = `#${ticket.id}: ${ticket_categoryName}`;
+            
+            // Get status emoji for ticket status
+            const statusEmoji = ticket.status === 'open' ? '🔵' : 
+                              ticket.status === 'in-progress' ? '🟡' : 
+                              ticket.status === 'pending' ? '🟠' : 
+                              ticket.status === 'paid' ? '💲' : '⚪';
+            
+            const buttonLabel = `${statusEmoji} #${ticket.id}: ${ticket_categoryName}`;
             
             // Highlight the current active ticket
             const isActive = ticket.id === remainingActiveTickets[0].id;
