@@ -2557,33 +2557,42 @@ Images/photos are also supported.
           if (activeTickets.length > 0) {
             log(`User ${userId} attempted to start and has ${activeTickets.length} active tickets`);
             
-            // Get current state to check if they're in an active ticket
-            const userState = this.userStates.get(userId);
-            
-            // If they have an active ticket currently selected, ask them to close it first
-            if (userState?.activeTicketId) {
-              const currentTicket = activeTickets.find(t => t.id === userState.activeTicketId);
-              if (currentTicket) {
-                await ctx.reply(
-                  `❗ You're currently in an active ticket (#${currentTicket.id}). Please use /close to close this ticket before starting a new one, or use /switch to see all your active tickets.`
-                );
-                return;
-              }
-            }
-            
-            // If they have active tickets but none selected currently, show list and continue
-            const ticketList = activeTickets.map((ticket, i) => {
-              const categoryId = ticket.categoryId || 0;
-              return `${i + 1}. Ticket #${ticket.id} (Category #${categoryId})`;
-            }).join('\n');
-            
-            await ctx.reply(
-              `ℹ️ You have ${activeTickets.length} active ticket(s):\n\n${ticketList}\n\n` +
-              "You're now creating a new ticket. Once created, you can use /switch to change between your tickets."
-            );
-            
-            // If there's no active state or the active ticket isn't set, create a state with no active ticket yet
-            if (!this.userStates.has(userId)) {
+            // Now always show the switch menu with create new ticket option
+            // Get ticket categories for better display
+            try {
+              const categories = await storage.getCategories();
+              const categoriesMap = new Map(categories.map(c => [c.id, c]));
+              
+              // Build ticket list with better formatting
+              const ticketList = activeTickets.map((ticket, i) => {
+                const categoryId = ticket.categoryId || 0;
+                const category = categoriesMap.get(categoryId);
+                const categoryName = category ? category.name : `Category #${categoryId}`;
+                return `${i + 1}. Ticket #${ticket.id} (${categoryName})`;
+              }).join('\n');
+              
+              // Create inline keyboard buttons for each ticket plus New Ticket option
+              const buttons = activeTickets.map(ticket => [{
+                text: `Select Ticket #${ticket.id}`,
+                callback_data: `switch_${ticket.id}`
+              }]);
+              
+              // Add the "Create New Ticket" button
+              buttons.push([{
+                text: "➕ Create New Ticket",
+                callback_data: "start_new"
+              }]);
+              
+              await ctx.reply(
+                `ℹ️ You have ${activeTickets.length} active ticket(s):\n\n${ticketList}\n\nPlease select a ticket to continue, or create a new one:`,
+                {
+                  reply_markup: {
+                    inline_keyboard: buttons
+                  }
+                }
+              );
+              
+              // Register a state to handle the switch callback
               await this.setState(userId, {
                 activeTicketId: undefined, // No active ticket selected yet
                 categoryId: 0,
@@ -2592,6 +2601,11 @@ Images/photos are also supported.
                 inQuestionnaire: false,
                 lastUpdated: Date.now()
               });
+              
+              return; // Exit early since we're showing the menu instead
+            } catch (error) {
+              log(`Error preparing ticket menu: ${error}`, "error");
+              // Fall back to default behavior if we can't show the menu
             }
           }
         }
