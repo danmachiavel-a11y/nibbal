@@ -1286,22 +1286,59 @@ export async function registerRoutes(app: Express) {
     try {
       // Get tickets from all categories if no specific category is provided
       const categoryId = req.query.categoryId ? parseInt(req.query.categoryId as string) : null;
-
+      
+      // Check if we should verify Discord channel status (default to true)
+      const verifyDiscordStatus = req.query.verifyDiscord !== 'false';
+      
+      let allTickets = [];
+      
       if (categoryId) {
         const tickets = await storage.getTicketsByCategory(categoryId);
-        res.json(tickets);
+        allTickets = tickets;
       } else {
         // Get all categories and their tickets
         const categories = await storage.getCategories();
-        const allTickets = [];
-
+        
         for (const category of categories) {
           const tickets = await storage.getTicketsByCategory(category.id);
           allTickets.push(...tickets);
         }
-
-        res.json(allTickets);
       }
+      
+      // Verify ticket status with Discord if bridge is available and verification is requested
+      if (verifyDiscordStatus && bridge && allTickets.length > 0) {
+        log(`Verifying Discord channel status for ${allTickets.length} tickets`);
+        
+        const verifiedTickets = await Promise.all(
+          allTickets.map(async (ticket) => {
+            // Only verify tickets with Discord channel IDs that aren't already closed/deleted
+            if (ticket.discordChannelId && !['closed', 'deleted', 'transcript'].includes(ticket.status) && bridge) {
+              try {
+                const channelStatus = await bridge.checkDiscordChannelStatus(ticket.discordChannelId);
+                
+                // If channel doesn't exist or is in transcripts category, update ticket status
+                if (!channelStatus.exists || channelStatus.inTranscripts) {
+                  // Update ticket status in database
+                  const newStatus = channelStatus.inTranscripts ? 'transcript' : 'closed';
+                  await storage.updateTicketStatus(ticket.id, newStatus);
+                  
+                  // Update status in the response
+                  log(`Updating ticket #${ticket.id} status from "${ticket.status}" to "${newStatus}" based on Discord channel verification`);
+                  return { ...ticket, status: newStatus };
+                }
+              } catch (verificationError) {
+                log(`Error verifying Discord channel status for ticket #${ticket.id}: ${verificationError}`, "warn");
+                // Continue with original ticket data on error
+              }
+            }
+            return ticket;
+          })
+        );
+        
+        allTickets = verifiedTickets;
+      }
+      
+      res.json(allTickets);
     } catch (error: any) {
       log(`Error fetching tickets: ${error}`, "error");
       res.status(500).json({ message: "Failed to fetch tickets" });
@@ -1411,25 +1448,71 @@ export async function registerRoutes(app: Express) {
   // Closed tickets with messages route
   app.get("/api/tickets/closed", async (req, res) => {
     try {
+      // Check if we should verify Discord channel status (default to true)
+      const verifyDiscordStatus = req.query.verifyDiscord !== 'false';
+      
       // Get all categories to filter tickets
       const categories = await storage.getCategories();
 
-      // Collect all closed tickets from all categories
-      const allClosedTickets = [];
-      for (const category of categories) {
-        const categoryTickets = await storage.getTicketsByCategory(category.id);
-        const closedTickets = categoryTickets.filter(t =>
-          t.status === "closed" || t.status === "deleted" || t.status === "transcript"
-        );
-
-        // Get messages for each ticket
-        for (const ticket of closedTickets) {
-          const messages = await storage.getTicketMessages(ticket.id);
-          allClosedTickets.push({
-            ...ticket,
-            messages
-          });
+      // First get all tickets and verify their status against Discord
+      const allTickets = [];
+      
+      // Get all tickets first to check their status
+      if (verifyDiscordStatus && bridge) {
+        log(`Verifying Discord channel status for tickets before fetching closed tickets`);
+        
+        for (const category of categories) {
+          const categoryTickets = await storage.getTicketsByCategory(category.id);
+          
+          // Verify and potentially update ticket status
+          await Promise.all(
+            categoryTickets.map(async (ticket) => {
+              // Only verify tickets with Discord channel IDs that seem to be open
+              if (ticket.discordChannelId && !['closed', 'deleted', 'transcript'].includes(ticket.status) && bridge) {
+                try {
+                  const channelStatus = await bridge.checkDiscordChannelStatus(ticket.discordChannelId);
+                  
+                  // If channel doesn't exist or is in transcripts category, update ticket status
+                  if (!channelStatus.exists || channelStatus.inTranscripts) {
+                    // Update ticket status in database
+                    const newStatus = channelStatus.inTranscripts ? 'transcript' : 'closed';
+                    await storage.updateTicketStatus(ticket.id, newStatus);
+                    
+                    // Update status in the ticket object too
+                    log(`Updated ticket #${ticket.id} status from "${ticket.status}" to "${newStatus}" based on Discord channel verification`);
+                    ticket.status = newStatus;
+                  }
+                } catch (verificationError) {
+                  log(`Error verifying Discord channel status for ticket #${ticket.id}: ${verificationError}`, "warn");
+                }
+              }
+              return ticket;
+            })
+          );
+          
+          allTickets.push(...categoryTickets);
         }
+      } else {
+        // Skip verification, just get all tickets
+        for (const category of categories) {
+          const categoryTickets = await storage.getTicketsByCategory(category.id);
+          allTickets.push(...categoryTickets);
+        }
+      }
+      
+      // Now filter for closed/deleted/transcript tickets only
+      const closedTickets = allTickets.filter(t =>
+        t.status === "closed" || t.status === "deleted" || t.status === "transcript"
+      );
+      
+      // Get messages for each closed ticket
+      const allClosedTickets = [];
+      for (const ticket of closedTickets) {
+        const messages = await storage.getTicketMessages(ticket.id);
+        allClosedTickets.push({
+          ...ticket,
+          messages
+        });
       }
 
       res.json(allClosedTickets);
