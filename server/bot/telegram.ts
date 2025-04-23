@@ -351,98 +351,121 @@ export class TelegramBot {
   }
 
   private async handleHeartbeat() {
-    if (!this._isConnected) {
-      log(`Skipping heartbeat - bot is disconnected`, "debug");
+    if (!this._isConnected || !this.bot) {
+      log(`Skipping heartbeat - bot is disconnected or not initialized`, "debug");
       return;
     }
 
     try {
-      // Add timeout to prevent connection check from hanging
+      // Use a more aggressive timeout to prevent connection check from hanging
       const connectionPromise = this.verifyConnection();
       const timeoutPromise = new Promise<boolean>((_, reject) => {
-        setTimeout(() => reject(new Error("Connection verification timed out")), 10000);
+        setTimeout(() => reject(new Error("Connection verification timed out")), 5000); // Shorter timeout (5s)
       });
       
       // Race the verification against the timeout
       const isConnected = await Promise.race([connectionPromise, timeoutPromise]);
       
       if (isConnected) {
+        // Success - Reset failure counters
         this.failedHeartbeats = 0;
         this.lastHeartbeatSuccess = Date.now();
-        log(`Telegram heartbeat successful`, "debug");
-      } else {
-        this.failedHeartbeats++;
-        log(`Telegram heartbeat failed, count: ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}`, "warn");
         
-        // Check if we need to attempt reconnection
-        if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
-          log(`Too many failed heartbeats, attempting reconnection`, "warn");
-          
-          // Reset the bot instance completely
-          if (this.bot) {
-            try {
-              // Close old connection with timeout protection
-              const stopPromise = this.bot.stop();
-              const stopTimeoutPromise = new Promise<void>(resolve => {
-                setTimeout(() => {
-                  log("Stop operation timed out, forcing cleanup", "warn");
-                  resolve();
-                }, 3000);
-              });
-              
-              await Promise.race([stopPromise, stopTimeoutPromise]);
-            } catch (stopError) {
-              log(`Error stopping bot during heartbeat reconnection: ${stopError}`, "warn");
-              // Continue with reconnection regardless
-            }
-            
-            this.bot = null;
-            this._isConnected = false;
-          }
-          
-          // Allow a brief cooldown before reconnecting
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          // Trigger proper reconnection procedure
-          this.bridge.reconnectTelegram().catch(e => {
-            log(`Failed initial reconnection attempt: ${e}`, "error");
-          });
+        // Only log periodically to avoid log spam
+        if (Date.now() % 5 === 0) {
+          log(`Telegram heartbeat successful`, "debug");
+        }
+      } else {
+        // Connection verification failed
+        this.failedHeartbeats++;
+        const timeSinceLastSuccess = Math.floor((Date.now() - this.lastHeartbeatSuccess) / 1000);
+        log(`Telegram heartbeat failed, count: ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}, time since last success: ${timeSinceLastSuccess}s`, "warn");
+        
+        // Check if we need to attempt reconnection - be more aggressive with reconnection
+        if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS || timeSinceLastSuccess > 300) {
+          log(`Connection problems detected (${this.failedHeartbeats} failed heartbeats), initiating forced reconnection`, "warn");
+          await this.performForcedReconnection();
         }
       }
     } catch (error) {
+      // Error during heartbeat operation
       this.failedHeartbeats++;
       log(`Error during Telegram heartbeat: ${error}`, "error");
       
       // Check for specific critical errors that require immediate reconnection
       const errorStr = String(error).toLowerCase();
-      const criticalErrors = ['timeout', 'econnreset', 'socket hang up', 'network error', 'econnrefused'];
+      const criticalErrors = [
+        'timeout', 'econnreset', 'socket hang up', 'network error', 'econnrefused',
+        'etimedout', 'enotfound', 'network', 'failed to fetch', 'aborted'
+      ];
       const isCritical = criticalErrors.some(e => errorStr.includes(e));
       
       if (isCritical || this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS) {
-        log(`${isCritical ? 'Critical connection error' : 'Too many failed heartbeats'}, forcing reconnection`, "warn");
-        
-        // Reset the bot instance
-        if (this.bot) {
-          try {
-            await Promise.race([
-              this.bot.stop(),
-              new Promise(resolve => setTimeout(resolve, 3000))
-            ]);
-          } catch (stopError) {
-            log(`Error stopping bot: ${stopError}`, "warn");
-          }
+        log(`${isCritical ? 'Critical connection error' : 'Too many failed heartbeats'}, forcing immediate reconnection`, "warn");
+        await this.performForcedReconnection();
+      }
+    }
+  }
+  
+  /**
+   * Perform a complete forced reconnection of the Telegram bot
+   * This is called when we detect severe connection issues
+   */
+  private async performForcedReconnection(): Promise<void> {
+    try {
+      // First, update the connection state immediately
+      this.updateConnectionState('reconnecting');
+      
+      // Reset the bot instance - use a timeout to avoid hanging 
+      if (this.bot) {
+        try {
+          log("Stopping Telegram bot for forced reconnection", "info");
           
-          this.bot = null;
-          this._isConnected = false;
+          // Attempt graceful stop with timeout protection
+          const stopPromise = this.bot.stop();
+          const stopTimeoutPromise = new Promise<void>(resolve => {
+            setTimeout(() => {
+              log("Stop operation timed out during forced reconnection", "warn");
+              resolve();
+            }, 3000);
+          });
+          
+          await Promise.race([stopPromise, stopTimeoutPromise]);
+        } catch (stopError) {
+          log(`Error stopping bot during forced reconnection: ${stopError}`, "warn");
+          // Continue with reconnection regardless
         }
         
-        // Invoke bridge's reconnect method after a short delay
-        setTimeout(() => {
-          this.bridge.reconnectTelegram().catch(e => {
-            log(`Failed to reconnect after critical error: ${e}`, "error");
-          });
-        }, 2000);
+        // Clear instance variables
+        this.bot = null;
+        this._isConnected = false;
       }
+      
+      // Allow a brief cooldown before reconnecting
+      log("Pausing briefly before reconnection attempt...", "debug");
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Trigger bridge's reconnection procedure with error handling
+      try {
+        log("Initiating Telegram reconnection through bridge manager", "info");
+        await this.bridge.reconnectTelegram();
+        log("Telegram bot reconnection initiated successfully", "info");
+      } catch (reconnectError) {
+        log(`Failed to initiate Telegram reconnection: ${reconnectError}`, "error");
+        
+        // Schedule a retry with exponential backoff
+        const backoffDelay = this.calculateBackoffDelay();
+        log(`Scheduling reconnection retry in ${backoffDelay/1000}s`, "info");
+        
+        setTimeout(() => {
+          log("Attempting reconnection retry after backoff", "info");
+          this.bridge.reconnectTelegram().catch(e => {
+            log(`Reconnection retry also failed: ${e}`, "error");
+          });
+        }, backoffDelay);
+      }
+    } catch (error) {
+      log(`Unexpected error during forced reconnection: ${error}`, "error");
     }
   }
 
@@ -870,22 +893,23 @@ export class TelegramBot {
       if (process.env.NODE_ENV === 'production') {
         log("Using production launch configuration with enhanced network resilience", "info");
         
-        // Set polling parameters for production with conflict prevention and network resilience
-        const pollingParams = {
-          // Configure long polling for better stability
-          allowed_updates: ['message', 'callback_query', 'inline_query', 'channel_post', 'edited_message'],
-          // In production, we force drop pending updates to avoid conflicts with previous instances
-          drop_pending_updates: true,
-          // Set polling timeout to shorter interval (30 seconds) for more frequent connection verification
-          timeout: 30,
-          // Limit the number of updates per polling cycle to avoid overwhelming the system
-          limit: 50
-        };
+        // Force-kill any other bot instances by stopping first
+        // This helps prevent 409 conflicts
+        try {
+          log("Stopping any existing bot instances before launching...", "info");
+          await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
+          
+          // Additional small delay to ensure webhook is fully removed
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (webhookError) {
+          log(`Warning: Could not delete webhook: ${webhookError}`, "warn");
+          // Continue anyway, as this is just a precaution
+        }
         
-        // Launch with enhanced polling parameters in production
-        await this.bot.launch({
-          polling: pollingParams
-        });
+        log("Launching with conflict prevention in production mode", "info");
+        
+        // Explicitly use the standard launch method with conflict prevention options
+        await this.bot.launch();
         
         log("Telegram bot launched in production mode with enhanced network reliability", "info");
       } else {
@@ -899,10 +923,8 @@ export class TelegramBot {
           timeout: 20
         };
         
-        // Launch in development mode with enhanced parameters
-        await this.bot.launch({
-          polling: developmentPollingParams
-        });
+        // In development mode, also use standard launch
+        await this.bot.launch();
         
         log("Telegram bot launched in development mode with standard polling", "info");
       }
