@@ -142,6 +142,56 @@ export class BridgeManager {
     return next;
   }
   
+  // Maximum number of duplicates allowed per message
+  private readonly MAX_DUPLICATES_ALLOWED = 5; // Allow 5 identical messages per conversation
+  
+  /**
+   * Check if a message should be considered a duplicate and blocked
+   * Uses a configurable duplicate limit to allow users to send the same message multiple times
+   * @param platform 'telegram' or 'discord' for platform-specific tracking
+   * @param ticketId The ticket ID the message is for
+   * @param content The message content
+   * @param contentHash A hash of the content for faster comparison
+   * @param additionalInfo Additional message metadata to include in deduplication
+   * @returns boolean - true if message should be processed, false if it's a duplicate to be blocked
+   */
+  private shouldProcessMessage(
+    platform: 'telegram' | 'discord',
+    ticketId: number,
+    content: string,
+    contentHash: string,
+    additionalInfo: string
+  ): boolean {
+    const dedupVersion = "v2";
+    
+    // Create a key for tracking exact duplicates regardless of sender
+    const exactDuplicateKey = `${platform}-exact:${dedupVersion}:${ticketId}:${contentHash}:${content.substring(0, 50)}`;
+    
+    // Get current count of duplicates
+    const currentDuplicateCount = this.messageDedupCache.get(exactDuplicateKey) || 0;
+    
+    // Log duplicate detection for debugging
+    if (currentDuplicateCount > 0 && this.ENABLE_DEDUP_LOGGING) {
+      log(`[DEDUP] Detected duplicate message #${currentDuplicateCount+1} of "${content.substring(0, 20)}..." in ticket #${ticketId}`, "debug");
+    }
+    
+    // Check if we've exceeded the allowed duplicates
+    if (currentDuplicateCount >= this.MAX_DUPLICATES_ALLOWED) {
+      log(`Blocking duplicate: message "${content.substring(0, 20)}..." exceeded max allowed duplicates (${this.MAX_DUPLICATES_ALLOWED})`, "warn");
+      return false;
+    }
+    
+    // Update the duplicate counter for this exact message
+    this.messageDedupCache.set(exactDuplicateKey, currentDuplicateCount + 1);
+    
+    // Also store a traditional deduplication entry with the timestamp and additional info
+    const now = Date.now();
+    const traditionalKey = `${platform}:${dedupVersion}:${ticketId}:${contentHash}:${additionalInfo}`;
+    this.messageDedupCache.set(traditionalKey, now);
+    
+    return true;
+  }
+  
   /**
    * Clean the deduplication cache to prevent memory leaks
    * Handles both timestamp-based entries and counter-based entries
