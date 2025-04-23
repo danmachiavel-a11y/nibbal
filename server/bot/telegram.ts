@@ -474,8 +474,50 @@ export class TelegramBot {
       clearInterval(this.heartbeatInterval);
     }
     
-    this.heartbeatInterval = setInterval(() => this.handleHeartbeat(), this.HEARTBEAT_INTERVAL);
-    log(`Started Telegram heartbeat monitoring (every ${this.HEARTBEAT_INTERVAL / 60000} minutes)`, "debug");
+    // Use a more frequent heartbeat interval in production for faster failure detection
+    const heartbeatInterval = process.env.NODE_ENV === 'production' 
+      ? 60000 // 1 minute in production (more frequent)
+      : this.HEARTBEAT_INTERVAL; // 2 minutes in development
+    
+    log(`Starting enhanced Telegram heartbeat system every ${heartbeatInterval / 60000} minutes`, "info");
+    
+    // Use arrow function to preserve 'this' context
+    this.heartbeatInterval = setInterval(() => {
+      // Wrap heartbeat in a try-catch for additional resilience
+      this.handleHeartbeat().catch(error => {
+        log(`Error in heartbeat: ${error}`, "error");
+        
+        // If there's a serious error, schedule an immediate retry
+        const errorStr = String(error).toLowerCase();
+        if (errorStr.includes('timeout') || 
+            errorStr.includes('econnreset') || 
+            errorStr.includes('socket') || 
+            errorStr.includes('network')) {
+          
+          log("Critical network error detected in heartbeat, scheduling immediate retry", "warn");
+          
+          // Try again very quickly instead of waiting for the next interval
+          setTimeout(() => {
+            log("Executing emergency heartbeat check after critical error", "debug");
+            this.handleHeartbeat().catch(e => {
+              log(`Emergency heartbeat also failed: ${e}`, "error");
+              
+              // If both attempts fail quickly, force a full reconnection
+              this.performForcedReconnection().catch(reconnectError => {
+                log(`Forced reconnection failed after heartbeat failures: ${reconnectError}`, "error");
+              });
+            });
+          }, 5000); // Try again in 5 seconds
+        }
+      });
+    }, heartbeatInterval);
+    
+    // Execute a heartbeat immediately to verify initial connection
+    this.handleHeartbeat().catch(error => {
+      log(`Initial heartbeat check failed: ${error}`, "warn");
+    });
+    
+    log(`Enhanced Telegram heartbeat started with ${heartbeatInterval}ms interval`, "info");
   }
 
   private stopHeartbeat = (): void => {
@@ -907,9 +949,6 @@ export class TelegramBot {
         log(`Warning: Telegram token format appears invalid (should contain a colon ':'): ${token.substring(0, 5)}...`, "warn");
         // Continue anyway - some tokens may have unusual formats
       }
-      
-      // Import the https module for the custom agent
-      const https = require('https');
       
       // Create a new Telegram bot instance with enhanced stability settings
       // These settings are optimized for stability in challenging network environments
