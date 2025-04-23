@@ -2804,6 +2804,27 @@ export class BridgeManager {
   }
   
   /**
+   * Checks the status of a Discord channel associated with a ticket
+   * Used to verify if tickets in database are actually still active in Discord
+   * 
+   * @param channelId Discord channel ID to check
+   * @returns Object with exists and inTranscripts properties
+   */
+  public async checkDiscordChannelStatus(channelId: string): Promise<{ exists: boolean, inTranscripts: boolean }> {
+    try {
+      if (!this.isDiscordAvailable || !this.discordBot) {
+        log(`[BRIDGE] Discord bot not available, cannot check channel status`, "warn");
+        return { exists: false, inTranscripts: false };
+      }
+      
+      return await this.discordBot.checkChannelStatus(channelId);
+    } catch (error) {
+      log(`[BRIDGE] Error checking Discord channel status for ${channelId}: ${error}`, "error");
+      return { exists: false, inTranscripts: false };
+    }
+  }
+  
+  /**
    * Update the Discord connection status
    * This method is called by the Discord bot when its connection status changes
    * It updates the internal state and notifies any registered callbacks

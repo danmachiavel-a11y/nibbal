@@ -3820,6 +3820,54 @@ export class DiscordBot {
     return this.lastError?.message;
   }
   
+  /**
+   * Check if a Discord channel exists and its status
+   * Used to verify if a ticket channel is actually still active
+   * 
+   * @param channelId The Discord channel ID to check
+   * @returns An object with exists (boolean) and inTranscripts (boolean) properties
+   */
+  public async checkChannelStatus(channelId: string): Promise<{ exists: boolean, inTranscripts: boolean }> {
+    try {
+      if (!this.client || !this.client.isReady()) {
+        return { exists: false, inTranscripts: false };
+      }
+      
+      // Attempt to fetch the channel
+      const channel = await this.client.channels.fetch(channelId).catch(() => null);
+      
+      if (!channel) {
+        return { exists: false, inTranscripts: false };
+      }
+      
+      // Check if the channel is in a category
+      if (channel.type === ChannelType.GuildText) {
+        const textChannel = channel as TextChannel;
+        
+        // Check if parent category name includes "transcript" (case insensitive)
+        const parentCategory = textChannel.parent;
+        if (parentCategory && parentCategory.name.toLowerCase().includes("transcript")) {
+          return { exists: true, inTranscripts: true };
+        }
+        
+        // Check if channel name has transcript markers
+        if (textChannel.name.startsWith("closed-") || 
+            textChannel.name.includes("-transcript") || 
+            textChannel.name.includes("-closed")) {
+          return { exists: true, inTranscripts: true };
+        }
+        
+        return { exists: true, inTranscripts: false };
+      }
+      
+      return { exists: true, inTranscripts: false };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log(`Error checking channel status for ${channelId}: ${errorMessage}`, "error");
+      return { exists: false, inTranscripts: false };
+    }
+  }
+  
   // Reconnect the bot with retry logic
   async reconnect() {
     try {
