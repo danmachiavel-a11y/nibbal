@@ -488,21 +488,34 @@ export class BridgeManager {
         throw new BridgeError(`Image too large (${buffer.length} bytes, maximum: ${this.MAX_IMAGE_SIZE})`, { context });
       }
       
-      // Check for image signature/magic bytes to verify it's actually an image
-      const isJpeg = buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xD8;
-      const isPng = buffer.length >= 8 && 
-                    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47 &&
-                    buffer[4] === 0x0D && buffer[5] === 0x0A && buffer[6] === 0x1A && buffer[7] === 0x0A;
-      const isGif = buffer.length >= 6 && 
-                    buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 &&
-                    buffer[3] === 0x38 && (buffer[4] === 0x39 || buffer[4] === 0x37) && buffer[5] === 0x61;
-                    
-      if (!isJpeg && !isPng && !isGif) {
-        log(`⚠️ Warning: Buffer does not have standard image file signature in context: ${context}`, "warn");
-        // Continue anyway but log the warning - Discord CDN might modify headers
-      } else {
-        const format = isJpeg ? "JPEG" : isPng ? "PNG" : "GIF";
-        log(`✅ Detected image format: ${format} in context: ${context}`, "debug");
+      try {
+        // Check for image signature/magic bytes to verify it's actually an image
+        const isJpeg = buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xD8;
+        const isPng = buffer.length >= 8 && 
+                      buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47 &&
+                      buffer[4] === 0x0D && buffer[5] === 0x0A && buffer[6] === 0x1A && buffer[7] === 0x0A;
+        const isGif = buffer.length >= 6 && 
+                      buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 &&
+                      buffer[3] === 0x38 && (buffer[4] === 0x39 || buffer[4] === 0x37) && buffer[5] === 0x61;
+        // Check for WebP signature (added for Discord WebP images)
+        const isWebP = buffer.length >= 12 && 
+                      buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+                      buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50;
+                      
+        if (!isJpeg && !isPng && !isGif && !isWebP) {
+          log(`⚠️ Warning: Buffer does not have standard image file signature in context: ${context}`, "warn");
+          // Continue anyway but log the warning - Discord CDN might modify headers or use non-standard formats
+          
+          // Additional diagnostics for unknown formats
+          const firstBytes = Array.from(buffer.slice(0, 12)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+          log(`⚠️ First bytes: ${firstBytes} (context: ${context})`, "debug");
+        } else {
+          const format = isJpeg ? "JPEG" : isPng ? "PNG" : isGif ? "GIF" : "WebP";
+          log(`✅ Detected image format: ${format} in context: ${context}`, "debug");
+        }
+      } catch (formatError) {
+        // Don't let format detection crash the process
+        log(`⚠️ Error detecting image format: ${formatError} in context: ${context}`, "warn");
       }
       
       log(`✅ Image passed validation checks (${buffer.length} bytes) in context: ${context}`, "debug");
@@ -800,13 +813,18 @@ export class BridgeManager {
         throw new BridgeError(`Failed to fetch Discord image: ${response.status} ${response.statusText}`, { context: "processDiscordToTelegram" });
       }
 
-      // Verify content type for images
-      const contentType = response.headers.get('content-type');
-      log(`📄 Received content type: ${contentType} for image from Discord CDN`, "debug");
-      
-      if (contentType && !contentType.startsWith('image/')) {
-        log(`⚠️ Warning: Content is not an image: ${contentType}`, "warn");
-        // Continue anyway as Discord CDN might not always set the correct content type
+      try {
+        // Verify content type for images
+        const contentType = response.headers.get('content-type');
+        log(`📄 Received content type: ${contentType || 'unknown'} for image from Discord CDN`, "debug");
+        
+        if (contentType && !contentType.startsWith('image/')) {
+          log(`⚠️ Warning: Content is not an image: ${contentType}`, "warn");
+          // Continue anyway as Discord CDN might not always set the correct content type
+        }
+      } catch (headerError) {
+        // Safely continue even if content-type checking fails
+        log(`⚠️ Error checking content type: ${headerError}`, "warn");
       }
 
       log(`📦 Reading response data for image...`, "debug");

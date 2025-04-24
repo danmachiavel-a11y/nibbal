@@ -53,6 +53,9 @@ export function initializeRecoverySystem() {
   // Set up hourly reset for restart attempts counter
   setInterval(() => resetHourlyCounter(), 60 * 60 * 1000);
 
+  // Add global catch-all error handlers for image processing and network errors
+  setupGlobalErrorHandlers();
+
   log('Recovery system initialized', 'info');
 }
 
@@ -160,8 +163,67 @@ function resetHourlyCounter() {
 }
 
 /**
- * Attempt to gracefully restart the application
+ * Adds global catch-all error handlers to make the application more resilient
+ * This helps prevent crashes from unhandled image processing errors
  */
+function setupGlobalErrorHandlers() {
+  // Global unhandled exception handler - more specific than the main one
+  process.on('uncaughtExceptionMonitor', (error) => {
+    const errorMessage = error?.stack || error?.message || String(error);
+    log(`MONITORING: Unhandled exception detected: ${errorMessage}`, "warn");
+    
+    // Log specific details for certain types of errors
+    if (errorMessage.includes('image') || errorMessage.includes('buffer')) {
+      log(`Image processing error detected. This is likely related to an attachment`, "error");
+    } else if (errorMessage.includes('telegram') || errorMessage.includes('discord')) {
+      log(`Bot communication error detected. This might be a temporary network issue`, "error");
+    }
+  });
+
+  // Add enhanced error handling specifically for network and image processing
+  const originalFetch = global.fetch;
+  if (originalFetch) {
+    (global as any).fetch = async function(input: RequestInfo | URL, init?: RequestInit) {
+      try {
+        return await originalFetch(input, init);
+      } catch (error) {
+        // Special handling for image-related network errors
+        const url = input?.toString() || '';
+        if (url.includes('image') || url.includes('photo') || url.includes('cdn.discord') || url.includes('telegram')) {
+          log(`Network error fetching media resource: ${url}`, "error");
+          log(`Error details: ${error}`, "error");
+          
+          // Return a failed response instead of throwing
+          return new Response(null, { 
+            status: 500, 
+            statusText: `Error fetching media: ${error}`
+          });
+        }
+        throw error; // Rethrow other errors
+      }
+    };
+  }
+  
+  // Enhanced Buffer handling to prevent crashes on invalid data
+  const originalFrom = Buffer.from;
+  (Buffer as any).from = function(...args: any[]) {
+    try {
+      return originalFrom.apply(Buffer, args as any);
+    } catch (error) {
+      // For buffer conversions related to images, return an empty buffer instead of crashing
+      if (
+        (args[1] === 'base64' && args[0]?.length > 100) || // Likely an image conversion
+        (args[0] instanceof ArrayBuffer && args[0].byteLength > 1000) // Likely media content
+      ) {
+        log(`Buffer conversion error for media content: ${error}`, "error");
+        // Return empty buffer to prevent crash
+        return Buffer.alloc(0);
+      }
+      throw error; // Rethrow for other cases
+    }
+  };
+}
+
 async function gracefulRestart() {
   try {
     log('Attempting graceful restart...', 'warn');
