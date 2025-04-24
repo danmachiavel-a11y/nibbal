@@ -2593,7 +2593,7 @@ Images/photos are also supported.
               }]);
               
               await ctx.reply(
-                `🎫 *Your active tickets*\n\nYou have ${activeTickets.length} active ticket(s):\n\n${ticketList}\n\n*Please select a ticket to continue working with, or create a new one:*`,
+                `🎫 *Your active tickets*\n\nYou have ${activeTickets.length} active ticket(s):\n\n${ticketList}\n\n*Please select a ticket to continue working with, or create a new one:*\n\n_Note: You can also use /switch command to switch between tickets anytime._`,
                 {
                   parse_mode: 'Markdown',
                   reply_markup: {
@@ -2782,7 +2782,7 @@ Images/photos are also supported.
           ticketList += `⚠️ *You don't have an active ticket selected.*\n\n`;
         }
         
-        ticketList += "Please select a ticket to switch to, or create a new one:\n━━━━━━━━━━━━━━━━━━━━━━";
+        ticketList += "Please select a ticket to switch to, or create a new one:\n\n_Note: You can use /start anytime to show this menu again._\n━━━━━━━━━━━━━━━━━━━━━━";
         
         // Send list with inline keyboard buttons
         await ctx.reply(ticketList, { 
@@ -3411,15 +3411,15 @@ Images/photos are also supported.
                 
                 if (category && category.transcriptCategoryId) {
                   await this.bridge.moveToTranscripts(ticket.id);
-                  await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one.`);
+                  await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one (both commands do the same thing).`);
                 } else {
-                  await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one.`);
+                  await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one (both commands do the same thing).`);
                 }
               } catch (error) {
-                await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one.`);
+                await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one (both commands do the same thing).`);
               }
             } else {
-              await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one.`);
+              await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one (both commands do the same thing).`);
             }
           } catch (error) {
             log(`Error closing ticket: ${error}`, "error");

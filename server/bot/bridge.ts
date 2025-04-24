@@ -1957,7 +1957,8 @@ export class BridgeManager {
           // Send text content if any
           if (content?.trim()) {
             try {
-              const messagePrefix = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] ${username}: `;
+              // Remove category prefix for better readability (consistent with text messages)
+              const messagePrefix = `${username}: `;
               await this.telegramBot.sendMessage(user.telegramId, `${messagePrefix}${cleanedContent}`);
               log(`Sent text portion of message with attachments to Telegram user ${user.telegramId} for ticket ${ticketId}`);
             } catch (textError) {
@@ -1988,7 +1989,8 @@ export class BridgeManager {
                 }
                 log(`Successfully processed image, size: ${buffer.length} bytes for ticket ${ticketId}`);
 
-                const caption = `[${ticket.categoryId ? `#${ticket.categoryId}` : 'Ticket'}] Image from ${username}`;
+                // Remove category prefix for better readability
+                const caption = `Image from ${username}`;
                 const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, caption);
 
                 if (fileId) {
