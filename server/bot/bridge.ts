@@ -470,22 +470,41 @@ export class BridgeManager {
 
   private async validateAndProcessImage(buffer: Buffer, context: string): Promise<Buffer | null> {
     try {
-      // Enhanced validation with detailed logging
-      log(`🔍 Validating image buffer (size: ${buffer ? buffer.length : 'null'} bytes) in context: ${context}`, "debug");
-      
-      if (!buffer) {
-        log(`❌ Image validation failed: Buffer is null in context: ${context}`, "error");
-        throw new BridgeError("Image buffer is null", { context });
-      }
-      
-      if (buffer.length < this.MIN_IMAGE_SIZE) {
-        log(`❌ Image validation failed: Buffer too small (${buffer.length} bytes) in context: ${context}`, "error");
-        throw new BridgeError(`Image too small (${buffer.length} bytes, minimum: ${this.MIN_IMAGE_SIZE})`, { context });
-      }
+      // Create a boundary around all buffer operations for extra protection from crashes
+      try {
+        // Enhanced validation with detailed logging
+        log(`🔍 Validating image buffer (size: ${buffer ? buffer.length : 'null'} bytes) in context: ${context}`, "debug");
+        
+        if (!buffer) {
+          log(`❌ Image validation failed: Buffer is null in context: ${context}`, "error");
+          // Return null instead of throwing - don't crash the application
+          return null;
+        }
+        
+        // Extra defensive check for Buffer-like objects that aren't really Buffers
+        if (typeof buffer.length !== 'number') {
+          log(`❌ Image validation failed: Invalid buffer object in context: ${context}`, "error");
+          return null;
+        }
+        
+        if (buffer.length < this.MIN_IMAGE_SIZE) {
+          log(`❌ Image validation failed: Buffer too small (${buffer.length} bytes) in context: ${context}`, "error");
+          // Return null instead of throwing
+          return null;
+        }
 
-      if (buffer.length > this.MAX_IMAGE_SIZE) {
-        log(`❌ Image validation failed: Buffer too large (${buffer.length} bytes) in context: ${context}`, "error");
-        throw new BridgeError(`Image too large (${buffer.length} bytes, maximum: ${this.MAX_IMAGE_SIZE})`, { context });
+        if (buffer.length > this.MAX_IMAGE_SIZE) {
+          log(`❌ Image validation failed: Buffer too large (${buffer.length} bytes) in context: ${context}`, "error");
+          // Return null instead of throwing
+          return null;
+        }
+      } catch (initialValidationError) {
+        // Ultra-safe error handling for any unexpected error during initial validation
+        log(`🛡️ Critical error during initial buffer validation: ${initialValidationError}`, "error");
+        if (initialValidationError instanceof Error && initialValidationError.stack) {
+          log(`Stack trace: ${initialValidationError.stack}`, "error");
+        }
+        return null;
       }
       
       try {
@@ -831,31 +850,68 @@ export class BridgeManager {
       
       let arrayBuffer;
       try {
-        arrayBuffer = await response.arrayBuffer();
+        // Implement a retry loop for reading the response data
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            arrayBuffer = await response.arrayBuffer();
+            // Break if successful
+            if (arrayBuffer && arrayBuffer.byteLength > 0) {
+              break;
+            } else {
+              log(`⚠️ Empty array buffer received on attempt ${attempt+1}, retrying...`, "warn");
+            }
+          } catch (retryError) {
+            log(`⚠️ Error reading image data on attempt ${attempt+1}: ${retryError}`, "warn");
+            if (attempt < 2) { // Don't wait on the last attempt
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+              throw retryError; // Re-throw on the last attempt
+            }
+          }
+        }
       } catch (bufferError) {
-        log(`❌ Error reading image data: ${bufferError}`, "error");
-        throw new BridgeError(`Failed to read image data: ${bufferError}`, { context: "processDiscordToTelegram" });
+        log(`❌ Error reading image data after all retries: ${bufferError}`, "error");
+        return null; // Return null instead of throwing (don't crash the app)
       }
       
       if (!arrayBuffer || arrayBuffer.byteLength === 0) {
         log(`❌ Received empty image data from Discord CDN`, "error");
-        throw new BridgeError("Received empty image data", { context: "processDiscordToTelegram" });
+        return null; // Return null instead of throwing
       }
       
-      const buffer = Buffer.from(arrayBuffer);
-      log(`✅ Successfully downloaded image, size: ${buffer.length} bytes`, "debug");
-      
-      const validatedBuffer = await this.validateAndProcessImage(buffer, "processDiscordToTelegram");
-      if (!validatedBuffer) {
-        log(`❌ Image validation failed`, "error");
+      let buffer;
+      try {
+        buffer = Buffer.from(arrayBuffer);
+      } catch (bufferCreateError) {
+        log(`❌ Error creating buffer from array buffer: ${bufferCreateError}`, "error");
         return null;
       }
-
-      // Cache the result
-      this.setCachedImage(cacheKey, { buffer: validatedBuffer });
-      log(`💾 Cached image with key: ${cacheKey}`, "debug");
-
-      return validatedBuffer;
+      
+      if (!buffer || buffer.length === 0) {
+        log(`❌ Created empty buffer from array buffer`, "error");
+        return null;
+      }
+      
+      log(`✅ Successfully downloaded image, size: ${buffer.length} bytes`, "debug");
+      
+      // Extra safety check
+      try {
+        const validatedBuffer = await this.validateAndProcessImage(buffer, "processDiscordToTelegram");
+        if (!validatedBuffer) {
+          log(`❌ Image validation failed`, "error");
+          return null;
+        }
+        
+        // Cache the result
+        this.setCachedImage(cacheKey, { buffer: validatedBuffer });
+        log(`💾 Cached image with key: ${cacheKey}`, "debug");
+        
+        // Successfully validated
+        return validatedBuffer;
+      } catch (validationError) {
+        log(`❌ Unexpected error during image validation: ${validationError}`, "error");
+        return null;
+      }
     } catch (error) {
       // Improved error handling
       log(`❌ Error in processDiscordToTelegram: ${error}`, "error");
