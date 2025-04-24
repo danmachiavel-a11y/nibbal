@@ -52,6 +52,7 @@ function Router() {
           <Route path="/settings" component={Settings} />
           <Route path="/stats" component={Stats} />
           <Route path="/banned-users" component={BannedUsers} />
+          <Route path="/crash-logs" component={CrashLogs} />
           <Route component={NotFound} />
         </Switch>
       </main>

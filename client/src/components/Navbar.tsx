@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Settings, BarChart, Users, Archive, Ban } from "lucide-react";
+import { LayoutDashboard, Settings, BarChart, Users, Archive, Ban, AlertTriangle } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export function Navbar() {
@@ -12,6 +12,7 @@ export function Navbar() {
     { href: "/transcripts", label: "Transcripts", icon: Archive },
     { href: "/stats", label: "Stats", icon: BarChart },
     { href: "/banned-users", label: "Banned Users", icon: Ban },
+    { href: "/crash-logs", label: "Crash Logs", icon: AlertTriangle },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
