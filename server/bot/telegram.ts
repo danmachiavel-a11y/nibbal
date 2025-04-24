@@ -290,7 +290,22 @@ export class TelegramBot {
    */
   private get telegram() {
     if (!this.bot) {
-      throw new Error("Bot not initialized");
+      // Try to auto-recover by forcing a reconnection
+      log("Auto-recovering from null bot instance", "warn");
+      
+      // Don't throw immediately, first try to fix the issue
+      this._isConnected = false;
+      
+      // Schedule an immediate reconnection 
+      setTimeout(() => {
+        log("Initiating emergency bot reconnection due to null instance", "warn");
+        this.start().catch(e => {
+          log(`Emergency reconnection failed: ${e}`, "error");
+        });
+      }, 100);
+      
+      // Still throw for the current operation so caller knows to retry
+      throw new Error("Bot not initialized (recovery initiated)");
     }
     return this.bot.telegram;
   }
