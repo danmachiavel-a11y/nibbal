@@ -746,6 +746,19 @@ export class BridgeManager {
     try {
       log("Attempting to reconnect Telegram bot with enhanced conflict handling...", "info");
       
+      // First, stop any existing bot instance
+      try {
+        if (this.telegramBot.getIsConnected()) {
+          log("Stopping current Telegram bot instance before reconnecting", "debug");
+          await this.telegramBot.stop();
+          // Add a short delay to ensure clean state
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } catch (stopError) {
+        log(`Error stopping Telegram bot before reconnect: ${stopError}`, "warn");
+        // Continue with reconnection anyway
+      }
+      
       // First check if Telegram API is accessible by making a simple test request
       try {
         const controller = new AbortController();
@@ -756,7 +769,7 @@ export class BridgeManager {
           method: 'GET',
           headers: { 
             'Content-Type': 'application/json',
-            'User-Agent': 'TelegramBotBridge/1.0' 
+            'User-Agent': 'TelegramBotBridge/2.0' 
           },
           signal: controller.signal
         });

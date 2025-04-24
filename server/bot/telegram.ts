@@ -273,6 +273,7 @@ export class TelegramBot {
   private _isConnected: boolean = false;
   private isStarting: boolean = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private forcedReconnectionTimer: NodeJS.Timeout | null = null;
   
   /**
    * Get the current state for a user from memory
