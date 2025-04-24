@@ -135,52 +135,99 @@ export class BridgeManager {
         return false;
       }
       
-      // Force a reconnection if we haven't attempted recently
-      const now = Date.now();
-      const reconnectThreshold = 120000; // 2 minutes
+      // Check current connection status first - might need direct API check regardless
+      const isConnectedByFlag = bot.getIsConnected();
       
-      // Use more proactive approach - always try to reconnect if we're showing as disconnected
-      if (!bot.getIsConnected() && (now - this.lastTelegramReconnectAttempt > reconnectThreshold)) {
-        log("Telegram shows as disconnected, attempting reconnection", "warn");
-        try {
-          this.lastTelegramReconnectAttempt = now;
-          await this.reconnectTelegram();
-          // Wait a short time for reconnection to take effect
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (reconnectError) {
-          log(`Failed to reconnect Telegram: ${reconnectError}`, "error");
-        }
-      }
+      // Always do a real API verification rather than relying on cached flag
+      let verificationSuccess = false;
       
-      // After potential reconnection attempt, verify connection by making a real API call
+      // Directly try to verify if API is accessible
       try {
         if (typeof bot.verifyConnection === 'function') {
-          const isWorking = await bot.verifyConnection();
-          if (isWorking) {
-            // If verification worked but status is still disconnected, fix it
-            if (!bot.getIsConnected()) {
-              log("Connection verified but status incorrectly shows disconnected - fixing", "warn");
-              bot.forceConnectionState(true);
-            }
-            return true;
-          } else {
-            // If we couldn't verify connection, force status to disconnected
-            if (bot.getIsConnected()) {
-              log("Connection shows connected but verification failed - fixing", "warn");
-              bot.forceConnectionState(false);
-            }
-            return false;
+          verificationSuccess = await bot.verifyConnection();
+        } else {
+          // Fallback - check if getMe works 
+          try {
+            await bot.getMe();
+            verificationSuccess = true;
+          } catch (getMeError) {
+            verificationSuccess = false;
+            log(`getMe check failed: ${getMeError}`, "debug");
           }
         }
-        
-        // Fallback if no verification method
-        return bot.getIsConnected();
-      } catch (apiError) {
-        log(`Telegram API verification failed: ${apiError}`, "error");
-        // Force status to disconnected
-        bot.forceConnectionState(false);
-        return false;
+      } catch (verifyError) {
+        log(`Connection verification failed: ${verifyError}`, "debug");
+        verificationSuccess = false;
       }
+      
+      // Handle mismatch between cached flag and actual API access
+      if (!isConnectedByFlag && verificationSuccess) {
+        // If API is working but flag says disconnected, fix flag and return successful
+        log("Connection verified successful but flag shows disconnected - fixing", "info");
+        bot.forceConnectionState(true);
+        return true;
+      } else if (isConnectedByFlag && !verificationSuccess) {
+        // If API is not working but flag says connected, fix flag
+        log("Connection verification failed but flag shows connected - fixing", "warn");
+        bot.forceConnectionState(false);
+      }
+      
+      // If flag says disconnected and verification fails, need to trigger reconnection
+      if (!isConnectedByFlag && !verificationSuccess) {
+        const now = Date.now();
+        const reconnectThreshold = 30000; // 30 seconds - reduced from 2 minutes
+        
+        // Force more frequent reconnection attempts for better reliability
+        if (now - this.lastTelegramReconnectAttempt > reconnectThreshold) {
+          log("Telegram shows as disconnected and API check failed - forcing full restart", "warn");
+          try {
+            this.lastTelegramReconnectAttempt = now;
+            
+            // Always force a full restart of the bot
+            log("🔄 FORCING COMPLETE TELEGRAM BOT RESTART", "info");
+            await this.telegramBot.stop();
+            
+            // Wait a bit for clean shutdown
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Start fresh
+            await this.telegramBot.start();
+            
+            // Wait for startup to complete
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Verify one more time after restart
+            let postRestartSuccess = false;
+            try {
+              await bot.telegram.getMe();
+              postRestartSuccess = true;
+            } catch (postRestartError) {
+              log(`Even after restart, connection still failing: ${postRestartError}`, "error");
+              postRestartSuccess = false;
+            }
+            
+            if (postRestartSuccess) {
+              log("✅ TELEGRAM BOT SUCCESSFULLY RESTARTED AND VERIFIED", "info");
+              bot.forceConnectionState(true);
+              return true;
+            } else {
+              log("❌ TELEGRAM BOT RESTART FAILED - CONNECTION STILL DOWN", "error");
+              bot.forceConnectionState(false);
+              return false;
+            }
+          } catch (reconnectError) {
+            log(`Failed to perform emergency Telegram restart: ${reconnectError}`, "error");
+            bot.forceConnectionState(false);
+            return false;
+          }
+        } else {
+          log(`Skipping reconnect - last attempt was ${Math.floor((now - this.lastTelegramReconnectAttempt)/1000)}s ago`, "debug");
+          return false;
+        }
+      }
+      
+      // Return the final verified connection state
+      return verificationSuccess;
     } catch (error) {
       log(`Error checking Telegram connection: ${error}`, "error");
       return false;

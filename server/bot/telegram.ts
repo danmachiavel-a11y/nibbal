@@ -343,6 +343,19 @@ export class TelegramBot {
   async verifyConnection(): Promise<boolean> {
     return this._verifyConnection();
   }
+  
+  /**
+   * Public method for getting Telegram bot info
+   * Exposed for connection verification
+   */
+  async getMe(): Promise<any> {
+    try {
+      return await this.telegram.getMe();
+    } catch (error) {
+      log(`Error in getMe: ${error}`, "error");
+      throw error;
+    }
+  }
 
   /**
    * Internal method for verifying connection
@@ -1319,7 +1332,7 @@ export class TelegramBot {
         this.lastHeartbeatSuccess = Date.now();
       } else {
         log("Telegram connection state forced to disconnected", "warn");
-        this.failedHeartbeats = this.maxFailedHeartbeats; // Force reconnection in next cycle
+        this.failedHeartbeats = this.MAX_FAILED_HEARTBEATS; // Force reconnection in next cycle
       }
     }
   }
