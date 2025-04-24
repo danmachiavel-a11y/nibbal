@@ -3145,56 +3145,98 @@ Images/photos are also supported.
           }
         }
         
-        // If user has multiple active tickets and none is selected in state, ask them which one to close
+        // If user has multiple active tickets and none is selected in state
         if (activeTickets.length > 1 && !currentTicketId) {
-          // Create buttons for each ticket
-          const buttons = [];
+          // First try to find the ticket we're currently messaging in
+          // See if this message has a chat_id that matches a channel in any of the tickets
+          const chatId = ctx.chat?.id;
+          console.log(`Trying to determine current ticket from chat ID ${chatId}`);
           
-          // Get the categories for all tickets upfront to avoid multiple DB calls
-          const categoryIds = [...new Set(activeTickets.map(t => t.categoryId).filter(id => id !== null))];
-          const categoriesMap = new Map();
-          
-          for (const categoryId of categoryIds) {
-            if (categoryId !== null) {
-              const category = await storage.getCategory(categoryId);
-              if (category) {
-                categoriesMap.set(categoryId, category);
+          // Look for a ticket that user might be currently chatting in
+          // This is crude matching since Telegram doesn't have a concept of "channels" like Discord
+          // But we can check our database messages to find the most recent ticket the user was messaging in
+          try {
+            // Get the most recent message from this user across all tickets
+            const recentMessages = await storage.getRecentMessagesFromUser(user.id, 10);
+            console.log(`Found ${recentMessages.length} recent messages from user`);
+            
+            if (recentMessages.length > 0) {
+              // Get the ticket ID from the most recent message
+              const mostRecentTicketId = recentMessages[0].ticketId;
+              console.log(`Most recent message was in ticket #${mostRecentTicketId}`);
+              
+              // Check if this ticket is still active
+              const isActive = activeTickets.some(t => t.id === mostRecentTicketId);
+              console.log(`Ticket #${mostRecentTicketId} is active: ${isActive}`);
+              
+              if (isActive) {
+                // Found an active ticket the user was recently messaging in
+                currentTicketId = mostRecentTicketId;
+                console.log(`Automatically selected active ticket #${currentTicketId} based on recent messages`);
+                
+                // Update user state for future use
+                if (userMemoryState) {
+                  userMemoryState.activeTicketId = currentTicketId;
+                  await this.setState(userId, userMemoryState);
+                  console.log(`Updated user state with active ticket ID: ${currentTicketId}`);
+                }
               }
             }
+          } catch (error) {
+            console.error(`Error finding recent messages: ${error}`);
           }
           
-          // Create a button for each ticket
-          for (const ticket of activeTickets) {
-            const category = categoriesMap.get(ticket.categoryId);
-            const categoryName = category ? category.name : "Unknown category";
+          // If we still don't have a current ticket, ask the user which one to close
+          if (!currentTicketId) {
+            // Create buttons for each ticket
+            const buttons = [];
             
-            // Get status emoji for ticket status
-            const statusEmoji = ticket.status === 'open' ? '🔵' : 
-                                ticket.status === 'in-progress' ? '🟡' : 
-                                ticket.status === 'pending' ? '🟠' : 
-                                ticket.status === 'paid' ? '💲' : '⚪';
-                                
-            const buttonLabel = `${statusEmoji} #${ticket.id}: ${categoryName}`;
+            // Get the categories for all tickets upfront to avoid multiple DB calls
+            const categoryIds = [...new Set(activeTickets.map(t => t.categoryId).filter(id => id !== null))];
+            const categoriesMap = new Map();
             
-            buttons.push([{
-              text: buttonLabel,
-              callback_data: `close_${ticket.id}`
-            }]);
-          }
-          
-          // Format ticket list
-          let ticketList = "🎫 *You have multiple active tickets. Which one would you like to close?*\n\n";
-          ticketList += "Please select a ticket to close:";
-          
-          // Send list with inline keyboard buttons
-          await ctx.reply(ticketList, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: buttons
+            for (const categoryId of categoryIds) {
+              if (categoryId !== null) {
+                const category = await storage.getCategory(categoryId);
+                if (category) {
+                  categoriesMap.set(categoryId, category);
+                }
+              }
             }
-          });
-          
-          return;
+            
+            // Create a button for each ticket
+            for (const ticket of activeTickets) {
+              const category = categoriesMap.get(ticket.categoryId);
+              const categoryName = category ? category.name : "Unknown category";
+              
+              // Get status emoji for ticket status
+              const statusEmoji = ticket.status === 'open' ? '🔵' : 
+                                  ticket.status === 'in-progress' ? '🟡' : 
+                                  ticket.status === 'pending' ? '🟠' : 
+                                  ticket.status === 'paid' ? '💲' : '⚪';
+                                  
+              const buttonLabel = `${statusEmoji} #${ticket.id}: ${categoryName}`;
+              
+              buttons.push([{
+                text: buttonLabel,
+                callback_data: `close_${ticket.id}`
+              }]);
+            }
+            
+            // Format ticket list
+            let ticketList = "🎫 *You have multiple active tickets. Which one would you like to close?*\n\n";
+            ticketList += "Please select a ticket to close:";
+            
+            // Send list with inline keyboard buttons
+            await ctx.reply(ticketList, {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: buttons
+              }
+            });
+            
+            return;
+          }
         }
         
         // If user has a selected ticket in memory state or just one active ticket, close that one
