@@ -72,12 +72,61 @@ async function handleCriticalError(error: any, source: string) {
       ? `${error.name}: ${error.message}\n${error.stack}` 
       : String(error);
     
+    // Create detailed crash report
+    const memoryUsage = process.memoryUsage();
+    const memoryInfo = {
+      rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
+      heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
+      heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`
+    };
+    
+    // Write the crash information to a special log file
+    try {
+      const fs = require('fs');
+      const crashLog = {
+        timestamp: new Date().toISOString(),
+        source: source,
+        error: errorMessage,
+        memory: memoryInfo,
+        uptime: `${Math.round(process.uptime())}s`
+      };
+      
+      // Append to crash log file
+      fs.appendFileSync('crash-logs.txt', 
+        `\n------ CRASH REPORT: ${crashLog.timestamp} ------\n` +
+        `Source: ${crashLog.source}\n` +
+        `Memory: ${JSON.stringify(crashLog.memory)}\n` +
+        `Uptime: ${crashLog.uptime}\n` +
+        `Error: ${crashLog.error}\n` +
+        `------ END REPORT ------\n`,
+        'utf8'
+      );
+      
+      log(`Detailed crash information written to crash-logs.txt`, 'info');
+    } catch (fileError) {
+      log(`Failed to write crash log: ${fileError}`, 'error');
+    }
+    
     // Log the error with detailed context
     log(`CRITICAL ERROR from ${source}: ${errorMessage}`, 'error');
+    log(`CRASH DETAILS - Memory: ${JSON.stringify(memoryInfo)}, Uptime: ${Math.round(process.uptime())}s`, 'error');
     
     // Check if we have a specific BridgeError with more details
     if (error instanceof BridgeError && error.context) {
       log(`Error context: ${error.context}`, 'error');
+    }
+    
+    // Categorize the error to help with diagnostics
+    if (errorMessage.toLowerCase().includes('image') || 
+        errorMessage.toLowerCase().includes('buffer') || 
+        errorMessage.toLowerCase().includes('attachment')) {
+      log(`CRASH CATEGORY: Media processing error`, 'error');
+    } else if (errorMessage.toLowerCase().includes('telegram') || 
+               errorMessage.toLowerCase().includes('discord')) {
+      log(`CRASH CATEGORY: Bot communication error`, 'error');
+    } else if (errorMessage.toLowerCase().includes('database') || 
+               errorMessage.toLowerCase().includes('sql')) {
+      log(`CRASH CATEGORY: Database error`, 'error');
     }
     
     // Check if we're restarting too frequently
