@@ -199,7 +199,7 @@ export class BridgeManager {
             // Verify one more time after restart
             let postRestartSuccess = false;
             try {
-              await bot.telegram.getMe();
+              await bot.getMe();
               postRestartSuccess = true;
             } catch (postRestartError) {
               log(`Even after restart, connection still failing: ${postRestartError}`, "error");
