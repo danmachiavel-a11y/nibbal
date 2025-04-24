@@ -3156,14 +3156,41 @@ Images/photos are also supported.
           // This is crude matching since Telegram doesn't have a concept of "channels" like Discord
           // But we can check our database messages to find the most recent ticket the user was messaging in
           try {
-            // Get the most recent message from this user across all tickets
-            const recentMessages = await storage.getRecentMessagesFromUser(user.id, 10);
-            console.log(`Found ${recentMessages.length} recent messages from user`);
+            // Find the most recent active ticket with messages from this user
+            let mostRecentTicketId: number | undefined = undefined;
+            let mostRecentTimestamp = 0;
             
-            if (recentMessages.length > 0) {
-              // Get the ticket ID from the most recent message
-              const mostRecentTicketId = recentMessages[0].ticketId;
-              console.log(`Most recent message was in ticket #${mostRecentTicketId}`);
+            // Iterate through all active tickets to find the one with most recent messages
+            for (const ticket of activeTickets) {
+              try {
+                // Get messages for this specific ticket
+                const ticketMessages = await storage.getTicketMessages(ticket.id);
+                // Filter to only messages from this user
+                const userMessages = ticketMessages.filter(msg => msg.authorId === user.id);
+                
+                if (userMessages.length > 0) {
+                  // Find the most recent message timestamp
+                  userMessages.sort((a, b) => 
+                    new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+                  );
+                  
+                  const recentMsgTime = new Date(userMessages[0].timestamp).getTime();
+                  
+                  // If this is the most recent message we've found so far
+                  if (recentMsgTime > mostRecentTimestamp) {
+                    mostRecentTimestamp = recentMsgTime;
+                    // The ticket.id is definitely a number (not null) at this point
+                    mostRecentTicketId = ticket.id || 0;
+                    console.log(`Found more recent messages in ticket #${ticket.id}, timestamp: ${recentMsgTime}`);
+                  }
+                }
+              } catch (err) {
+                console.error(`Error checking messages for ticket #${ticket.id}: ${err}`);
+              }
+            }
+            
+            if (mostRecentTicketId) {
+              console.log(`Most recent active ticket with messages is #${mostRecentTicketId}`);
               
               // Check if this ticket is still active
               const isActive = activeTickets.some(t => t.id === mostRecentTicketId);
