@@ -565,8 +565,26 @@ export class TelegramBot {
         log("Telegram reconnection completed successfully", "info");
         this.failedHeartbeats = 0;
         this.lastHeartbeatSuccess = Date.now();
+        
+        // Process any pending messages in the message queue
+        this.bridge.processMessageRetryQueue();
+        
+        // Force an immediate heartbeat check to verify connection
+        setTimeout(() => {
+          this.handleHeartbeat().catch(e => {
+            log(`Error in post-reconnection heartbeat: ${e}`, "warn");
+          });
+        }, 5000);
       } else {
         log("All immediate reconnection strategies failed, waiting for scheduled retries", "warn");
+        
+        // Schedule one final reconnection attempt after a longer delay
+        this.forcedReconnectionTimer = setTimeout(() => {
+          log("Attempting final emergency reconnection...", "info");
+          this.start().catch(e => {
+            log(`Emergency reconnection also failed: ${e}`, "error");
+          });
+        }, 30000); // 30 second delay
       }
     } catch (error) {
       log(`Unexpected error during forced reconnection: ${error}`, "error");
@@ -936,7 +954,7 @@ export class TelegramBot {
     }
     
     this.isStarting = true;
-    log("Starting Telegram bot...", "info");
+    log("Starting Telegram bot with improved connection handling...", "info");
     
     try {
       // Reset reconnect attempts if this is a manual start
@@ -946,6 +964,12 @@ export class TelegramBot {
       
       this.updateConnectionState('reconnecting');
       this.stopHeartbeat();
+      
+      // Cancel any pending forced reconnection
+      if (this.forcedReconnectionTimer) {
+        clearTimeout(this.forcedReconnectionTimer);
+        this.forcedReconnectionTimer = null;
+      }
       
       // BEFORE STARTING: Verify that the API is accessible and there are no conflicts
       // This pre-flight check helps prevent 409 errors during initialization
