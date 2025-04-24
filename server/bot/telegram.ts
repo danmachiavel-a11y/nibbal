@@ -336,7 +336,18 @@ export class TelegramBot {
     this.bridge = bridge;
   }
 
-  private async verifyConnection(): Promise<boolean> {
+  /**
+   * Public method for verifying connection
+   * Exposed so bridge manager can check the connection status
+   */
+  async verifyConnection(): Promise<boolean> {
+    return this._verifyConnection();
+  }
+
+  /**
+   * Internal method for verifying connection
+   */
+  private async _verifyConnection(): Promise<boolean> {
     if (!this.bot) return false;
     
     try {
@@ -351,6 +362,13 @@ export class TelegramBot {
         timeoutPromise
       ]);
       
+      // If verification succeeds, update the connection state
+      if (result === true && !this._isConnected) {
+        this._isConnected = true;
+        this.updateConnectionState('connected');
+        log("Telegram connection verified and restored", "info");
+      }
+      
       return result === true;
     } catch (error) {
       // Log specific error types for better diagnosis
@@ -362,6 +380,14 @@ export class TelegramBot {
       } else {
         log(`Telegram connection verification failed: ${errorMessage}`, "debug");
       }
+      
+      // Update connection state on failure
+      if (this._isConnected) {
+        this._isConnected = false;
+        this.updateConnectionState('disconnected', errorMessage);
+        log("Telegram connection marked as disconnected after verification failure", "warn");
+      }
+      
       return false;
     }
   }

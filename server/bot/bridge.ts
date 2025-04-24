@@ -118,6 +118,54 @@ export class BridgeManager {
     // Setup retry processor for queued messages
     setInterval(() => this.processRetryQueue(), this.RETRY_INTERVAL);
   }
+  
+  /**
+   * Perform a real-time Telegram connection check
+   * More reliable than just checking the internal flag
+   * Returns true if the bot is properly connected and operational
+   */
+  private async checkTelegramConnection(): Promise<boolean> {
+    try {
+      // First check the internal status flag
+      if (!this.telegramBot.getIsConnected()) {
+        log("Telegram bot reports as disconnected", "debug");
+        return false;
+      }
+      
+      // Perform an active API check to verify the connection is actually working
+      try {
+        // Use a non-critical API call to verify connection
+        const bot = this.telegramBot;
+        
+        // Force the bot to reconnect if needed
+        if (typeof bot.verifyConnection === 'function') {
+          const isWorking = await bot.verifyConnection();
+          if (!isWorking) {
+            log("Telegram connection verification failed, will attempt reconnection", "warn");
+            try {
+              // Try to reconnect immediately
+              await this.reconnectTelegram();
+              // Still return false for this attempt, the next call will use the reconnected bot
+              return false;
+            } catch (reconnectError) {
+              log(`Failed to reconnect Telegram during connection check: ${reconnectError}`, "error");
+              return false;
+            }
+          }
+          return true;
+        }
+        
+        // Only return true if we have a connected bot and verification succeeded
+        return this.telegramBot.getIsConnected();
+      } catch (apiError) {
+        log(`Telegram API verification failed: ${apiError}`, "error");
+        return false;
+      }
+    } catch (error) {
+      log(`Error checking Telegram connection: ${error}`, "error");
+      return false;
+    }
+  }
 
   private startImageCacheCleanup(): void {
     setInterval(() => this.cleanupImageCache(), this.imageCacheCleanupInterval);
