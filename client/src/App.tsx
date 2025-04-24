@@ -8,6 +8,7 @@ import Stats from "@/pages/stats";
 import Customers from "@/pages/customers";
 import Transcripts from "@/pages/transcripts";
 import BannedUsers from "@/pages/banned-users";
+import CrashLogs from "@/pages/crash-logs";
 import NotFound from "@/pages/not-found";
 import { Navbar } from "@/components/Navbar";
 import { useEffect, useState } from "react";

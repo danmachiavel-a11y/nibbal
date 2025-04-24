@@ -1919,5 +1919,63 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  // Add endpoint to view crash logs for admin/debug purposes
+  app.get("/api/system/crash-logs", async (req, res) => {
+    try {
+      const crashLogPath = path.join(process.cwd(), 'crash-logs.txt');
+      
+      if (!fs.existsSync(crashLogPath)) {
+        return res.json({
+          status: "success",
+          message: "No crash logs found",
+          logs: []
+        });
+      }
+      
+      const logContent = fs.readFileSync(crashLogPath, 'utf8');
+      
+      // Parse the log file content into structured entries
+      const logEntries = logContent.split('------ CRASH REPORT:')
+        .filter(entry => entry.trim().length > 0)
+        .map(entry => {
+          // Add back the header that was removed by the split
+          const fullEntry = '------ CRASH REPORT:' + entry;
+          
+          // Extract timestamp if possible
+          let timestamp = 'Unknown';
+          const timestampMatch = fullEntry.match(/CRASH REPORT: (.*?) ------/);
+          if (timestampMatch && timestampMatch[1]) {
+            timestamp = timestampMatch[1];
+          }
+          
+          // Extract other details
+          const sourceMatch = fullEntry.match(/Source: (.*?)\n/);
+          const memoryMatch = fullEntry.match(/Memory: (.*?)\n/);
+          const uptimeMatch = fullEntry.match(/Uptime: (.*?)\n/);
+          const errorMatch = fullEntry.match(/Error: ([\s\S]*?)------ END REPORT/);
+          
+          return {
+            timestamp,
+            source: sourceMatch ? sourceMatch[1] : 'Unknown',
+            memory: memoryMatch ? memoryMatch[1] : 'Unknown',
+            uptime: uptimeMatch ? uptimeMatch[1] : 'Unknown',
+            error: errorMatch ? errorMatch[1].trim() : 'Unknown error',
+            rawLog: fullEntry
+          };
+        });
+      
+      return res.json({
+        status: "success",
+        message: `Found ${logEntries.length} crash logs`,
+        logs: logEntries
+      });
+    } catch (error) {
+      return res.status(500).json({
+        status: "error",
+        message: `Error reading crash logs: ${error}`
+      });
+    }
+  });
+
   return httpServer;
 }
