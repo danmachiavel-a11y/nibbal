@@ -84,6 +84,7 @@ export interface IStorage {
   createMessage(message: InsertMessage): Promise<Message>;
   getTicketMessages(ticketId: number): Promise<Message[]>;
   getRecentMessages(limit?: number): Promise<Message[]>;
+  getRecentMessagesFromUser(userId: number, limit: number): Promise<Message[]>;
 
   // New methods for payment tracking
   updateTicketPayment(id: number, amount: number, claimedBy: string): Promise<void>;
@@ -609,6 +610,16 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(messages)
       .where(sql`${messages.attachments} is not null`)
+      .orderBy(desc(messages.timestamp))
+      .limit(limit);
+  }
+  
+  // Get recent messages from a specific user (to determine active ticket)
+  async getRecentMessagesFromUser(userId: number, limit: number = 10): Promise<Message[]> {
+    return db
+      .select()
+      .from(messages)
+      .where(eq(messages.authorId, userId))
       .orderBy(desc(messages.timestamp))
       .limit(limit);
   }
