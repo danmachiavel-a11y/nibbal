@@ -1214,9 +1214,13 @@ export class BridgeManager {
   }
   
   /**
-   * Process the message retry queue
-   * Attempts to resend messages that failed due to Discord unavailability
+   * Public method for processing the message retry queue
+   * Can be called by other components to retry messages
    */
+  async processMessageRetryQueue(): Promise<void> {
+    return this.processRetryQueue();
+  }
+  
   /**
    * Process the message retry queue in batches with delays between messages
    * Handles both Discord and Telegram messages with separate availability checks
@@ -1227,9 +1231,17 @@ export class BridgeManager {
       return;
     }
     
-    // Check platform availability
+    // Check platform availability with active verification
     const discordAvailable = this.isDiscordAvailable && this.discordBot.isReady();
-    const telegramAvailable = this.telegramBot.getIsConnected();
+    
+    // For Telegram, perform a real-time connection check rather than relying on the cached flag
+    let telegramAvailable = false;
+    try {
+      telegramAvailable = await this.checkTelegramConnection();
+      log(`Telegram connection status for retry queue: ${telegramAvailable ? 'connected' : 'disconnected'}`);
+    } catch (error) {
+      log(`Error checking Telegram connection for retry queue: ${error}`, "error");
+    }
     
     if (!discordAvailable && !telegramAvailable) {
       // Both platforms unavailable, skip processing
@@ -1793,8 +1805,11 @@ export class BridgeManager {
 
   async forwardToTelegram(content: string, ticketId: number, username: string, attachments?: any[]) {
     try {
+      // Actively check Telegram connection status (more reliable than just checking the flag)
+      const telegramConnected = await this.checkTelegramConnection();
+      
       // If Telegram bot is not connected, queue the message for later
-      if (!this.telegramBot.getIsConnected()) {
+      if (!telegramConnected) {
         log(`Telegram bot is not connected, storing message but not forwarding ticket ${ticketId}`, "warn");
         
         // Store the message in the database for transcript history

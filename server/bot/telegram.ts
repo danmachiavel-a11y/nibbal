@@ -608,7 +608,12 @@ export class TelegramBot {
         this.lastHeartbeatSuccess = Date.now();
         
         // Process any pending messages in the message queue
-        this.bridge.processMessageRetryQueue();
+        if (typeof this.bridge.processMessageRetryQueue === 'function') {
+          await this.bridge.processMessageRetryQueue();
+        } else {
+          // Fallback if the method doesn't exist
+          log("Message retry queue processing not available", "warn");
+        }
         
         // Force an immediate heartbeat check to verify connection
         setTimeout(() => {
