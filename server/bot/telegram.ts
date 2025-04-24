@@ -1291,25 +1291,90 @@ export class TelegramBot {
     }
   }
 
-  async sendMessage(chatId: number | string, text: string) {
+  async sendMessage(chatId: number | string, text: string, attemptNumber = 0): Promise<void> {
     try {
       // Convert chatId to number if it's a string
       const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+      
+      // Check if the bot is connected
+      if (!this._isConnected || !this.bot) {
+        if (attemptNumber === 0) {
+          log(`Bot not connected when trying to send message to ${chatId}, initiating reconnection`, "warn");
+          
+          // Try to reconnect the bot
+          try {
+            await this.start();
+            log("Successfully reconnected bot while sending message", "info");
+            
+            // Wait a moment for the connection to stabilize
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Try again after reconnection (recursive with attempt tracking)
+            return this.sendMessage(chatId, text, attemptNumber + 1);
+          } catch (reconnectError) {
+            log(`Failed to reconnect bot during message send: ${reconnectError}`, "error");
+            throw new Error(`Cannot send message - bot disconnected and reconnection failed: ${reconnectError}`);
+          }
+        } else {
+          throw new Error("Bot still not connected after reconnection attempt");
+        }
+      }
       
       // Use the telegram getter for null safety
       await this.telegram.sendMessage(numericChatId, preserveMarkdown(text), {
         parse_mode: "MarkdownV2"
       });
+      
+      // Reset failed heartbeats on successful message
+      this.failedHeartbeats = 0;
+      this.lastHeartbeatSuccess = Date.now();
+      log(`Successfully sent message to ${chatId}`, "debug");
     } catch (error) {
-      log(`Error sending message: ${error}`, "error");
+      log(`Error sending message to ${chatId}: ${error}`, "error");
+      
+      // Handle specific error conditions
+      const errorStr = String(error).toLowerCase();
+      
+      // For "bot not initialized" errors, we've already tried to reconnect above
+      // but we can attempt emergency retry for network errors
+      if ((errorStr.includes('network') || errorStr.includes('timeout')) && attemptNumber < 2) {
+        log(`Network error while sending message, trying emergency retry (attempt ${attemptNumber + 1})`, "warn");
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return this.sendMessage(chatId, text, attemptNumber + 1);
+      }
+      
       throw error;
     }
   }
 
-  async sendPhoto(chatId: number | string, photo: Buffer | string, caption?: string): Promise<string | undefined> {
+  async sendPhoto(chatId: number | string, photo: Buffer | string, caption?: string, attemptNumber = 0): Promise<string | undefined> {
     try {
       // Convert chatId to number if it's a string
       const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+      
+      // Check if the bot is connected
+      if (!this._isConnected || !this.bot) {
+        if (attemptNumber === 0) {
+          log(`Bot not connected when trying to send photo to ${chatId}, initiating reconnection`, "warn");
+          
+          // Try to reconnect the bot
+          try {
+            await this.start();
+            log("Successfully reconnected bot while sending photo", "info");
+            
+            // Wait a moment for the connection to stabilize
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Try again after reconnection (recursive with attempt tracking)
+            return this.sendPhoto(chatId, photo, caption, attemptNumber + 1);
+          } catch (reconnectError) {
+            log(`Failed to reconnect bot during photo send: ${reconnectError}`, "error");
+            throw new Error(`Cannot send photo - bot disconnected and reconnection failed: ${reconnectError}`);
+          }
+        } else {
+          throw new Error("Bot still not connected after reconnection attempt");
+        }
+      }
       
       log(`Sending photo to chat ${chatId}`);
       let sentMessage;
@@ -1336,6 +1401,10 @@ export class TelegramBot {
         });
       }
 
+      // Reset failed heartbeats on successful photo send
+      this.failedHeartbeats = 0;
+      this.lastHeartbeatSuccess = Date.now();
+
       // Return the file_id for caching
       if (sentMessage?.photo && sentMessage.photo.length > 0) {
         const fileId = sentMessage.photo[sentMessage.photo.length - 1].file_id;
@@ -1346,24 +1415,76 @@ export class TelegramBot {
       log(`Successfully sent photo to chat ${chatId}`);
       return undefined;
     } catch (error) {
-      log(`Error sending photo: ${error}`, "error");
+      log(`Error sending photo to ${chatId}: ${error}`, "error");
+      
+      // Handle specific error conditions
+      const errorStr = String(error).toLowerCase();
+      
+      // For "bot not initialized" errors, we've already tried to reconnect above
+      // but we can attempt emergency retry for network errors
+      if ((errorStr.includes('network') || errorStr.includes('timeout')) && attemptNumber < 2) {
+        log(`Network error while sending photo, trying emergency retry (attempt ${attemptNumber + 1})`, "warn");
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return this.sendPhoto(chatId, photo, caption, attemptNumber + 1);
+      }
+      
       throw error;
     }
   }
 
-  async sendCachedPhoto(chatId: number | string, fileId: string, caption?: string): Promise<void> {
+  async sendCachedPhoto(chatId: number | string, fileId: string, caption?: string, attemptNumber = 0): Promise<void> {
     try {
       // Convert chatId to number if it's a string
       const numericChatId = typeof chatId === 'string' ? parseInt(chatId, 10) : chatId;
+      
+      // Check if the bot is connected
+      if (!this._isConnected || !this.bot) {
+        if (attemptNumber === 0) {
+          log(`Bot not connected when trying to send cached photo to ${chatId}, initiating reconnection`, "warn");
+          
+          // Try to reconnect the bot
+          try {
+            await this.start();
+            log("Successfully reconnected bot while sending cached photo", "info");
+            
+            // Wait a moment for the connection to stabilize
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Try again after reconnection (recursive with attempt tracking)
+            return this.sendCachedPhoto(chatId, fileId, caption, attemptNumber + 1);
+          } catch (reconnectError) {
+            log(`Failed to reconnect bot during cached photo send: ${reconnectError}`, "error");
+            throw new Error(`Cannot send cached photo - bot disconnected and reconnection failed: ${reconnectError}`);
+          }
+        } else {
+          throw new Error("Bot still not connected after reconnection attempt");
+        }
+      }
       
       await this.telegram.sendPhoto(numericChatId, fileId, {
         caption: caption ? preserveMarkdown(caption) : undefined,
         parse_mode: "MarkdownV2"
       });
 
+      // Reset failed heartbeats on successful photo send
+      this.failedHeartbeats = 0;
+      this.lastHeartbeatSuccess = Date.now();
+      
       log(`Successfully sent cached photo (${fileId}) to chat ${chatId}`);
     } catch (error) {
-      log(`Error sending cached photo: ${error}`, "error");
+      log(`Error sending cached photo to ${chatId}: ${error}`, "error");
+      
+      // Handle specific error conditions
+      const errorStr = String(error).toLowerCase();
+      
+      // For "bot not initialized" errors, we've already tried to reconnect above
+      // but we can attempt emergency retry for network errors
+      if ((errorStr.includes('network') || errorStr.includes('timeout')) && attemptNumber < 2) {
+        log(`Network error while sending cached photo, trying emergency retry (attempt ${attemptNumber + 1})`, "warn");
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return this.sendCachedPhoto(chatId, fileId, caption, attemptNumber + 1);
+      }
+      
       throw error;
     }
   }
