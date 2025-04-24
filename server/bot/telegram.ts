@@ -2781,7 +2781,7 @@ Images/photos are also supported.
               // Add the "Create New Ticket" button
               buttons.push([{
                 text: "➕ Create New Ticket",
-                callback_data: "start_new"
+                callback_data: "switch_new"
               }]);
               
               await ctx.reply(
@@ -3656,7 +3656,7 @@ Images/photos are also supported.
             this.userStates.set(userId, userState);
           }
           
-          if (switchOption === 'new' || data === 'start_new') {
+          if (switchOption === 'new' || data === 'start_new' || data === 'switch_new') {
             // User wants to create a new ticket, either from switch menu or from start menu
             await ctx.answerCbQuery("Creating a new ticket");
             
