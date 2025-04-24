@@ -126,39 +126,59 @@ export class BridgeManager {
    */
   private async checkTelegramConnection(): Promise<boolean> {
     try {
-      // First check the internal status flag
-      if (!this.telegramBot.getIsConnected()) {
-        log("Telegram bot reports as disconnected", "debug");
+      // Instead of relying on cached connection status, actively test the connection
+      const bot = this.telegramBot;
+      
+      // First check if the bot exists
+      if (!bot) {
+        log("Telegram bot instance does not exist", "error");
         return false;
       }
       
-      // Perform an active API check to verify the connection is actually working
+      // Force a reconnection if we haven't attempted recently
+      const now = Date.now();
+      const reconnectThreshold = 120000; // 2 minutes
+      
+      // Use more proactive approach - always try to reconnect if we're showing as disconnected
+      if (!bot.getIsConnected() && (now - this.lastTelegramReconnectAttempt > reconnectThreshold)) {
+        log("Telegram shows as disconnected, attempting reconnection", "warn");
+        try {
+          this.lastTelegramReconnectAttempt = now;
+          await this.reconnectTelegram();
+          // Wait a short time for reconnection to take effect
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (reconnectError) {
+          log(`Failed to reconnect Telegram: ${reconnectError}`, "error");
+        }
+      }
+      
+      // After potential reconnection attempt, verify connection by making a real API call
       try {
-        // Use a non-critical API call to verify connection
-        const bot = this.telegramBot;
-        
-        // Force the bot to reconnect if needed
         if (typeof bot.verifyConnection === 'function') {
           const isWorking = await bot.verifyConnection();
-          if (!isWorking) {
-            log("Telegram connection verification failed, will attempt reconnection", "warn");
-            try {
-              // Try to reconnect immediately
-              await this.reconnectTelegram();
-              // Still return false for this attempt, the next call will use the reconnected bot
-              return false;
-            } catch (reconnectError) {
-              log(`Failed to reconnect Telegram during connection check: ${reconnectError}`, "error");
-              return false;
+          if (isWorking) {
+            // If verification worked but status is still disconnected, fix it
+            if (!bot.getIsConnected()) {
+              log("Connection verified but status incorrectly shows disconnected - fixing", "warn");
+              bot.forceConnectionState(true);
             }
+            return true;
+          } else {
+            // If we couldn't verify connection, force status to disconnected
+            if (bot.getIsConnected()) {
+              log("Connection shows connected but verification failed - fixing", "warn");
+              bot.forceConnectionState(false);
+            }
+            return false;
           }
-          return true;
         }
         
-        // Only return true if we have a connected bot and verification succeeded
-        return this.telegramBot.getIsConnected();
+        // Fallback if no verification method
+        return bot.getIsConnected();
       } catch (apiError) {
         log(`Telegram API verification failed: ${apiError}`, "error");
+        // Force status to disconnected
+        bot.forceConnectionState(false);
         return false;
       }
     } catch (error) {

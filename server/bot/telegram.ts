@@ -1303,6 +1303,26 @@ export class TelegramBot {
   getIsConnected(): boolean {
     return this._isConnected;
   }
+  
+  /**
+   * Manually force connection state update
+   * Used when connection verification and internal state are out of sync
+   */
+  forceConnectionState(connected: boolean): void {
+    if (this._isConnected !== connected) {
+      this._isConnected = connected;
+      this.updateConnectionState(connected ? 'connected' : 'disconnected');
+      
+      if (connected) {
+        log("Telegram connection state forced to connected", "info");
+        this.failedHeartbeats = 0;
+        this.lastHeartbeatSuccess = Date.now();
+      } else {
+        log("Telegram connection state forced to disconnected", "warn");
+        this.failedHeartbeats = this.maxFailedHeartbeats; // Force reconnection in next cycle
+      }
+    }
+  }
 
   isStartingProcess(): boolean {
     return this.isStarting;
