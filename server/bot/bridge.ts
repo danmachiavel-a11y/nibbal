@@ -470,16 +470,49 @@ export class BridgeManager {
 
   private async validateAndProcessImage(buffer: Buffer, context: string): Promise<Buffer | null> {
     try {
-      if (!buffer || buffer.length < this.MIN_IMAGE_SIZE) {
-        throw new BridgeError("Image too small or empty", { context });
+      // Enhanced validation with detailed logging
+      log(`🔍 Validating image buffer (size: ${buffer ? buffer.length : 'null'} bytes) in context: ${context}`, "debug");
+      
+      if (!buffer) {
+        log(`❌ Image validation failed: Buffer is null in context: ${context}`, "error");
+        throw new BridgeError("Image buffer is null", { context });
+      }
+      
+      if (buffer.length < this.MIN_IMAGE_SIZE) {
+        log(`❌ Image validation failed: Buffer too small (${buffer.length} bytes) in context: ${context}`, "error");
+        throw new BridgeError(`Image too small (${buffer.length} bytes, minimum: ${this.MIN_IMAGE_SIZE})`, { context });
       }
 
       if (buffer.length > this.MAX_IMAGE_SIZE) {
-        throw new BridgeError(`Image too large (${buffer.length} bytes)`, { context });
+        log(`❌ Image validation failed: Buffer too large (${buffer.length} bytes) in context: ${context}`, "error");
+        throw new BridgeError(`Image too large (${buffer.length} bytes, maximum: ${this.MAX_IMAGE_SIZE})`, { context });
       }
-
+      
+      // Check for image signature/magic bytes to verify it's actually an image
+      const isJpeg = buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xD8;
+      const isPng = buffer.length >= 8 && 
+                    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47 &&
+                    buffer[4] === 0x0D && buffer[5] === 0x0A && buffer[6] === 0x1A && buffer[7] === 0x0A;
+      const isGif = buffer.length >= 6 && 
+                    buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 &&
+                    buffer[3] === 0x38 && (buffer[4] === 0x39 || buffer[4] === 0x37) && buffer[5] === 0x61;
+                    
+      if (!isJpeg && !isPng && !isGif) {
+        log(`⚠️ Warning: Buffer does not have standard image file signature in context: ${context}`, "warn");
+        // Continue anyway but log the warning - Discord CDN might modify headers
+      } else {
+        const format = isJpeg ? "JPEG" : isPng ? "PNG" : "GIF";
+        log(`✅ Detected image format: ${format} in context: ${context}`, "debug");
+      }
+      
+      log(`✅ Image passed validation checks (${buffer.length} bytes) in context: ${context}`, "debug");
       return buffer;
     } catch (error) {
+      // Improved error handling
+      log(`❌ Image validation error: ${error} in context: ${context}`, "error");
+      if (error instanceof Error && error.stack) {
+        log(`Error stack: ${error.stack}`, "debug");
+      }
       handleBridgeError(error as BridgeError, context);
       return null;
     }
@@ -709,50 +742,108 @@ export class BridgeManager {
 
   private async processDiscordToTelegram(url: string): Promise<Buffer | null> {
     try {
+      // Enhanced logging for attachment processing
+      log(`🔍 Starting Discord-to-Telegram image processing for URL: ${url.substring(0, 30)}...`, "debug");
+      
       // Try cache first
       const cacheKey = `discord_${url}`;
       const cached = this.getCachedImage(cacheKey);
       if (cached?.buffer) {
-        log(`Using cached buffer for Discord URL ${url}`);
+        log(`Using cached buffer for Discord URL ${url}`, "debug");
         return cached.buffer;
       }
+      
+      // Validate URL format
+      if (!url || !url.startsWith('http')) {
+        log(`Invalid Discord image URL format: ${url}`, "error");
+        return null;
+      }
 
-      // Use Promise.race to implement timeout
+      log(`🌐 Fetching image from Discord CDN: ${url.substring(0, 30)}...`, "debug");
+      
+      // Use Promise.race to implement timeout with more robust error handling
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Download timeout')), 30000)
+        setTimeout(() => reject(new Error('Download timeout after 30 seconds')), 30000)
       );
 
       // Add AbortController for cleaner cancellation
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      const response = await Promise.race([
-        fetch(url, { 
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 Message-Bridge/1.0'
-          }
-        }),
-        timeoutPromise
-      ]) as Response;
       
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new BridgeError(`Failed to fetch Discord image: ${response.status}`, { context: "processDiscordToTelegram" });
+      let response;
+      try {
+        response = await Promise.race([
+          fetch(url, { 
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 Message-Bridge/1.0',
+              'Accept': 'image/*,*/*;q=0.8',
+              'Cache-Control': 'no-cache' 
+            }
+          }),
+          timeoutPromise
+        ]) as Response;
+      } catch (fetchError) {
+        log(`❌ Fetch error downloading Discord image: ${fetchError}`, "error");
+        throw new BridgeError(`Network error fetching Discord image: ${fetchError}`, { context: "processDiscordToTelegram" });
+      } finally {
+        clearTimeout(timeoutId);
       }
 
-      const buffer = Buffer.from(await response.arrayBuffer());
+      if (!response) {
+        log(`❌ No response received from Discord CDN for URL: ${url}`, "error");
+        throw new BridgeError("No response from Discord CDN", { context: "processDiscordToTelegram" });
+      }
+
+      if (!response.ok) {
+        log(`❌ HTTP error fetching Discord image: ${response.status} ${response.statusText} for URL: ${url}`, "error");
+        throw new BridgeError(`Failed to fetch Discord image: ${response.status} ${response.statusText}`, { context: "processDiscordToTelegram" });
+      }
+
+      // Verify content type for images
+      const contentType = response.headers.get('content-type');
+      log(`📄 Received content type: ${contentType} for image from Discord CDN`, "debug");
+      
+      if (contentType && !contentType.startsWith('image/')) {
+        log(`⚠️ Warning: Content is not an image: ${contentType}`, "warn");
+        // Continue anyway as Discord CDN might not always set the correct content type
+      }
+
+      log(`📦 Reading response data for image...`, "debug");
+      
+      let arrayBuffer;
+      try {
+        arrayBuffer = await response.arrayBuffer();
+      } catch (bufferError) {
+        log(`❌ Error reading image data: ${bufferError}`, "error");
+        throw new BridgeError(`Failed to read image data: ${bufferError}`, { context: "processDiscordToTelegram" });
+      }
+      
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        log(`❌ Received empty image data from Discord CDN`, "error");
+        throw new BridgeError("Received empty image data", { context: "processDiscordToTelegram" });
+      }
+      
+      const buffer = Buffer.from(arrayBuffer);
+      log(`✅ Successfully downloaded image, size: ${buffer.length} bytes`, "debug");
+      
       const validatedBuffer = await this.validateAndProcessImage(buffer, "processDiscordToTelegram");
       if (!validatedBuffer) {
+        log(`❌ Image validation failed`, "error");
         return null;
       }
 
       // Cache the result
       this.setCachedImage(cacheKey, { buffer: validatedBuffer });
+      log(`💾 Cached image with key: ${cacheKey}`, "debug");
 
       return validatedBuffer;
     } catch (error) {
+      // Improved error handling
+      log(`❌ Error in processDiscordToTelegram: ${error}`, "error");
+      if (error instanceof Error) {
+        log(`Error stack: ${error.stack}`, "debug");
+      }
       handleBridgeError(error as BridgeError, "processDiscordToTelegram");
       return null;
     }
