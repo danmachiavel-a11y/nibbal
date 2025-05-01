@@ -1094,8 +1094,13 @@ export class BridgeManager {
       
       // Attempt to force release webhook/getUpdates to prevent conflicts
       try {
-        log("Forcing webhook cleanup to prevent conflicts...", "debug");
-        await this.cleanupTelegramConnections();
+        // Use critical mode in production for maximum resilience
+        const useProductionMode = process.env.NODE_ENV === 'production';
+        
+        log(`Forcing webhook cleanup to prevent conflicts (${useProductionMode ? "CRITICAL mode" : "standard mode"})...`, "debug");
+        
+        // Pass true for critical mode in production to use the enhanced cleanup steps
+        await this.cleanupTelegramConnections(useProductionMode);
       } catch (cleanupError) {
         log(`Error during pre-start cleanup: ${cleanupError}`, "warn");
         // Continue anyway, just a preemptive attempt
@@ -1113,24 +1118,26 @@ export class BridgeManager {
         if (errorStr.includes('409') || errorStr.includes('conflict')) {
           log("409 Conflict detected during reconnection - another instance is running", "error");
           
-          // For conflict errors, try a more aggressive cleanup approach
-          log("Attempting aggressive cleanup for conflict resolution...", "warn");
+          // For conflict errors, use our ultra-aggressive cleanup in critical mode
+          log("Attempting CRITICAL mode cleanup for conflict resolution...", "warn");
           
           try {
-            // Force a longer delay for conflicts
+            // Force a longer delay first before cleanup
             await new Promise(resolve => setTimeout(resolve, 15000));
             
-            // Try forceful webhook deletion and connection cleanup
-            await this.cleanupTelegramConnections();
+            // Always use critical mode for conflict errors during reconnection
+            log("Starting ultra-aggressive conflict resolution protocol...", "info");
+            await this.cleanupTelegramConnections(true); // true = critical mode for max resilience
             
             // Schedule a delayed retry with a 2-minute cooldown
-            log("Scheduling reconnection retry after 120s cooldown", "info");
+            const cooldownTime = process.env.NODE_ENV === 'production' ? 180000 : 120000; // 3 min in prod, 2 min in dev
+            log(`Scheduling reconnection retry after ${cooldownTime/1000}s cooldown`, "info");
             setTimeout(() => {
-              log("Attempting reconnection after conflict cooldown...", "info");
+              log("Attempting reconnection after extended conflict cooldown...", "info");
               this.reconnectTelegram().catch(e => {
                 log(`Post-conflict reconnection failed: ${e}`, "error");
               });
-            }, 120000); // 2 minute cooldown after conflict
+            }, cooldownTime); // Extended cooldown after conflict
           } catch (cleanupError) {
             log(`Error during aggressive connection cleanup: ${cleanupError}`, "error");
           }
@@ -1347,15 +1354,25 @@ export class BridgeManager {
             // Handle conflict errors specially
             const errorStr = String(startError).toLowerCase();
             if (errorStr.includes('409') || errorStr.includes('conflict')) {
-              log("409 Conflict error during reconnection - will try again after extended cooldown", "warn");
+              log("409 Conflict error during health check reconnection - initiating critical recovery", "warn");
+              
+              // First try the critical mode cleanup
+              try {
+                log("Executing critical mode cleanup during health check recovery...", "info");
+                await this.cleanupTelegramConnections(true); // true = critical mode
+              } catch (cleanupError) {
+                log(`Critical cleanup error: ${cleanupError}`, "error");
+              }
               
               // Schedule a delayed retry with much longer interval
+              const cooldownTime = process.env.NODE_ENV === 'production' ? 180000 : 120000; // 3 min in prod, 2 min in dev
+              log(`Scheduling reconnection retry after ${cooldownTime/1000}s cooldown`, "info");
               setTimeout(() => {
-                log("Attempting reconnection after conflict cooldown...", "info");
+                log("Attempting reconnection after extended conflict cooldown...", "info");
                 this.reconnectTelegram().catch(e => {
                   log(`Post-conflict reconnection failed: ${e}`, "error");
                 });
-              }, 120000); // 2 minute cooldown after conflict
+              }, cooldownTime); // Extended cooldown after conflict
             }
           }
         }
