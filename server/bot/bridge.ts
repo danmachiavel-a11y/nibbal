@@ -1626,77 +1626,168 @@ export class BridgeManager {
   }
 
   /**
-   * Enhanced cleanup for Telegram connections when we detect a 409 Conflict error
-   * This can happen during deployment when multiple instances are running
-   * or when a previous bot instance was not properly terminated
+   * Ultra-aggressive cleanup for Telegram connections 
+   * Enhanced for production mode to recover from severe crash states
+   * This can handle 409 Conflict errors that happen during deployment 
+   * when multiple instances are running or when a bot instance crashed
+   * 
+   * @param isCritical When true, uses more aggressive tactics suitable for recovery after crashes
    */
-  async cleanupTelegramConnections(): Promise<void> {
+  async cleanupTelegramConnections(isCritical: boolean = false): Promise<void> {
     try {
-      log("Performing aggressive cleanup of Telegram connections...", "info");
+      // Use different logging and strategies based on environment and criticality
+      const isProduction = process.env.NODE_ENV === 'production';
+      const logPrefix = isProduction ? "[PRODUCTION]" : "[DEV]";
+      
+      log(`${logPrefix} ${isCritical ? "🔴 CRITICAL" : "🔶 Standard"} cleanup of Telegram connections...`, "info");
       
       // 1. First attempt: Safely stop the Telegram bot if it exists
       if (this.telegramBot) {
         try {
-          // Use timeout to prevent hanging
+          // Use timeout to prevent hanging - longer timeout in critical situations
+          const stopTimeout = isCritical ? 10000 : 5000;
+          log(`${logPrefix} Stopping Telegram bot with ${stopTimeout}ms timeout`, "info");
+          
           await Promise.race([
             this.telegramBot.stop(),
             new Promise<void>((resolve) => setTimeout(() => {
-              log("Stop operation timed out during cleanup, forcing continuation", "warn");
+              log(`${logPrefix} Stop operation timed out during cleanup, forcing continuation`, "warn");
               resolve();
-            }, 5000))
+            }, stopTimeout))
           ]);
-          log("Telegram bot stopped successfully during cleanup", "info");
+          log(`${logPrefix} Telegram bot stopped successfully during cleanup`, "info");
         } catch (stopError) {
-          log(`Error stopping Telegram bot during cleanup: ${stopError}`, "error");
+          log(`${logPrefix} Error stopping Telegram bot during cleanup: ${stopError}`, "error");
           // Continue with cleanup regardless
         }
       }
       
-      // 2. Attempt to delete any webhook
-      try {
-        log("Attempting to delete any existing webhook...", "info");
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+      // 2. Production mode critical recovery uses multiple webhook deletion strategies
+      if (isProduction && isCritical) {
+        log(`${logPrefix} 🔴 CRITICAL MODE: Using advanced conflict resolution sequence`, "info");
         
-        const webhookDeleteResponse = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook?drop_pending_updates=true', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'User-Agent': 'TelegramBotBridge/1.0'
-          },
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (webhookDeleteResponse.ok) {
-          const result = await webhookDeleteResponse.json();
-          log(`Webhook deletion result: ${JSON.stringify(result)}`, "info");
-        } else {
-          log(`Failed to delete webhook: ${webhookDeleteResponse.status} ${webhookDeleteResponse.statusText}`, "warn");
+        // Step 2.1: Standard webhook deletion
+        try {
+          log(`${logPrefix} Step 1/3: Standard webhook deletion`, "debug");
+          const controller1 = new AbortController();
+          const timeoutId1 = setTimeout(() => controller1.abort(), 8000); // Longer timeout
+          
+          const response1 = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'User-Agent': 'TelegramBotBridge/3.0 (CriticalRecovery)'
+            },
+            signal: controller1.signal
+          });
+          
+          clearTimeout(timeoutId1);
+          log(`${logPrefix} Standard webhook deletion response: ${response1.status}`, "debug");
+        } catch (e) {
+          log(`${logPrefix} Step 1/3 error: ${e}`, "warn");
         }
-      } catch (webhookError) {
-        log(`Error during webhook deletion: ${webhookError}`, "warn");
-        // Continue with other cleanup steps
+        
+        // Add delay between attempts
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Step 2.2: Webhook deletion with dropped updates
+        try {
+          log(`${logPrefix} Step 2/3: Webhook deletion with dropped updates`, "debug");
+          const controller2 = new AbortController();
+          const timeoutId2 = setTimeout(() => controller2.abort(), 8000);
+          
+          const response2 = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook?drop_pending_updates=true', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'User-Agent': 'TelegramBotBridge/3.0 (CriticalRecovery)'
+            },
+            signal: controller2.signal
+          });
+          
+          clearTimeout(timeoutId2);
+          log(`${logPrefix} Webhook deletion with dropped updates response: ${response2.status}`, "debug");
+        } catch (e) {
+          log(`${logPrefix} Step 2/3 error: ${e}`, "warn");
+        }
+        
+        // Add delay between attempts
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Step 2.3: Reset getUpdates
+        try {
+          log(`${logPrefix} Step 3/3: Resetting getUpdates offset`, "debug");
+          const controller3 = new AbortController();
+          const timeoutId3 = setTimeout(() => controller3.abort(), 8000);
+          
+          const response3 = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getUpdates?offset=-1&timeout=0', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'User-Agent': 'TelegramBotBridge/3.0 (CriticalRecovery)'
+            },
+            signal: controller3.signal
+          });
+          
+          clearTimeout(timeoutId3);
+          log(`${logPrefix} getUpdates reset response: ${response3.status}`, "debug");
+        } catch (e) {
+          log(`${logPrefix} Step 3/3 error: ${e}`, "warn");
+        }
+        
+        // Major cooldown after aggressive cleanup
+        const cooldownTime = 30000; // 30 seconds
+        log(`${logPrefix} Adding extended cooldown of ${cooldownTime/1000}s after aggressive cleanup`, "info");
+        await new Promise(resolve => setTimeout(resolve, cooldownTime));
+      } 
+      // Standard webhook cleanup for non-critical situations
+      else {
+        try {
+          log(`${logPrefix} Performing standard webhook cleanup...`, "info");
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+          
+          const webhookDeleteResponse = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook?drop_pending_updates=true', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'User-Agent': 'TelegramBotBridge/1.0'
+            },
+            signal: controller.signal
+          });
+          
+          clearTimeout(timeoutId);
+          
+          if (webhookDeleteResponse.ok) {
+            const result = await webhookDeleteResponse.json();
+            log(`${logPrefix} Webhook deletion result: ${JSON.stringify(result)}`, "info");
+          } else {
+            log(`${logPrefix} Failed to delete webhook: ${webhookDeleteResponse.status} ${webhookDeleteResponse.statusText}`, "warn");
+          }
+        } catch (webhookError) {
+          log(`${logPrefix} Error during webhook deletion: ${webhookError}`, "warn");
+          // Continue with other cleanup steps
+        }
       }
       
       // 3. Force garbage collection if available (Node.js with --expose-gc flag)
       if (typeof global.gc === 'function') {
         try {
           global.gc();
-          log("Forced garbage collection to clean up stale connections", "info");
+          log(`${logPrefix} Forced garbage collection to clean up stale connections`, "info");
         } catch (gcError) {
-          log(`Error during forced garbage collection: ${gcError}`, "error");
+          log(`${logPrefix} Error during forced garbage collection: ${gcError}`, "error");
         }
       }
       
       // 4. Add a more significant delay to allow external connections to terminate
-      log("Waiting for external connections to terminate completely...", "info");
-      await new Promise(resolve => setTimeout(resolve, 15000)); // 15 second delay (increased from 10s)
+      const connectionTimeout = isCritical ? 30000 : 15000;
+      log(`${logPrefix} Waiting ${connectionTimeout/1000}s for external connections to terminate...`, "info");
+      await new Promise(resolve => setTimeout(resolve, connectionTimeout));
       
       // 5. Make a simple API call to check if the conflict is resolved
       try {
-        log("Testing Telegram API access after cleanup...", "debug");
+        log(`${logPrefix} Verifying Telegram API access after cleanup...`, "debug");
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
         
@@ -1704,7 +1795,7 @@ export class BridgeManager {
           method: 'GET',
           headers: { 
             'Content-Type': 'application/json',
-            'User-Agent': 'TelegramBotBridge/1.0'
+            'User-Agent': `TelegramBotBridge/${isCritical ? '3.0 (CriticalVerify)' : '1.0'}`
           },
           signal: controller.signal
         });
@@ -1712,17 +1803,50 @@ export class BridgeManager {
         clearTimeout(timeoutId);
         
         if (testResponse.status === 409) {
-          log("⚠️ Conflict still detected after cleanup. A longer cooldown period may be needed.", "warn");
+          log(`${logPrefix} ⚠️ Conflict still detected after cleanup. Adding extra delay.`, "warn");
+          
+          // In critical mode, try one last extreme measure
+          if (isCritical) {
+            log(`${logPrefix} 🔄 CRITICAL: Executing last-resort conflict resolution`, "warn");
+            
+            // Extreme delay for conflict resolution
+            await new Promise(resolve => setTimeout(resolve, 60000)); // 1 minute delay
+            
+            // Make one final cleanup attempt after the extreme delay
+            try {
+              log(`${logPrefix} Final conflict resolution attempt`, "info");
+              await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook?drop_pending_updates=true', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json', 
+                  'User-Agent': 'TelegramBotBridge/3.0 (UltimateFallback)'
+                }
+              });
+              
+              // Last check
+              const finalCheck = await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getMe', {
+                method: 'GET',
+                headers: {'User-Agent': 'TelegramBotBridge/3.0 (UltimateFallback)'}
+              });
+              
+              log(`${logPrefix} Final conflict resolution status: ${finalCheck.status}`, "info");
+            } catch (lastResortError) {
+              log(`${logPrefix} Last-resort cleanup failed: ${lastResortError}`, "error");
+            }
+          } else {
+            // Add regular additional delay if not in critical mode
+            await new Promise(resolve => setTimeout(resolve, 30000)); // 30 second additional delay
+          }
         } else if (testResponse.ok) {
-          log("✅ Telegram API accessible after cleanup - conflict appears to be resolved", "info");
+          log(`${logPrefix} ✅ Telegram API accessible - conflict appears to be resolved`, "info");
         } else {
-          log(`Telegram API returned status ${testResponse.status} after cleanup`, "warn");
+          log(`${logPrefix} Telegram API returned status ${testResponse.status} after cleanup`, "warn");
         }
       } catch (testError) {
-        log(`Error testing Telegram API after cleanup: ${testError}`, "warn");
+        log(`${logPrefix} Error testing Telegram API after cleanup: ${testError}`, "warn");
       }
       
-      log("Telegram connection cleanup completed", "info");
+      log(`${logPrefix} Telegram connection cleanup completed`, "info");
     } catch (error) {
       log(`Error during Telegram connection cleanup: ${error}`, "error");
       throw error;
