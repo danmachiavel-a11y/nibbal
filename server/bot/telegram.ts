@@ -1098,8 +1098,51 @@ export class TelegramBot {
           });
           
           if (retryResponse.status === 409) {
-            // If we still have conflict, throw an error
-            throw new Error("409 Conflict: Another bot instance is running. Cannot start.");
+            // In production, we need to be more aggressive about resolving 409 conflicts
+            if (process.env.NODE_ENV === 'production') {
+              log("409 Conflict persists in production mode - entering recovery mode", "warn");
+              
+              // Special recovery process for production 409 conflicts
+              log("Executing aggressive cleanup and retry sequence...", "info");
+              
+              // 1. Force a significant delay
+              await new Promise(resolve => setTimeout(resolve, 30000)); // 30 second delay
+              
+              // 2. Make multiple webhook deletion attempts with different parameters
+              try {
+                log("Attempt 1: Standard webhook deletion", "debug");
+                await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'User-Agent': 'TelegramBotBridge/1.0' }
+                });
+                
+                // Wait between attempts
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+                log("Attempt 2: Webhook deletion with drop_pending_updates=true", "debug");
+                await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/deleteWebhook?drop_pending_updates=true', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'User-Agent': 'TelegramBotBridge/1.0' }
+                });
+                
+                // Wait between attempts
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+                log("Final attempt: getUpdates with timeout=0 to reset connection", "debug");
+                await fetch('https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_TOKEN + '/getUpdates?offset=-1&timeout=0', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'User-Agent': 'TelegramBotBridge/1.0' }
+                });
+                
+                log("Recovery process completed, proceeding with initialization", "info");
+              } catch (recoveryError) {
+                log(`Error during recovery process: ${recoveryError}`, "error");
+                // Continue anyway - we've done our best to recover
+              }
+            } else {
+              // In development mode, we'll throw the error as before
+              throw new Error("409 Conflict: Another bot instance is running. Cannot start.");
+            }
           }
         } else if (!response.ok) {
           log(`Telegram API returned status ${response.status} during pre-flight check`, "warn");
