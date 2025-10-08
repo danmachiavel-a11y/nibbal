@@ -25,19 +25,19 @@ class RateLimitManager {
   private userRateLimits = new Map<number, Map<string, RateLimit>>();
   private readonly cleanupInterval: NodeJS.Timeout;
   private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute
-  private readonly MAX_REQUESTS_PER_WINDOW = 30;
-  private readonly COMMAND_MAX_REQUESTS = 15;  // Increased from 10 to 15
+  private readonly MAX_REQUESTS_PER_WINDOW = 60; // Was 30
+  private readonly COMMAND_MAX_REQUESTS = 30;  // Was 15
   private readonly COMMAND_SPECIFIC_LIMITS: { [key: string]: number } = {
-    'ping': 5,      // Increased from 3 to 5
-    'start': 5,     // Increased from 3 to 5
-    'cancel': 5,    // Increased from 3 to 5
-    'close': 5,     // Added specific limit for close
-    'switch': 5,    // Limit for switch command
-    'help': 10,     // High limit for help command
-    'category': 8,  // Increased from 5 to 8
-    'ban': 10,
-    'unban': 10,
-    'info': 10
+    'ping': 10,      // Was 5
+    'start': 10,     // Was 5
+    'cancel': 10,    // Was 5
+    'close': 10,     // Was 5
+    'switch': 10,    // Was 5
+    'help': 20,      // Was 10
+    'category': 16,  // Was 8
+    'ban': 20,       // Was 10
+    'unban': 20,     // Was 10
+    'info': 20       // Was 10
   };
 
   constructor() {
@@ -80,6 +80,7 @@ class RateLimitManager {
 
     // Check if limit exceeded
     if (limit.count >= maxRequests) {
+      // FRIENDLY FEEDBACK: In production, you may want to notify the user here.
       return true;
     }
 
@@ -206,14 +207,38 @@ function preserveMarkdown(text: string): string {
   // Define the special characters that need to be escaped in MarkdownV2
   const specialChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
   
-  // Replace all markdown formatting patterns with placeholders
-  // This is done to protect the formatting from being escaped
   let processedText = text;
   
-  // Replace bold with placeholder
+  // Validate and fix malformed markdown before processing
+  // Count opening and closing markers to ensure they match
+  
+  // Fix unclosed bold formatting (missing closing **)
+  const boldMatches = processedText.match(/\*\*/g);
+  if (boldMatches && boldMatches.length % 2 !== 0) {
+    processedText = processedText.replace(/\*\*([^*\n]+)(?!\*\*)/g, '**$1**');
+  }
+  
+  // Fix unclosed italic formatting (missing closing *)
+  const italicMatches = processedText.match(/(?<!\*)\*(?!\*)/g);
+  const italicCloseMatches = processedText.match(/(?<!\*)\*(?!\*)/g);
+  if (italicMatches && italicCloseMatches && italicMatches.length !== italicCloseMatches.length) {
+    processedText = processedText.replace(/(?<!\*)\*([^*\n]+)(?!\*)/g, '*$1*');
+  }
+  
+  // Fix unclosed underline formatting (missing closing _)
+  const underlineMatches = processedText.match(/(?<!_)_(?!_)/g);
+  if (underlineMatches && underlineMatches.length % 2 !== 0) {
+    // Remove any unclosed underlines to prevent parsing errors
+    processedText = processedText.replace(/(?<!_)_([^_\n\r]*?)(?!_)(?=\s|$|[^\w\s])/g, '$1');
+  }
+  
+  // Replace all properly formatted markdown patterns with placeholders
+  // This is done to protect the formatting from being escaped
+  
+  // Replace bold with placeholder (must be **text**)
   processedText = processedText.replace(/\*\*(.*?)\*\*/g, '§BOLD§$1§BOLD§');
   
-  // Replace italic with placeholder
+  // Replace italic with placeholder (must be *text* or _text_)
   processedText = processedText.replace(/\*(.*?)\*/g, '§ITALIC§$1§ITALIC§');
   processedText = processedText.replace(/_(.*?)_/g, '§ITALIC§$1§ITALIC§');
   
@@ -223,7 +248,7 @@ function preserveMarkdown(text: string): string {
   // Replace links with placeholder
   processedText = processedText.replace(/\[(.*?)\]\((.*?)\)/g, '§LINK_TEXT§$1§LINK_TEXT§§LINK_URL§$2§LINK_URL§');
   
-  // Escape all special characters
+  // Escape all remaining special characters
   for (const char of specialChars) {
     processedText = processedText.replace(new RegExp('\\' + char, 'g'), '\\' + char);
   }
@@ -267,7 +292,7 @@ function removeMarkdown(text: string): string {
 export class TelegramBot {
   private bot: Telegraf | null = null;
   private bridge: BridgeManager;
-  private userStates: Map<number, UserState> = new Map();
+  private userStates: Map<string, UserState> = new Map();
   private stateCleanups: Map<number, StateCleanup> = new Map();
   private rateLimitManager: RateLimitManager = new RateLimitManager();
   private _isConnected: boolean = false;
@@ -280,8 +305,8 @@ export class TelegramBot {
    * @param userId The Telegram user ID
    * @returns The user state or undefined if not found
    */
-  getUserState(userId: number): UserState | undefined {
-    return this.userStates.get(userId);
+  getUserState(userId: number | string): UserState | undefined {
+    return this.userStates.get(userId.toString());
   }
   
   /**
@@ -313,12 +338,12 @@ export class TelegramBot {
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly CLEANUP_DELAY = 10000; // 10 seconds
-  private readonly HEARTBEAT_INTERVAL = 60000; // 1 minute (reduced from 2 minutes)
+  private readonly HEARTBEAT_INTERVAL = 120000; // 2 minutes (increased from 1 minute)
   private readonly STATE_TIMEOUT = 900000; // 15 minutes
   private readonly RECONNECT_COOLDOWN = 30000; // 30 seconds
-  private readonly MAX_FAILED_HEARTBEATS = 3;
+  private readonly MAX_FAILED_HEARTBEATS = 5; // Increased from 3 to be less aggressive
   private failedHeartbeats = 0;
-  private readonly MAX_CONCURRENT_USERS = 500;
+  private readonly MAX_CONCURRENT_USERS = 1000; // Was 500
   private activeUsers: Set<number> = new Set();
   private lastHeartbeatSuccess: number = Date.now();
   private backoffConfig: BackoffConfig = {
@@ -436,8 +461,8 @@ export class TelegramBot {
         const timeSinceLastSuccess = Math.floor((Date.now() - this.lastHeartbeatSuccess) / 1000);
         log(`Telegram heartbeat failed, count: ${this.failedHeartbeats}/${this.MAX_FAILED_HEARTBEATS}, time since last success: ${timeSinceLastSuccess}s`, "warn");
         
-        // Check if we need to attempt reconnection - be more aggressive with reconnection
-        if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS || timeSinceLastSuccess > 300) {
+        // Check if we need to attempt reconnection - be less aggressive with reconnection
+        if (this.failedHeartbeats >= this.MAX_FAILED_HEARTBEATS || timeSinceLastSuccess > 600) { // Increased from 300s to 600s
           log(`Connection problems detected (${this.failedHeartbeats} failed heartbeats), initiating forced reconnection`, "warn");
           await this.performForcedReconnection();
         }
@@ -665,7 +690,7 @@ export class TelegramBot {
     
     // Use a more frequent heartbeat interval in production for faster failure detection
     const heartbeatInterval = process.env.NODE_ENV === 'production' 
-      ? 60000 // 1 minute in production (more frequent)
+      ? 120000 // 2 minutes in production (increased from 1 minute)
       : this.HEARTBEAT_INTERVAL; // 2 minutes in development
     
     log(`Starting enhanced Telegram heartbeat system every ${heartbeatInterval / 60000} minutes`, "info");
@@ -730,7 +755,7 @@ export class TelegramBot {
       if (age > this.STATE_TIMEOUT) {
         clearTimeout(cleanup.timeout);
         this.stateCleanups.delete(userId);
-        this.userStates.delete(userId);
+        this.userStates.delete(userId.toString());
         this.activeUsers.delete(userId);
         log(`Cleared stale state for user ${userId}`, "debug");
       }
@@ -745,7 +770,7 @@ export class TelegramBot {
     return true;
   }
 
-  async setState(userId: number, state: UserState) {
+  async setState(userId: number | string, state: UserState) {
     try {
       // Make a deep copy of the state to protect against race conditions
       const stateCopy = JSON.parse(JSON.stringify(state));
@@ -757,21 +782,31 @@ export class TelegramBot {
       stateCopy.transactionId = `${userId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
       // Clear existing timeout if any
-      if (this.stateCleanups.has(userId)) {
-        clearTimeout(this.stateCleanups.get(userId)!.timeout);
+      if (this.stateCleanups.has(Number(userId))) {
+        clearTimeout(this.stateCleanups.get(Number(userId))!.timeout);
       }
       
       // FIRST - validate user exists in database before setting state
       let user;
       
       try {
-        // Try first with the userId from memory which is faster
-        user = await storage.getUser(userId);
-        
-        // If not found, try to look up by telegramId as string
-        if (!user || !user.telegramId) {
-          log(`User not found by ID ${userId}, trying to look up by Telegram ID`, "debug");
+        // Check if userId is a Telegram ID (string or large number) or database ID
+        if (typeof userId === 'string' || userId > 1000000000) {
+          // This is likely a Telegram ID
           user = await storage.getUserByTelegramId(userId.toString());
+        } else {
+          // This is likely a database ID
+          user = await storage.getUser(userId);
+        }
+        
+        // If still not found, try the other method as fallback
+        if (!user || !user.telegramId) {
+          log(`User not found by primary method ${userId}, trying fallback lookup`, "debug");
+          if (typeof userId === 'string' || userId > 1000000000) {
+            user = await storage.getUser(userId);
+          } else {
+            user = await storage.getUserByTelegramId(userId.toString());
+          }
         }
         
         if (!user || !user.telegramId) {
@@ -785,7 +820,8 @@ export class TelegramBot {
       }
       
       // SECOND - Set the state in memory
-      this.userStates.set(userId, stateCopy);
+      this.userStates.set(userId.toString(), stateCopy);
+      log(`State set for user ${userId}: ${JSON.stringify(stateCopy)}`);
       
       // THIRD - Setup cleanup timeout
       const timeout = setTimeout(() => {
@@ -796,9 +832,9 @@ export class TelegramBot {
               const ticket = await storage.getTicket(stateCopy.activeTicketId);
               // Only clear state if ticket is inactive or closed
               if (!ticket || ticket.status === "closed") {
-                this.userStates.delete(userId);
-                this.stateCleanups.delete(userId);
-                this.activeUsers.delete(userId);
+                this.userStates.delete(userId.toString());
+                this.stateCleanups.delete(Number(userId));
+                this.activeUsers.delete(Number(userId));
                 log(`Auto-cleared state for inactive user ${userId} - ticket ${stateCopy.activeTicketId} is closed or deleted`, "debug");
                 
                 // Also deactivate state in database
@@ -814,7 +850,7 @@ export class TelegramBot {
               }
             } else {
               // No active ticket, go ahead and clear
-              this.userStates.delete(userId);
+              this.userStates.delete(userId.toString());
               this.stateCleanups.delete(userId);
               this.activeUsers.delete(userId);
               log(`Auto-cleared state for inactive user ${userId}`, "debug");
@@ -1428,9 +1464,15 @@ export class TelegramBot {
       }
       
       // Use the telegram getter for null safety
-      await this.telegram.sendMessage(numericChatId, preserveMarkdown(text), {
-        parse_mode: "MarkdownV2"
-      });
+      try {
+        await this.telegram.sendMessage(numericChatId, preserveMarkdown(text), {
+          parse_mode: "MarkdownV2"
+        });
+      } catch (markdownError) {
+        log(`Error with markdown parsing in sendMessage, sending as plain text: ${markdownError}`, "error");
+        // Fallback to plain text if markdown parsing fails
+        await this.telegram.sendMessage(numericChatId, text);
+      }
       
       // Reset failed heartbeats on successful message
       this.failedHeartbeats = 0;
@@ -1490,22 +1532,46 @@ export class TelegramBot {
       if (typeof photo === 'string' && photo.startsWith('http')) {
         const response = await fetch(photo);
         const buffer = await response.buffer();
-        sentMessage = await this.telegram.sendPhoto(numericChatId, { source: buffer }, {
-          caption: caption ? preserveMarkdown(caption) : undefined,
-          parse_mode: "MarkdownV2"
-        });
+        try {
+          sentMessage = await this.telegram.sendPhoto(numericChatId, { source: buffer }, {
+            caption: caption ? preserveMarkdown(caption) : undefined,
+            parse_mode: "MarkdownV2"
+          });
+        } catch (markdownError) {
+          log(`Error with markdown parsing in sendPhoto caption, sending without markdown: ${markdownError}`, "error");
+          // Fallback to plain text caption if markdown parsing fails
+          sentMessage = await this.telegram.sendPhoto(numericChatId, { source: buffer }, {
+            caption: caption || undefined
+          });
+        }
       } else if (photo instanceof Buffer) {
         // Handle buffer by using InputFile format
-        sentMessage = await this.telegram.sendPhoto(numericChatId, { source: photo }, {
-          caption: caption ? preserveMarkdown(caption) : undefined,
-          parse_mode: "MarkdownV2"
-        });
+        try {
+          sentMessage = await this.telegram.sendPhoto(numericChatId, { source: photo }, {
+            caption: caption ? preserveMarkdown(caption) : undefined,
+            parse_mode: "MarkdownV2"
+          });
+        } catch (markdownError) {
+          log(`Error with markdown parsing in sendPhoto caption (buffer), sending without markdown: ${markdownError}`, "error");
+          // Fallback to plain text caption if markdown parsing fails
+          sentMessage = await this.telegram.sendPhoto(numericChatId, { source: photo }, {
+            caption: caption || undefined
+          });
+        }
       } else {
         // Handle file_id string
-        sentMessage = await this.telegram.sendPhoto(numericChatId, photo, {
-          caption: caption ? preserveMarkdown(caption) : undefined,
-          parse_mode: "MarkdownV2"
-        });
+        try {
+          sentMessage = await this.telegram.sendPhoto(numericChatId, photo, {
+            caption: caption ? preserveMarkdown(caption) : undefined,
+            parse_mode: "MarkdownV2"
+          });
+        } catch (markdownError) {
+          log(`Error with markdown parsing in sendPhoto caption (file_id), sending without markdown: ${markdownError}`, "error");
+          // Fallback to plain text caption if markdown parsing fails
+          sentMessage = await this.telegram.sendPhoto(numericChatId, photo, {
+            caption: caption || undefined
+          });
+        }
       }
 
       // Reset failed heartbeats on successful photo send
@@ -1568,10 +1634,18 @@ export class TelegramBot {
         }
       }
       
-      await this.telegram.sendPhoto(numericChatId, fileId, {
-        caption: caption ? preserveMarkdown(caption) : undefined,
-        parse_mode: "MarkdownV2"
-      });
+      try {
+        await this.telegram.sendPhoto(numericChatId, fileId, {
+          caption: caption ? preserveMarkdown(caption) : undefined,
+          parse_mode: "MarkdownV2"
+        });
+      } catch (markdownError) {
+        log(`Error with markdown parsing in sendPhoto caption (fileId), sending without markdown: ${markdownError}`, "error");
+        // Fallback to plain text caption if markdown parsing fails
+        await this.telegram.sendPhoto(numericChatId, fileId, {
+          caption: caption || undefined
+        });
+      }
 
       // Reset failed heartbeats on successful photo send
       this.failedHeartbeats = 0;
@@ -1604,7 +1678,7 @@ export class TelegramBot {
         await this.telegram.getChat(activeId);
       } catch (error) {
         this.activeUsers.delete(activeId);
-        this.userStates.delete(activeId);
+        this.userStates.delete(activeId.toString());
         this.stateCleanups.delete(activeId);
         log(`Removed inactive user ${activeId}`);
       }
@@ -1627,7 +1701,7 @@ export class TelegramBot {
     if (!userId) return;
 
     // Get user state before rate limit check
-    const state = this.userStates.get(userId);
+    const state = this.userStates.get(userId.toString());
     log(`Received message from user ${userId}. Current state: ${JSON.stringify(state)}`);
 
     // Log the telegramId as a string to help diagnose issues
@@ -1695,7 +1769,7 @@ export class TelegramBot {
       const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
 
       await this.bridge.forwardToDiscord(
-        ctx.message.text,
+        ctx.message.text || "",
         ticket.id,
         displayName,
         avatarUrl,
@@ -1714,36 +1788,24 @@ export class TelegramBot {
 
   private async handleCategoryMenu(ctx: Context) {
     try {
-      // Fetch bot config and categories in parallel to improve performance
       const [botConfig, categories] = await Promise.all([
         storage.getBotConfig(),
         storage.getCategories()
       ]);
-
-      // Filter categories - do this in a single pass for better performance
       const submenus = [];
       const rootCategories = [];
-      
       for (const cat of categories) {
-        if (cat.isSubmenu) {
-          submenus.push(cat);
-        } else if (!cat.parentId) {
-          rootCategories.push(cat);
-        }
+        if (cat.isSubmenu) submenus.push(cat);
+        else if (!cat.parentId) rootCategories.push(cat);
       }
-
-      // Build keyboard layout
       const keyboard: { text: string; callback_data: string; }[][] = [];
       let currentRow: { text: string; callback_data: string; }[] = [];
-
-      // Process submenus
       const processCategories = (categoryList: any[]) => {
         for (const category of categoryList) {
           const button = {
             text: category.isClosed ? `🔴 ${category.name}` : category.name,
             callback_data: category.isSubmenu ? `submenu_${category.id}` : `category_${category.id}`
           };
-  
           if (category.newRow && currentRow.length > 0) {
             keyboard.push([...currentRow]);
             currentRow = [button];
@@ -1756,71 +1818,51 @@ export class TelegramBot {
           }
         }
       };
-      
-      // Process both types of categories
       processCategories(submenus);
       processCategories(rootCategories);
-
-      if (currentRow.length > 0) {
-        keyboard.push(currentRow);
-      }
-
-      // Use our new preserveMarkdown function to keep markdown formatting while escaping special chars
+      if (currentRow.length > 0) keyboard.push(currentRow);
       let welcomeMessage = botConfig?.welcomeMessage || "Welcome to the support bot! Please select a service:";
-      
-      // Add clear visual separator and instructions
-      welcomeMessage = `━━━━━━━━━━━━━━━━━━━━━━\n🎫 *Create a new support ticket*\n\n${welcomeMessage}\n\n⚠️ *Please select a service category below*\n*This will start a new ticket creation process.*\n━━━━━━━━━━━━━━━━━━━━━━`;
-      
-      // Preserve markdown in the enhanced message (calculate this once)
       const formattedMessage = preserveMarkdown(welcomeMessage);
       const welcomeImageUrl = botConfig?.welcomeImageUrl;
-
-      // Ensure we have a valid message ID to edit by checking both the callbackQuery and message
-      const hasMessageId = 
-        ctx.callbackQuery && 
-        ctx.callbackQuery.message && 
-        ('message_id' in ctx.callbackQuery.message) && 
-        ctx.callbackQuery.message.message_id;
-
-      const hasText = 
-        ctx.callbackQuery?.message && 
-        'text' in ctx.callbackQuery.message && 
-        ctx.callbackQuery.message.text;
-
-      // Standard message options to reuse
       const messageOptions = {
         parse_mode: "MarkdownV2" as const,
         reply_markup: { inline_keyboard: keyboard }
       };
-      
-      try {
-        // Only try to edit if we have both a message ID and text content
-        if (hasMessageId && hasText && ctx.callbackQuery) {
-          try {
-            // Try to edit the existing message
+      if (ctx.callbackQuery && ctx.callbackQuery.message && 'message_id' in ctx.callbackQuery.message) {
+        try {
+          if (typeof welcomeImageUrl === 'string') {
+            await ctx.editMessageCaption(formattedMessage, messageOptions);
+          } else {
             await ctx.editMessageText(formattedMessage, messageOptions);
-            
-            // Answer the callback query to stop loading indicator
-            await ctx.answerCbQuery();
-          } catch (error) {
-            // If editing fails, send a new message
-            if (welcomeImageUrl) {
-              await ctx.replyWithPhoto(welcomeImageUrl, {
-                caption: formattedMessage,
-                ...messageOptions
-              });
-            } else {
-              await ctx.reply(formattedMessage, messageOptions);
-            }
-            
-            // Answer the callback query
-            if (ctx.callbackQuery) {
-              await ctx.answerCbQuery();
-            }
           }
-        } else {
-          // Cannot edit, so send a new message
-          if (welcomeImageUrl) {
+          await ctx.answerCbQuery();
+          log(`Edited main menu message for user ${ctx.from?.id || 'unknown'}`);
+          return;
+        } catch (editError) {
+          log(`Error editing main menu message: ${editError}`, "warn");
+          // Try fallback without markdown
+          try {
+            const fallbackOptions = {
+              reply_markup: { inline_keyboard: keyboard }
+            };
+            if (typeof welcomeImageUrl === 'string') {
+              await ctx.editMessageCaption(welcomeMessage, fallbackOptions);
+            } else {
+              await ctx.editMessageText(welcomeMessage, fallbackOptions);
+            }
+            await ctx.answerCbQuery();
+            log(`Edited main menu message (fallback) for user ${ctx.from?.id || 'unknown'}`);
+            return;
+          } catch (fallbackError) {
+            log(`Error with fallback editing main menu message: ${fallbackError}`, "error");
+            if (ctx.callbackQuery) await ctx.answerCbQuery();
+            return;
+          }
+        }
+      }
+      if (!ctx.callbackQuery) {
+        try {
+          if (typeof welcomeImageUrl === 'string') {
             await ctx.replyWithPhoto(welcomeImageUrl, {
               caption: formattedMessage,
               ...messageOptions
@@ -1828,32 +1870,36 @@ export class TelegramBot {
           } else {
             await ctx.reply(formattedMessage, messageOptions);
           }
-          
-          // Answer the callback query if applicable
-          if (ctx.callbackQuery) {
-            await ctx.answerCbQuery();
+          log(`Displayed main menu to user ${ctx.from?.id || 'unknown'}`);
+        } catch (markdownError) {
+          log(`Error with markdown parsing in welcome message, sending as plain text: ${markdownError}`, "error");
+          // Fallback to plain text if markdown parsing fails
+          const fallbackOptions = {
+            reply_markup: { inline_keyboard: keyboard }
+          };
+          if (typeof welcomeImageUrl === 'string') {
+            await ctx.replyWithPhoto(welcomeImageUrl, {
+              caption: welcomeMessage,
+              ...fallbackOptions
+            });
+          } else {
+            await ctx.reply(welcomeMessage, fallbackOptions);
           }
-        }
-      } catch (error) {
-        // Handle any errors and provide a basic fallback
-        await ctx.reply(formattedMessage, messageOptions);
-        
-        // Always answer callback query if present
-        if (ctx.callbackQuery) {
-          await ctx.answerCbQuery("Error loading menu").catch(() => {});
+          log(`Displayed main menu (fallback) to user ${ctx.from?.id || 'unknown'}`);
         }
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       log(`Error in handleCategoryMenu: ${errorMsg}`, "error");
-      await ctx.reply("❌ There was an error displaying the menu. Please try again.");
-      
-      // Always answer callback query if present
+      if (!ctx.callbackQuery) {
+        await ctx.reply("❌ There was an error displaying the menu. Please try again.");
+      }
       if (ctx.callbackQuery) {
         await ctx.answerCbQuery().catch(() => {});
       }
     }
   }
+
 
   private async handleCategorySelection(ctx: Context, categoryId: number) {
     try {
@@ -1935,16 +1981,28 @@ Only one active ticket per service is allowed.`);
           log(`Error sending service image: ${error}`, "error");
           // If image fails, still show the summary as text
           if (category.serviceSummary) {
-            await ctx.reply(preserveMarkdown(category.serviceSummary), {
-              parse_mode: "MarkdownV2"
-            });
+            try {
+              await ctx.reply(preserveMarkdown(category.serviceSummary), {
+                parse_mode: "MarkdownV2"
+              });
+            } catch (markdownError) {
+              log(`Error with markdown parsing, sending as plain text: ${markdownError}`, "error");
+              // Fallback to plain text if markdown parsing fails
+              await ctx.reply(category.serviceSummary);
+            }
           }
         }
       } else if (category.serviceSummary) {
         // If no image but has summary, show summary as text
-        await ctx.reply(preserveMarkdown(category.serviceSummary), {
-          parse_mode: "MarkdownV2"
-        });
+        try {
+          await ctx.reply(preserveMarkdown(category.serviceSummary), {
+            parse_mode: "MarkdownV2"
+          });
+        } catch (error) {
+          log(`Error with markdown parsing, sending as plain text: ${error}`, "error");
+          // Fallback to plain text if markdown parsing fails
+          await ctx.reply(category.serviceSummary);
+        }
       }
 
       // Get the questions for this category
@@ -1962,149 +2020,108 @@ Only one active ticket per service is allowed.`);
         inQuestionnaire: true,
         activeTicketId: undefined
       };
-      this.setState(userId, state);
+      await this.setState(userId, state);
 
       // Ask first question with clear context
       // Show progress indication and separator
       const questionProgress = `*Question 1/${questions.length}*`;
-      const questionText = preserveMarkdown(`━━━━━━━━━━━━━━━━━━━━━━\n${questionProgress}\n\n${questions[0]}\n\n⚠️ *Please answer each question to complete your ticket*\n━━━━━━━━━━━━━━━━━━━━━━`);
-        
-      await ctx.reply(questionText, {
-        parse_mode: "MarkdownV2"
-      });
+      // Remove decorative box-drawing line
+      const questionText = preserveMarkdown(`${questionProgress}\n\n${questions[0]}\n\n⚠️ *Please answer each question to complete your ticket*`);
+      try {
+        await ctx.reply(questionText, {
+          parse_mode: "MarkdownV2"
+        });
+      } catch (error) {
+        log(`Error with markdown parsing in question, sending as plain text: ${error}`, "error");
+        // Fallback to plain text if markdown parsing fails
+        await ctx.reply(`${questionProgress}\n\n${questions[0]}\n\n⚠️ Please answer each question to complete your ticket`);
+      }
 
+      // Log when user starts a questionnaire
+      log(`User ${userId} is starting a questionnaire for category ${categoryId}`);
+
+      log(`User ${userId} selected category ${categoryId} (${category?.name || 'unknown'})`);
     } catch (error) {
       log(`Error in handleCategorySelection: ${error}`, "error");
       await ctx.reply("❌ There was an error processing your selection. Please try again.");
     }
   }
 
-  private async handleSubmenuClick(ctx: Context, submenuId: number) {
-    try {
-      const submenu = await storage.getCategory(submenuId);
-      if (!submenu) {
-        await ctx.reply("❌ Submenu not found.");
+ private async handleSubmenuClick(ctx: Context, submenuId: number) {
+  try {
+    const submenu = await storage.getCategory(submenuId);
+    if (!submenu) {
+      if (!ctx.callbackQuery) await ctx.reply("❌ Submenu not found.");
+      if (ctx.callbackQuery) await ctx.answerCbQuery();
+      return;
+    }
+    const categories = await storage.getCategories();
+    const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
+    const keyboard: { text: string; callback_data: string; }[][] = [];
+    let currentRow: { text: string; callback_data: string; }[] = [];
+    for (const category of submenuCategories) {
+      const button = {
+        text: category.isClosed ? `🔴 ${category.name}` : category.name,
+        callback_data: `category_${category.id}`
+      };
+      if (category.newRow && currentRow.length > 0) {
+        keyboard.push([...currentRow]);
+        currentRow = [button];
+      } else {
+        currentRow.push(button);
+        if (currentRow.length >= 2) {
+          keyboard.push([...currentRow]);
+          currentRow = [];
+        }
+      }
+    }
+    if (currentRow.length > 0) keyboard.push(currentRow);
+    keyboard.push([{
+      text: "↩️ Back",
+      callback_data: "back_to_main"
+    }]);
+    const message = `Please select a service from *${submenu.name}*:`;
+    const formattedMessage = preserveMarkdown(message);
+    if (ctx.callbackQuery && ctx.callbackQuery.message && 'message_id' in ctx.callbackQuery.message) {
+      try {
+        // Only update the inline keyboard (buttons), do not edit text or caption
+        await ctx.editMessageReplyMarkup({
+          inline_keyboard: keyboard
+        });
+        if (ctx.callbackQuery) await ctx.answerCbQuery();
+        log(`Edited submenu buttons for submenu ${submenuId}`);
+        return;
+      } catch (error) {
+        log(`Error editing submenu buttons: ${error}`, "warn");
+        if (ctx.callbackQuery) await ctx.answerCbQuery();
         return;
       }
-
-      const categories = await storage.getCategories();
-      const submenuCategories = categories.filter(cat => cat.parentId === submenuId);
-
-      const keyboard: { text: string; callback_data: string; }[][] = [];
-      let currentRow: { text: string; callback_data: string; }[] = [];
-
-      for (const category of submenuCategories) {
-        const button = {
-          text: category.isClosed ? `🔴 ${category.name}` : category.name,
-          callback_data: `category_${category.id}`
-        };
-
-        if (category.newRow && currentRow.length > 0) {
-          keyboard.push([...currentRow]);
-          currentRow = [button];
-        } else {
-          currentRow.push(button);
-          if (currentRow.length >= 2) {
-            keyboard.push([...currentRow]);
-            currentRow = [];
-          }
-        }
-      }
-
-      if (currentRow.length > 0) {
-        keyboard.push(currentRow);
-      }
-
-      // Add a "Back" button
-      keyboard.push([{
-        text: "↩️ Back",
-        callback_data: "back_to_main"
-      }]);
-
-      // Add clear instructions with the submenu selection
-      const message = `━━━━━━━━━━━━━━━━━━━━━━\n🎫 *Create a new support ticket*\n\nPlease select a service from *${submenu.name}*:\n\n⚠️ *This will start a new ticket creation process.*\n━━━━━━━━━━━━━━━━━━━━━━`;
-      
-      // Preserve markdown in the message
-      const formattedMessage = preserveMarkdown(message);
-
-      // Ensure we have a valid message ID to edit by checking both the callbackQuery and message
-      const hasMessageId = 
-        ctx.callbackQuery && 
-        ctx.callbackQuery.message && 
-        ('message_id' in ctx.callbackQuery.message) && 
-        ctx.callbackQuery.message.message_id;
-
-      const hasText = 
-        ctx.callbackQuery?.message && 
-        'text' in ctx.callbackQuery.message && 
-        ctx.callbackQuery.message.text;
-
-      // Only try to edit if we have both a message ID and text content
-      if (hasMessageId && hasText) {
-        try {
-          await ctx.editMessageText(formattedMessage, {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
-          
-          // Answer the callback query to stop loading indicator
-          if (ctx.callbackQuery) {
-            await ctx.answerCbQuery();
-          }
-        } catch (error) {
-          log(`Error editing message: ${error}`, "warn");
-          
-          // If editing fails, send a new message, but include a debug log to understand why
-          log(`Message details: id=${ctx.callbackQuery?.message?.message_id}, hasText=${!!hasText}`, "debug");
-
-          await ctx.reply(formattedMessage, {
-            parse_mode: "MarkdownV2",
-            reply_markup: { inline_keyboard: keyboard }
-          });
-          
-          if (ctx.callbackQuery) {
-            await ctx.answerCbQuery();
-          }
-        }
-      } else {
-        // Cannot edit, so send a new message
-        log(`Cannot edit message - missing message ID or text content. hasMessageId=${!!hasMessageId}, hasText=${!!hasText}`, "debug");
-        
+    }
+    if (!ctx.callbackQuery) {
+      try {
         await ctx.reply(formattedMessage, {
           parse_mode: "MarkdownV2",
           reply_markup: { inline_keyboard: keyboard }
         });
-        
-        if (ctx.callbackQuery) {
-          await ctx.answerCbQuery();
-        }
-      }
-
-      log(`Successfully displayed submenu options for submenu ${submenuId}`);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      log(`Error in handleSubmenuClick: ${errorMsg}`, "error");
-      
-      // Don't send a reply if it's a query timeout error, as it will just fail again
-      if (!errorMsg.includes("query is too old") && !errorMsg.includes("query ID is invalid")) {
-        try {
-          await ctx.reply("❌ There was an error displaying the menu. Please try /start again.");
-        } catch (replyError) {
-          log(`Error sending error reply: ${replyError}`, "error");
-        }
-      }
-      
-      // Make sure we always answer the callback query to stop the loading indicator
-      if (ctx.callbackQuery) {
-        try {
-          await ctx.answerCbQuery("Menu loading error").catch(() => {});
-        } catch (ackError) {
-          // Silent catch - likely a query timeout error
-          log(`Failed to answer callback query: ${ackError}`, "debug");
-        }
+      } catch (markdownError) {
+        log(`Error with markdown parsing in submenu message, sending as plain text: ${markdownError}`, "error");
+        // Fallback to plain text if markdown parsing fails
+        await ctx.reply(message, {
+          reply_markup: { inline_keyboard: keyboard }
+        });
       }
     }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    log(`Error in handleSubmenuClick: ${errorMsg}`, "error");
+    if (!ctx.callbackQuery) {
+      await ctx.reply("❌ There was an error displaying the menu. Please try /start again.");
+    }
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery("Menu loading error").catch(() => {});
+    }
   }
+}
 
   private async handleQuestionnaireResponse(ctx: Context, state: UserState) {
     if (!ctx.from?.id || !ctx.message || !('text' in ctx.message)) return;
@@ -2127,7 +2144,7 @@ Only one active ticket per service is allowed.`);
       if (category.isClosed) {
         await ctx.reply("⛔ This service is currently closed. Please try another service or contact an administrator.");
         // Clear the questionnaire state
-        this.userStates.delete(userId);
+        this.userStates.delete(userId.toString());
         if (this.stateCleanups.has(userId)) {
           clearTimeout(this.stateCleanups.get(userId)!.timeout);
           this.stateCleanups.delete(userId);
@@ -2139,7 +2156,7 @@ Only one active ticket per service is allowed.`);
       const questions = category.questions || [];
       if (questions.length === 0) {
         await ctx.reply("❌ Error: No questions found for this category. Please contact an admin.");
-        this.userStates.delete(userId);
+        this.userStates.delete(userId.toString());
         return;
       }
       
@@ -2150,17 +2167,28 @@ Only one active ticket per service is allowed.`);
       if (state.currentQuestion + 1 < questions.length) {
         // Move to next question
         state.currentQuestion++;
-        this.setState(userId, state);
+        await this.setState(userId, state);
         
         // Ask the next question with clear context
         // Show progress indication
         const questionProgress = `*Question ${state.currentQuestion + 1}/${questions.length}*`;
-        const questionText = preserveMarkdown(`━━━━━━━━━━━━━━━━━━━━━━\n${questionProgress}\n\n${questions[state.currentQuestion]}\n\n⚠️ *Please answer each question to complete your ticket*\n━━━━━━━━━━━━━━━━━━━━━━`);
+        const questionText = preserveMarkdown(`${questionProgress}\n\n${questions[state.currentQuestion]}\n\n⚠️ *Please answer each question to complete your ticket*`);
         
-        await ctx.reply(questionText, {
-          parse_mode: "MarkdownV2"
-        });
+        try {
+          await ctx.reply(questionText, {
+            parse_mode: "MarkdownV2"
+          });
+        } catch (error) {
+          log(`Error with markdown parsing in questionnaire question, sending as plain text: ${error}`, "error");
+          // Fallback to plain text if markdown parsing fails
+          await ctx.reply(`${questionProgress}\n\n${questions[state.currentQuestion]}\n\n⚠️ Please answer each question to complete your ticket`);
+        }
+
+        // Log the user's answer to the current question
+        log(`User ${userId} answered question ${state.currentQuestion + 1} in category ${state.categoryId}: ${ctx.message.text}`);
       } else {
+        // Log completion of questionnaire
+        log(`User ${userId} completed questionnaire for category ${state.categoryId} with answers: ${JSON.stringify(state.answers)}`);
         // All questions answered, create the ticket
         await this.createTicket(ctx);
       }
@@ -2175,7 +2203,7 @@ Only one active ticket per service is allowed.`);
     
     try {
       const userId = ctx.from.id;
-      const state = this.userStates.get(userId);
+      const state = this.userStates.get(userId.toString());
       if (!state) {
         await ctx.reply("❌ Error: Session expired. Please use /start to begin again.");
         return;
@@ -2214,7 +2242,7 @@ Only one active ticket per service is allowed.`);
         // Update state to reference this existing ticket
         state.inQuestionnaire = false;
         state.activeTicketId = existingTicketInCategory.id;
-        this.setState(userId, state);
+        await this.setState(userId, state);
         
         // Notify the user they already have a ticket in this category with specific category name
         const categoryName = category ? category.name : "this category";
@@ -2250,10 +2278,13 @@ Only one active ticket per service is allowed.`);
       
       log(`Created ticket ${ticket.id} for user ${user.id} in category ${state.categoryId}`);
       
+      // Log ticket creation attempt
+      log(`Attempting to create ticket for user ${userId} in category ${state?.categoryId} with answers: ${JSON.stringify(state?.answers)}`);
+      
       // Update user state
       state.inQuestionnaire = false;
       state.activeTicketId = ticket.id;
-      this.setState(userId, state);
+      await this.setState(userId, state);
       
       // Check if user has other active tickets and notify in those channels
       try {
@@ -2283,7 +2314,7 @@ Only one active ticket per service is allowed.`);
         await this.bridge.createTicketChannel(ticket);
         
         // Only send confirmation message, no ticket summary
-        await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n✅ *Ticket created successfully!*\n\n*You are now in:* ${category.name} (#${ticket.id})\n\n⚠️ *All your messages will be sent to our staff in this ticket. They will respond here.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
+        await ctx.reply(`✅ *Ticket created successfully!*\n\n*You are now in:* ${category.name} (#${ticket.id})\n\n⚠️ *All your messages will be sent to our staff in this ticket. They will respond here.*`, {
           parse_mode: 'Markdown'
         });
       } catch (error) {
@@ -2292,6 +2323,8 @@ Only one active ticket per service is allowed.`);
         // Still mark ticket as created, just without channel
         await ctx.reply("✅ Your ticket has been created, but there was an issue setting up the support channel. A staff member will assist you shortly.");
       }
+
+      log(`Created new ticket for user ${userId ?? 'unknown'} in category ${category?.name ?? 'unknown'} (${category?.id ?? 'unknown'}) with answers: ${JSON.stringify(state?.answers ?? [])}`);
     } catch (error) {
       log(`Error in createTicket: ${error}`, "error");
       await ctx.reply("❌ There was an error creating your ticket. Please try again or contact an administrator.");
@@ -2397,7 +2430,7 @@ Only one active ticket per service is allowed.`);
                   
                   if (ticketExists) {
                     // Check if status is still active
-                    const validStatuses = ['pending', 'open', 'in-progress'];
+                    const validStatuses = ['pending', 'open', 'in-progress', 'paid'];
                     const isPaidTicket = ticketExists.amount && ticketExists.amount > 0;
                     
                     if (validStatuses.includes(ticketExists.status) || isPaidTicket) {
@@ -2446,7 +2479,7 @@ Only one active ticket per service is allowed.`);
             
             // Filter tickets that are truly active
             const validTickets = activeTickets.filter(ticket => {
-              const validStatuses = ['pending', 'open', 'in-progress'];
+              const validStatuses = ['pending', 'open', 'in-progress', 'paid'];
               const isPaidTicket = ticket.amount && ticket.amount > 0;
               return validStatuses.includes(ticket.status) || isPaidTicket;
             });
@@ -2501,7 +2534,7 @@ Only one active ticket per service is allowed.`);
               }
               
               // Set state in memory
-              this.userStates.set(telegramUserId, state);
+              this.userStates.set(telegramUserId.toString(), state);
               
               // Also setup cleanup with verification of DB state
               const timeout = setTimeout(() => {
@@ -2510,7 +2543,7 @@ Only one active ticket per service is allowed.`);
                     // Before expiring, check if still active in DB
                     if (state?.activeTicketId) {
                       const ticket = await storage.getTicket(state.activeTicketId);
-                      const validStatuses = ['pending', 'open', 'in-progress'];
+                      const validStatuses = ['pending', 'open', 'in-progress', 'paid'];
                       const isPaidTicket = ticket?.amount && ticket.amount > 0;
                       
                       if (ticket && (validStatuses.includes(ticket.status) || isPaidTicket)) {
@@ -2524,7 +2557,7 @@ Only one active ticket per service is allowed.`);
                     }
                     
                     // Otherwise clear as normal
-                    this.userStates.delete(telegramUserId);
+                    this.userStates.delete(telegramUserId.toString());
                     this.stateCleanups.delete(telegramUserId);
                     this.activeUsers.delete(telegramUserId);
                     log(`Auto-cleared state for inactive user ${telegramUserId} (Telegram ID: ${user.telegramId})`, "debug");
@@ -2590,7 +2623,7 @@ Only one active ticket per service is allowed.`);
         }
         
         // Check if user has an active ticket in memory
-        const userState = this.userStates.get(ctx.from.id);
+        const userState = this.userStates.get(ctx.from.id.toString());
         console.log(`[PING CMD] Current user state: ${JSON.stringify(userState || {})}`);
         
         // Debug - check all active tickets for this user
@@ -2777,7 +2810,7 @@ Images/photos are also supported.
         }
         
         if (existingUser && existingUser.isBanned) {
-          await ctx.reply(`⛔ You have been banned from using this bot${existingUser.banReason ? ` for: ${existingUser.banReason}` : ""}.`);
+          // Silent ban - no notification to user
           return;
         }
         
@@ -2786,7 +2819,7 @@ Images/photos are also supported.
           try {
             // Since database is now using bigint for telegramId, pass it directly as a number
             const newUser = await storage.createUser({
-              telegramId: userId, // Pass as number directly
+              telegramId: userId.toString(),
               username: ctx.from.username || `user_${userId}`,
               telegramUsername: ctx.from.username,
               telegramName: [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ')
@@ -2916,7 +2949,7 @@ Images/photos are also supported.
       
       try {
         const userId = ctx.from.id;
-        const userState = this.userStates.get(userId);
+        const userState = this.userStates.get(userId.toString());
         
         // Case 1: If user has an active ticket and not in questionnaire
         if (userState?.activeTicketId && !userState.inQuestionnaire) {
@@ -2927,7 +2960,7 @@ Images/photos are also supported.
         // Case 2: If user is in a questionnaire (ticket creation process)
         if (userState?.inQuestionnaire) {
           // Clear user state
-          this.userStates.delete(userId);
+          this.userStates.delete(userId.toString());
           if (this.stateCleanups.has(userId)) {
             clearTimeout(this.stateCleanups.get(userId)!.timeout);
             this.stateCleanups.delete(userId);
@@ -2966,7 +2999,7 @@ Images/photos are also supported.
       }
       
       try {
-        const userState = this.userStates.get(userId);
+        const userState = this.userStates.get(userId.toString());
         
         // Check if user is in a questionnaire
         if (userState?.inQuestionnaire) {
@@ -2976,11 +3009,12 @@ Images/photos are also supported.
         
         // Get user from database and fetch categories in parallel to improve performance
         const [user, switchCategories] = await Promise.all([
-          storage.getUserByTelegramId(userId),
+          storage.getUserByTelegramId(userId.toString()),
           storage.getCategories() // Fetch all categories at once
         ]);
         
         if (!user) {
+          log(`User not found for telegramId: ${userId} in switch command`, "error");
           await ctx.reply("❌ Error: User not found. Please use /start to begin again.");
           return;
         }
@@ -3034,7 +3068,7 @@ Images/photos are also supported.
         }]);
         
         // Format ticket list with visual dividers and clear instructions
-        let ticketList = "━━━━━━━━━━━━━━━━━━━━━━\n";
+        let ticketList = "";
         ticketList += "🎫 *Your active tickets:*\n\n";
         
         // Include current active ticket info if applicable
@@ -3050,7 +3084,7 @@ Images/photos are also supported.
           ticketList += `⚠️ *You don't have an active ticket selected.*\n\n`;
         }
         
-        ticketList += "Please select a ticket to switch to, or create a new one:\n\n_Note: You can use /start anytime to show this menu again._\n━━━━━━━━━━━━━━━━━━━━━━";
+        ticketList += "Please select a ticket to switch to, or create a new one:\n\n_Note: You can use /start anytime to show this menu again._";
         
         // Send list with inline keyboard buttons
         await ctx.reply(ticketList, { 
@@ -3090,14 +3124,14 @@ Images/photos are also supported.
       
       try {
         // Check if the user is in a questionnaire
-        const userMemoryState = this.userStates.get(userId);
+        const userMemoryState = this.userStates.get(userId.toString());
         
         // Handle /close as /cancel if user is in a questionnaire
         if (userMemoryState?.inQuestionnaire) {
           console.log(`User ${userId} is in a questionnaire, handling /close as /cancel`);
           
           // Clear user state, just like /cancel does
-          this.userStates.delete(userId);
+          this.userStates.delete(userId.toString());
           if (this.stateCleanups.has(userId)) {
             clearTimeout(this.stateCleanups.get(userId)!.timeout);
             this.stateCleanups.delete(userId);
@@ -3115,8 +3149,8 @@ Images/photos are also supported.
         }
         
         // If not in questionnaire, process as normal close command
-        // Find the user - use numeric ID directly
-        const user = await storage.getUserByTelegramId(userId);
+        // Find the user - convert to string for database lookup
+        const user = await storage.getUserByTelegramId(userId.toString());
         if (!user) {
           console.log(`User with telegram ID ${userId} not found in database`);
           await ctx.reply("❌ You haven't created any tickets yet. Use /start to create a ticket.");
@@ -3414,7 +3448,7 @@ Images/photos are also supported.
           }
           
           // Send a message to let the user know which ticket they were switched to with visual separator
-          await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n🔄 *You've been automatically switched to:*\n*${categoryName}* (#${remainingActiveTickets[0].id})\n\n⚠️ *Your messages will be sent to this ticket unless you select another option below.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
+          await ctx.reply(`🔄 *You've been automatically switched to:*\n*${categoryName}* (#${remainingActiveTickets[0].id})\n\n⚠️ *Your messages will be sent to this ticket unless you select another option below.*`, {
             parse_mode: 'Markdown'
           });
           
@@ -3529,7 +3563,7 @@ Images/photos are also supported.
             if (ticketUser && ticketUser.telegramId) {
               // telegramId is already a number from the database
               const telegramId = ticketUser.telegramId;
-              const userState = this.userStates.get(telegramId);
+              const userState = this.userStates.get(telegramId.toString());
               
               if (userState && userState.activeTicketId === ticket.id) {
                 console.log(`Clearing active ticket ${ticket.id} from user ${telegramId} memory state during emergency close`);
@@ -3588,7 +3622,7 @@ Images/photos are also supported.
         const targetId = args[0];
         const reason = args.slice(1).join(' ') || "No reason provided";
         
-        const targetUser = await storage.getUserByTelegramId(targetId);
+        const targetUser = await storage.getUserByTelegramId(targetId.toString());
         if (!targetUser) {
           await ctx.reply(`❌ User with ID ${targetId} not found.`);
           return;
@@ -3599,16 +3633,7 @@ Images/photos are also supported.
         await ctx.reply(`✅ User ${targetUser.username} (ID: ${targetId}) has been banned for: ${reason}`);
         
         // Notify the banned user
-        try {
-          if (targetUser.telegramId) {
-            await this.sendMessage(
-              targetUser.telegramId,
-              `⛔ You have been banned from using this bot for: ${reason}.`
-            );
-          }
-        } catch (error) {
-          log(`Error notifying banned user: ${error}`, "error");
-        }
+        // Silent ban - no notification sent to user
       } catch (error) {
         log(`Error in ban command: ${error}`, "error");
         await ctx.reply("❌ Error processing ban command.");
@@ -3634,7 +3659,7 @@ Images/photos are also supported.
         
         const targetId = args[0];
         
-        const targetUser = await storage.getUserByTelegramId(targetId);
+        const targetUser = await storage.getUserByTelegramId(targetId.toString());
         if (!targetUser) {
           await ctx.reply(`❌ User with ID ${targetId} not found.`);
           return;
@@ -3669,18 +3694,18 @@ Images/photos are also supported.
     // Handle callback queries (button clicks)
     this.bot.on('callback_query', async (ctx) => {
       if (!ctx.from?.id || !ctx.callbackQuery) return;
-      
-      // Access data safely through the callbackQuery object
+
+      // Get the callback data
       const data = 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined;
       if (!data) return;
-      
+
       if (!this.checkRateLimit(ctx.from.id, 'command')) {
         await ctx.answerCbQuery("You're clicking buttons too quickly. Please wait a moment.");
         return;
       }
-      
+
       log(`Received callback query: ${data} from user ${ctx.from.id}`);
-      
+
       try {
         if (data === 'back_to_main') {
           await this.handleCategoryMenu(ctx);
@@ -3691,330 +3716,18 @@ Images/photos are also supported.
           const categoryId = parseInt(data.substring(9));
           await this.handleCategorySelection(ctx, categoryId);
         } else if (data.startsWith('close_')) {
-          // Handle ticket closing from buttons
           const ticketId = parseInt(data.substring(6));
-          const userId = ctx.from.id;
-          
-          // Get user from database
-          const user = await storage.getUserByTelegramId(userId.toString());
-          if (!user) {
-            await ctx.answerCbQuery("Error: User not found");
-            return;
-          }
-          
-          try {
-            // Check if the ticket exists and belongs to this user
-            const ticket = await storage.getTicket(ticketId);
-            
-            if (!ticket) {
-              await ctx.answerCbQuery(`Ticket #${ticketId} not found`);
-              return;
-            }
-            
-            // Check if the ticket belongs to this user
-            if (ticket.userId !== user.id) {
-              await ctx.answerCbQuery(`Ticket #${ticketId} does not belong to you`);
-              return;
-            }
-            
-            // Send notification to Discord about user closing the ticket
-            if (ticket.discordChannelId) {
-              try {
-                await this.bridge.sendSystemMessageToDiscord(
-                  ticket.discordChannelId,
-                  "**Note:** The user has closed this ticket."
-                );
-              } catch (notifyError) {
-                // Don't block the main flow if notification fails
-                log(`Error sending close notification to Discord: ${notifyError}`, "warn");
-              }
-            }
-            
-            // Close the ticket
-            await storage.updateTicketStatus(ticket.id, "closed");
-            await ctx.answerCbQuery(`Closed ticket #${ticketId}`);
-            
-            // Clear the user's active ticket from memory state if it matches
-            const userState = this.userStates.get(userId);
-            if (userState && userState.activeTicketId === ticket.id) {
-              userState.activeTicketId = undefined;
-              await this.setState(userId, userState);
-            }
-            
-            // Move to transcripts if possible
-            if (ticket.discordChannelId && ticket.categoryId) {
-              try {
-                const category = await storage.getCategory(ticket.categoryId);
-                
-                if (category && category.transcriptCategoryId) {
-                  await this.bridge.moveToTranscripts(ticket.id);
-                  await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one (both commands do the same thing).`);
-                } else {
-                  await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one (both commands do the same thing).`);
-                }
-              } catch (error) {
-                await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one (both commands do the same thing).`);
-              }
-            } else {
-              await ctx.reply(`✅ Ticket #${ticket.id} has been closed. Use /switch to select another active ticket or /start to create a new one (both commands do the same thing).`);
-            }
-          } catch (error) {
-            log(`Error closing ticket: ${error}`, "error");
-            await ctx.answerCbQuery("Error closing ticket");
-            await ctx.reply("❌ Error closing ticket. Please try again later.");
-          }
+          await this.handleCloseTicket(ctx, ticketId);
         } else if (data.startsWith('switch_')) {
-          // Handle ticket switching buttons
-          const switchOption = data.substring(7);
-          const userId = ctx.from.id;
-          
-          console.log(`[SWITCH_CALLBACK] User ${userId} clicked switch menu option: ${switchOption}`);
-          
-          // Get user from database
-          const user = await storage.getUserByTelegramId(userId.toString());
-          if (!user) {
-            log(`User with telegram ID ${userId} not found in database for switch operation`, "error");
-            await ctx.answerCbQuery("Error: User not found");
-            return;
-          }
-          
-          console.log(`[SWITCH_CALLBACK] Found user ${user.id} (telegramId: ${user.telegramId})`);
-          
-          // Get all active tickets for debugging
-          const activeTickets = await storage.getActiveTicketsByUserId(user.id);
-          console.log(`[SWITCH_CALLBACK] User has ${activeTickets.length} active tickets: ${JSON.stringify(activeTickets.map(t => ({id: t.id, status: t.status})))}`);
-          
-          
-          // Get current user state
-          let userState = this.userStates.get(userId);
-          if (!userState) {
-            // If no state in memory, create a basic one
-            log(`Creating new user state for user ${userId} as none was found`, "debug");
-            userState = {
-              activeTicketId: undefined, // Use undefined instead of null
-              categoryId: 0,
-              currentQuestion: 0,
-              answers: [],
-              inQuestionnaire: false,
-              lastUpdated: Date.now()
-            };
-            this.userStates.set(userId, userState);
-          }
-          
-          if (switchOption === 'new' || data === 'start_new' || data === 'switch_new') {
-            // User wants to create a new ticket, either from switch menu or from start menu
-            await ctx.answerCbQuery("Creating a new ticket");
-            
-            // Important: We no longer bypass the duplicate ticket check
-            // Store current state before starting new ticket creation
-            await this.setState(userId, userState);
-            
-            await ctx.reply("✅ Let's create your new support ticket. Please select a category from the options displayed.");
+          if (data === 'switch_new') {
+            // Create new ticket - redirect to category menu
             await this.handleCategoryMenu(ctx);
           } else {
-            // User wants to switch to an existing ticket
-            const ticketId = parseInt(switchOption);
-            
-            // Add comprehensive debug logging
-            console.log(`[SWITCH DEBUG] User ${userId} attempting to switch to ticket #${ticketId}`);
-            console.log(`[SWITCH DEBUG] Current user state: ${JSON.stringify(userState)}`);
-            
-            try {
-              // Check if the ticket exists and belongs to this user
-              const ticket = await storage.getTicket(ticketId);
-              console.log(`[SWITCH DEBUG] Retrieved ticket: ${JSON.stringify(ticket)}`);
-              
-              if (!ticket) {
-                await ctx.answerCbQuery(`Ticket #${ticketId} not found`);
-                return;
-              }
-              
-              // Check if the ticket belongs to this user
-              if (ticket.userId !== user.id) {
-                await ctx.answerCbQuery(`Ticket #${ticketId} does not belong to you`);
-                return;
-              }
-              
-              // Check if the ticket is active
-              const validStatuses = ["open", "in-progress", "pending", "paid"];
-              
-              console.log(`[SWITCH DEBUG] Checking ticket #${ticketId} status: "${ticket.status}"`);
-              console.log(`[SWITCH DEBUG] Valid statuses: ${JSON.stringify(validStatuses)}`);
-              console.log(`[SWITCH DEBUG] Status check result: ${validStatuses.includes(ticket.status)}`);
-              
-              // Special handling for paid tickets (amount > 0)
-              // This ensures 'paid' tickets are always recognized regardless of status field
-              const isPaidTicket = ticket.amount && ticket.amount > 0;
-              console.log(`[SWITCH DEBUG] Ticket amount: ${ticket.amount}, isPaidTicket: ${isPaidTicket}`);
-              
-              // Consider a ticket active if:
-              // 1. It has a valid status OR
-              // 2. It's a paid ticket (amount > 0)
-              if (!validStatuses.includes(ticket.status) && !isPaidTicket) {
-                console.log(`[SWITCH DEBUG] Ticket #${ticketId} has invalid status "${ticket.status}" and is not paid`);
-                await ctx.answerCbQuery(`Ticket #${ticketId} is not active (status: ${ticket.status})`);
-                await ctx.reply(`❌ Cannot switch to ticket #${ticketId} because it has status "${ticket.status}". Only tickets with status "open", "in-progress", "pending", or "paid" are accessible.`);
-                return;
-              }
-              
-              // If this is a paid ticket, log that we're allowing access despite status
-              if (isPaidTicket && !validStatuses.includes(ticket.status)) {
-                console.log(`[SWITCH DEBUG] Allowing access to paid ticket #${ticketId} despite status "${ticket.status}"`);
-              }
-              
-              // Check if user is already viewing this ticket
-              if (userState.activeTicketId === ticketId) {
-                // User is already in this ticket, no need to switch
-                await ctx.answerCbQuery(`You are already viewing ticket #${ticketId}`);
-                await ctx.reply(`ℹ️ You're already viewing ticket #${ticketId}, no need to switch.`);
-                return;
-              }
-              
-              // Switch to this ticket
-              const previousTicketId = userState.activeTicketId;
-              userState.activeTicketId = ticketId;
-              userState.categoryId = ticket.categoryId || 0;
-              await this.setState(userId, userState);
-              
-              // Get category name for confirmation message
-              const category = await storage.getCategory(ticket.categoryId || 0);
-              const categoryName = category ? category.name : "Unknown category";
-              
-              await ctx.answerCbQuery(`Switched to ticket #${ticketId}`);
-              
-              // Send a clear confirmation message with visual separator
-              await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n✅ *You are now in:* *${categoryName}* (#${ticketId})\n\n⚠️ *All your messages will be sent to this ticket.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
-                parse_mode: 'Markdown'
-              });
-              
-              // Get all active tickets again to display the updated menu
-              const userTickets = await storage.getActiveTicketsByUserId(user.id);
-              
-              // Create updated buttons list with the new selected ticket
-              const updatedButtons = [];
-              
-              // Get categories info for updating the menu
-              const categoryIds = [...new Set(userTickets.map(t => t.categoryId).filter(id => id !== null))];
-              const categoriesMap = new Map();
-              
-              for (const catId of categoryIds) {
-                const cat = await storage.getCategory(catId!);
-                if (cat) {
-                  categoriesMap.set(catId, cat);
-                }
-              }
-              
-              // Create a button for each ticket with updated status
-              for (const t of userTickets) {
-                const cat = categoriesMap.get(t.categoryId);
-                const catName = cat ? cat.name : "Unknown category";
-                
-                // Mark currently active ticket
-                const isActive = ticketId === t.id;
-                const buttonLabel = isActive 
-                  ? `✅ #${t.id}: ${catName} (current)` 
-                  : `#${t.id}: ${catName}`;
-                
-                updatedButtons.push([{
-                  text: buttonLabel,
-                  callback_data: `switch_${t.id}`
-                }]);
-              }
-              
-              // Add button for creating a new ticket
-              updatedButtons.push([{
-                text: "➕ Create New Ticket",
-                callback_data: "switch_new"
-              }]);
-              
-              // Try to edit the original message with updated buttons
-              // First need to check if we can get the original message ID
-              const messageId = ctx.callbackQuery?.message?.message_id;
-              if (messageId) {
-                try {
-                  // Update the inline keyboard with the new active ticket
-                  await ctx.editMessageReplyMarkup({
-                    inline_keyboard: updatedButtons
-                  });
-                } catch (editError) {
-                  log(`Could not update switch menu: ${editError}`, "warn");
-                  // Continue even if we couldn't update the menu
-                }
-              }
-              
-              // No need for a second confirmation message, already showing the formatted one above
-              
-              // Send notification to Discord
-              try {
-                // Check if we have all the data needed for this ticket
-                if (!ticket.discordChannelId) {
-                  log(`Cannot send Discord notification: ticket #${ticketId} has no Discord channel ID`, "warn");
-                  return;
-                }
-
-                // Get user display name
-                const firstName = ctx.from?.first_name || "";
-                const lastName = ctx.from?.last_name || "";
-                const displayName = [firstName, lastName].filter(Boolean).join(' ') || "Telegram User";
-                
-                // Get all active tickets for this user
-                const userTickets = await storage.getActiveTicketsByUserId(user.id);
-                log(`User has ${userTickets.length} active tickets for Discord notification`, "debug");
-                
-                // Get the ticket we're switching FROM if available
-                // Get it from state first, then try to find other active tickets if none is in state
-                let previousTicketId = userState.activeTicketId;
-                const isPreviousSameAsCurrent = previousTicketId === ticketId;
-                
-                // Get all OTHER active tickets (that are not the current one)
-                const otherTickets = userTickets.filter(t => t.id !== ticketId);
-                log(`Found ${otherTickets.length} other active tickets`, "debug");
-                
-                // Always send a notification to the current channel
-                const message = `**Note:** User switched to this ticket`;
-                
-                log(`Sending Discord notification to current channel: ${ticket.discordChannelId}`, "debug");
-                await this.bridge.sendSystemMessageToDiscord(
-                  ticket.discordChannelId,
-                  message
-                );
-                
-                // Now notify all OTHER tickets that the user is no longer viewing them
-                for (const otherTicket of otherTickets) {
-                  if (otherTicket.discordChannelId) {
-                    log(`Sending Discord notification to other channel: ${otherTicket.discordChannelId}`, "debug");
-                    
-                    // Create message content without the command instruction
-                    const messageContent = `**Note:** The user has switched to ticket #${ticketId} (${categoryName}) and may not see messages here anymore.`;
-                    
-                    // Only include the force button on successful switch, not when attempting to switch
-                    // Use our updated system message method with Force Back button
-                    await this.bridge.sendSystemMessageToDiscord(
-                      otherTicket.discordChannelId,
-                      messageContent,
-                      {
-                        // We include force button here because this is after a SUCCESSFUL switch
-                        showForceButton: true,
-                        telegramId: user.telegramId || "",
-                        ticketId: otherTicket.id, // Button to force back to THIS ticket
-                        username: displayName
-                      }
-                    );
-                  }
-                }
-              } catch (error) {
-                log(`Error sending Discord notification for ticket switch: ${error}`, "warn");
-                // Don't block the main flow if Discord notification fails
-              }
-            } catch (error) {
-              log(`Error switching tickets: ${error}`, "error");
-              await ctx.answerCbQuery("Error switching tickets");
-              await ctx.reply("❌ Error switching tickets. Please try again later.");
-            }
+            const ticketId = parseInt(data.substring(7));
+            await this.handleSwitchTicket(ctx, ticketId);
           }
-        } else {
-          await ctx.answerCbQuery("Unknown button action");
         }
+        // ... any other handlers you have ...
       } catch (error) {
         log(`Error processing button click: ${error}`, "error");
         await ctx.answerCbQuery("Error processing your request");
@@ -4042,9 +3755,10 @@ Images/photos are also supported.
       }
       
       // Get current state if it exists
-      const initialState = this.userStates.get(userId);
+      const initialState = this.userStates.get(userId.toString());
       let userState = initialState ? { ...initialState } : undefined;
       log(`Initial user state check: ${JSON.stringify(userState)}`);
+      log(`All user states: ${JSON.stringify(Array.from(this.userStates.keys()))}`);
       
       try {
         // Get the user from DB
@@ -4082,11 +3796,16 @@ Images/photos are also supported.
             await ctx.reply("You don't have an active ticket. Use /start to create a new one.");
             return;
           }
+        } else if (userState.inQuestionnaire) {
+          // User is in the middle of a questionnaire, handle the response
+          log(`User ${userId} is in questionnaire, processing response`);
+          await this.handleQuestionnaireResponse(ctx, userState);
+          return;
         }
         
         // Check if banned
         if (user.isBanned) {
-          await ctx.reply(`⛔ You are banned from using this bot${user.banReason ? ` for: ${user.banReason}` : ""}.`);
+          // Silent ban - no notification to user
           return;
         }
         
@@ -4098,7 +3817,7 @@ Images/photos are also supported.
             await ctx.reply("⛔ This service is currently closed. Please try another service or contact an administrator.");
             // Clear the questionnaire state
             userState.inQuestionnaire = false;
-            this.setState(userId, userState);
+            await this.setState(userId, userState);
             return;
           }
           
@@ -4179,7 +3898,7 @@ Images/photos are also supported.
             const categoryName = category ? category.name : "Unknown category";
             
             // Send a formatted confirmation message with visual separator
-            await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━━\n✅ *You are now in:* *${categoryName}* (#${ticketId})\n\n⚠️ *All your messages will be sent to this ticket.*\n━━━━━━━━━━━━━━━━━━━━━━`, {
+            await ctx.reply(`✅ *You are now in:* *${categoryName}* (#${ticketId})\n\n⚠️ *All your messages will be sent to this ticket.*`, {
               parse_mode: 'Markdown'
             });
             
@@ -4254,12 +3973,40 @@ Images/photos are also supported.
               await this.handleTicketMessage(ctx, user, ticket);
               return;
             } else {
-              console.log(`[MESSAGE HANDLER] Ticket #${ticket.id} has inactive status "${ticket.status}" and is not paid, rejecting message`);
-              await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active. Use /start to create a new ticket or /switch to view your active tickets.`);
+              console.log(`[MESSAGE HANDLER] Ticket #${ticket.id} has inactive status "${ticket.status}" and is not paid, clearing user state`);
+              
+              // Clear the user's state since their active ticket is no longer valid
+              userState.activeTicketId = undefined;
+              await this.setState(userId, userState);
+              
+              // Check if user has other active tickets
+              const activeTickets = await storage.getActiveTicketsByUserId(user.id);
+              if (activeTickets.length > 0) {
+                await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active.\n\n` +
+                  `You have ${activeTickets.length} other active ticket(s). Use /switch to select one, or /start to create a new ticket.`);
+              } else {
+                await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active.\n\n` +
+                  `Use /start to create a new ticket.`);
+              }
               return;
             }
           } else {
-            console.log(`[MESSAGE HANDLER] Active ticket #${userState.activeTicketId} not found in database`);
+            console.log(`[MESSAGE HANDLER] Active ticket #${userState.activeTicketId} not found in database, clearing user state`);
+            
+            // Clear the user's state since their active ticket no longer exists
+            userState.activeTicketId = undefined;
+            await this.setState(userId, userState);
+            
+            // Check if user has other active tickets
+            const activeTickets = await storage.getActiveTicketsByUserId(user.id);
+            if (activeTickets.length > 0) {
+              await ctx.reply(`❌ Your ticket #${userState.activeTicketId} no longer exists (may have been deleted).\n\n` +
+                `You have ${activeTickets.length} other active ticket(s). Use /switch to select one, or /start to create a new ticket.`);
+            } else {
+              await ctx.reply(`❌ Your ticket #${userState.activeTicketId} no longer exists (may have been deleted).\n\n` +
+                `Use /start to create a new ticket.`);
+            }
+            return;
           }
         }
       } catch (error) {
@@ -4273,7 +4020,7 @@ Images/photos are also supported.
       
       const userId = ctx.from.id;
       // Get current state if it exists
-      const originalState = this.userStates.get(userId);
+      const originalState = this.userStates.get(userId.toString());
       let userState = originalState ? { ...originalState } : undefined;
       log(`Photo received - Initial user state check: ${JSON.stringify(userState)}`);
       
@@ -4313,11 +4060,16 @@ Images/photos are also supported.
             await ctx.reply("You don't have an active ticket. Use /start to create a new one.");
             return;
           }
+        } else if (userState.inQuestionnaire) {
+          // User is in the middle of a questionnaire, but sent a photo instead of text
+          log(`User ${userId} is in questionnaire but sent photo, asking for text response`);
+          await ctx.reply("⚠️ Please answer the question with text, not a photo. Use /cancel to start over if needed.");
+          return;
         }
         
         // Check if banned
         if (user.isBanned) {
-          await ctx.reply(`⛔ You are banned from using this bot${user.banReason ? ` for: ${user.banReason}` : ""}.`);
+          // Silent ban - no notification to user
           return;
         }
         
@@ -4345,7 +4097,14 @@ Images/photos are also supported.
         // Get the specific ticket
         const ticket = activeTickets.find(t => t.id === activeTicketId);
         if (!ticket) {
-          console.log(`[PHOTO HANDLER] Selected ticket #${activeTicketId} not found in active tickets list`);
+          console.log(`[PHOTO HANDLER] Selected ticket #${activeTicketId} not found in active tickets list, clearing user state`);
+          
+          // Clear the user's state since their active ticket is no longer valid
+          if (userState) {
+            userState.activeTicketId = undefined;
+            await this.setState(userId, userState);
+          }
+          
           await ctx.reply("❌ The selected ticket is no longer active. Use /start to create a new one or /switch to select another.");
           return;
         }
@@ -4365,8 +4124,23 @@ Images/photos are also supported.
         // 1. It has a valid status OR
         // 2. It's a paid ticket (amount > 0)
         if (!validStatuses.includes(ticket.status) && !isPaidTicket) {
-          console.log(`[PHOTO HANDLER] Ticket #${ticket.id} has invalid status "${ticket.status}" and is not paid`);
-          await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active. Use /start to create a new ticket or /switch to view your active tickets.`);
+          console.log(`[PHOTO HANDLER] Ticket #${ticket.id} has invalid status "${ticket.status}" and is not paid, clearing user state`);
+          
+          // Clear the user's state since their active ticket is no longer valid
+          if (userState) {
+            userState.activeTicketId = undefined;
+            await this.setState(userId, userState);
+          }
+          
+          // Check if user has other active tickets
+          const remainingActiveTickets = await storage.getActiveTicketsByUserId(user.id);
+          if (remainingActiveTickets.length > 0) {
+            await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active.\n\n` +
+              `You have ${remainingActiveTickets.length} other active ticket(s). Use /switch to select one, or /start to create a new ticket.`);
+          } else {
+            await ctx.reply(`❌ Your ticket #${ticket.id} has status "${ticket.status}" and is no longer active.\n\n` +
+              `Use /start to create a new ticket.`);
+          }
           return;
         }
         
@@ -4449,5 +4223,116 @@ Images/photos are also supported.
         await ctx.reply("❌ Error processing your image. Please try again.");
       }
     });
+  }
+
+  private async handleCloseTicket(ctx: Context, ticketId: number) {
+    try {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      // Get user from database
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        await ctx.answerCbQuery("User not found");
+        return;
+      }
+
+      // Get the ticket
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket) {
+        await ctx.answerCbQuery("Ticket not found");
+        return;
+      }
+
+      // Check if user owns this ticket
+      if (ticket.userId !== user.id) {
+        await ctx.answerCbQuery("You don't own this ticket");
+        return;
+      }
+
+      // Close the ticket
+      await storage.updateTicketStatus(ticketId, "closed");
+      
+      // Clear user state if this was their active ticket
+      const userState = this.userStates.get(userId.toString());
+      if (userState?.activeTicketId === ticketId) {
+        this.userStates.delete(userId.toString());
+        if (this.stateCleanups.has(userId)) {
+          clearTimeout(this.stateCleanups.get(userId)!.timeout);
+          this.stateCleanups.delete(userId);
+        }
+      }
+
+      // Try to move Discord channel to transcripts
+      if (ticket.discordChannelId) {
+        try {
+          await this.bridge.moveToTranscripts(ticketId);
+        } catch (error) {
+          log(`Error moving channel to transcripts: ${error}`, "error");
+        }
+      }
+
+      await ctx.answerCbQuery("Ticket closed successfully");
+      await ctx.reply("✅ Ticket has been closed successfully.");
+    } catch (error) {
+      log(`Error in handleCloseTicket: ${error}`, "error");
+      await ctx.answerCbQuery("Error closing ticket");
+    }
+  }
+
+  private async handleSwitchTicket(ctx: Context, ticketId: number) {
+    try {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      // Get user from database - ensure proper string formatting
+      const user = await storage.getUserByTelegramId(userId.toString());
+      if (!user) {
+        log(`User not found for telegramId: ${userId}`, "error");
+        await ctx.answerCbQuery("User not found");
+        return;
+      }
+
+      // Get the ticket
+      const ticket = await storage.getTicket(ticketId);
+      if (!ticket) {
+        await ctx.answerCbQuery("Ticket not found");
+        return;
+      }
+
+      // Check if user owns this ticket
+      if (ticket.userId !== user.id) {
+        await ctx.answerCbQuery("You don't own this ticket");
+        return;
+      }
+
+      // Check if ticket is active
+      if (ticket.status === 'closed' || ticket.status === 'deleted') {
+        await ctx.answerCbQuery("This ticket is already closed");
+        return;
+      }
+
+      // Update user state to switch to this ticket
+      const newState = {
+        activeTicketId: ticketId,
+        categoryId: ticket.categoryId!,
+        currentQuestion: 0,
+        answers: [],
+        inQuestionnaire: false,
+        lastUpdated: Date.now()
+      };
+
+      await this.setState(userId, newState);
+
+      // Get category name for better feedback
+      const category = await storage.getCategory(ticket.categoryId!);
+      const categoryName = category ? category.name : "Unknown service";
+
+      await ctx.answerCbQuery("Ticket switched successfully");
+      await ctx.reply(`✅ Switched to ticket #${ticketId} (${categoryName})`);
+    } catch (error) {
+      log(`Error in handleSwitchTicket: ${error}`, "error");
+      await ctx.answerCbQuery("Error switching ticket");
+    }
   }
 }

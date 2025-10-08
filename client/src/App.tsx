@@ -9,6 +9,7 @@ import Customers from "@/pages/customers";
 import Transcripts from "@/pages/transcripts";
 import BannedUsers from "@/pages/banned-users";
 import CrashLogs from "@/pages/crash-logs";
+import AdminRoles from "@/pages/admin-roles";
 import NotFound from "@/pages/not-found";
 import { Navbar } from "@/components/Navbar";
 import { useEffect, useState } from "react";
@@ -53,6 +54,7 @@ function Router() {
           <Route path="/stats" component={Stats} />
           <Route path="/banned-users" component={BannedUsers} />
           <Route path="/crash-logs" component={CrashLogs} />
+          <Route path="/admin-roles" component={AdminRoles} />
           <Route component={NotFound} />
         </Switch>
       </main>

@@ -3,6 +3,7 @@ import fs from "fs";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer, createLogger } from "vite";
+import winston from "winston";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { type Server } from "http";
@@ -11,22 +12,32 @@ import { nanoid } from "nanoid";
 
 const viteLogger = createLogger();
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+// Set up Winston logger
+const logger = winston.createLogger({
+  level: process.env.NODE_ENV === "production" ? "info" : "debug",
+  format: winston.format.combine(
+    winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
+    winston.format.printf(({ timestamp, level, message, ...meta }) => {
+      let metaString = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : "";
+      return `${timestamp} [${level.toUpperCase()}]${metaString} ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+  ],
+});
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+export { logger };
+
+export function log(message: string, level: "info" | "warn" | "error" | "debug" = "info") {
+  logger.log({ level, message });
 }
 
 export async function setupVite(app: Express, server: Server) {
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
-    allowedHosts: true,
+    allowedHosts: undefined,
   };
 
   const vite = await createViteServer({

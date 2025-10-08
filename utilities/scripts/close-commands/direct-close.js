@@ -91,4 +91,10 @@ async function directClose(telegramId) {
 
 // Get Telegram ID from command line argument
 const telegramId = process.argv[2];
+
+if (!telegramId || !/^[0-9]{5,20}$/.test(telegramId)) {
+  console.error('Usage: node direct-close.js <telegramId> (must be a string of digits)');
+  process.exit(1);
+}
+
 directClose(telegramId).catch(console.error);

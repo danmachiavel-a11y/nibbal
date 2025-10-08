@@ -62,7 +62,10 @@ import {
   Collection,
   GuildChannel,
   ActivityType,
-  Options
+  Options,
+  GuildMember,
+  Role,
+  Channel
 } from "discord.js";
 import { storage } from "../storage";
 import { BridgeManager } from "./bridge";
@@ -75,9 +78,9 @@ export class DiscordBot {
   private webhookCreationLock: Set<string> = new Set();
   private rateLimitBuckets: Map<string, RateLimitBucket> = new Map();
   private wsCleanupConfig: WSCleanupConfig = {
-    connectionTimeout: 30000,    // 30 seconds
-    maxReconnectAttempts: 5,
-    cleanupInterval: 300000     // 5 minutes
+    connectionTimeout: 60000, // Increased to 60 seconds
+    maxReconnectAttempts: 10, // Increased retry attempts
+    cleanupInterval: 30000 // More frequent cleanup checks
   };
   private cleanupInterval: NodeJS.Timeout | null = null;
   private connectionTimeout: NodeJS.Timeout | null = null;
@@ -85,6 +88,98 @@ export class DiscordBot {
   private isConnecting: boolean = false;
   private isConnected: boolean = false;
   private connectionError: string | null = null;
+
+  // Automatic validation helpers for 24/7 protection
+  private isValidDiscordId(id: string): boolean {
+    return id && typeof id === 'string' && /^\d{17,19}$/.test(id);
+  }
+
+  private isValidDiscordChannelId(id: string): boolean {
+    return id && typeof id === 'string' && /^\d{17,19}$/.test(id);
+  }
+
+  private isValidDiscordUserId(id: string): boolean {
+    return id && typeof id === 'string' && /^\d{17,19}$/.test(id);
+  }
+
+  private isValidDiscordRoleId(id: string): boolean {
+    return id && typeof id === 'string' && /^\d{17,19}$/.test(id);
+  }
+
+  private isValidTelegramId(id: string | number): boolean {
+    return id && (typeof id === 'string' || typeof id === 'number') && /^\d+$/.test(String(id));
+  }
+
+  private logInvalidId(operation: string, id: string, context: string = ''): void {
+    log(`[AUTO-FIX] Skipping invalid ID in ${operation}: ${id}${context ? ' (' + context + ')' : ''}`, "warn");
+  }
+
+  // Safe Discord.js operations with automatic validation
+  private async safeFetchMember(guild: Guild, userId: string): Promise<GuildMember | null> {
+    if (!this.isValidDiscordUserId(userId)) {
+      this.logInvalidId('guild.members.fetch', userId);
+      return null;
+    }
+    try {
+      return await guild.members.fetch(userId);
+    } catch (error) {
+      log(`[AUTO-FIX] Failed to fetch member ${userId}: ${error}`, "warn");
+      return null;
+    }
+  }
+
+  private async safeFetchChannel(channelId: string): Promise<Channel | null> {
+    if (!this.isValidDiscordChannelId(channelId)) {
+      this.logInvalidId('client.channels.fetch', channelId);
+      return null;
+    }
+    try {
+      return await this.client.channels.fetch(channelId);
+    } catch (error) {
+      log(`[AUTO-FIX] Failed to fetch channel ${channelId}: ${error}`, "warn");
+      return null;
+    }
+  }
+
+  private async safeFetchRole(guild: Guild, roleId: string): Promise<Role | null> {
+    if (!this.isValidDiscordRoleId(roleId)) {
+      this.logInvalidId('guild.roles.fetch', roleId);
+      return null;
+    }
+    try {
+      return await guild.roles.fetch(roleId);
+    } catch (error) {
+      log(`[AUTO-FIX] Failed to fetch role ${roleId}: ${error}`, "warn");
+      return null;
+    }
+  }
+
+  private async safeSendMessage(channel: TextChannel, messageOptions: any): Promise<Message | null> {
+    if (!channel || !channel.isTextBased()) {
+      this.logInvalidId('channel.send', channel.id, 'channel not found or not text-based');
+      return null;
+    }
+    try {
+      return await channel.send(messageOptions);
+    } catch (error) {
+      log(`[AUTO-FIX] Failed to send message to channel ${channel.id}: ${error}`, "warn");
+      return null;
+    }
+  }
+
+  private async safePermissionEdit(channel: TextChannel, targetId: string, permissions: any): Promise<boolean> {
+    if (!this.isValidDiscordId(targetId)) {
+      this.logInvalidId('permissionOverwrites.edit', targetId);
+      return false;
+    }
+    try {
+      await channel.permissionOverwrites.edit(targetId, permissions);
+      return true;
+    } catch (error) {
+      log(`[AUTO-FIX] Failed to edit permissions for ${targetId}: ${error}`, "warn");
+      return false;
+    }
+  }
 
   // Rate limit configurations
   private readonly LIMITS = {
@@ -102,7 +197,7 @@ export class DiscordBot {
   private readonly MAX_WEBHOOKS_PER_CHANNEL = 5;
 
   constructor(bridge: BridgeManager) {
-    log(`Initializing Discord bot client, token available: ${process.env.DISCORD_BOT_TOKEN ? 'Yes' : 'No'}`);
+    log(`Initializing Discord bot client, token available: ${process.env.DISCORD_BOT_TOKEN ? 'Yes' : 'No'}`, "info");
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -119,7 +214,7 @@ export class DiscordBot {
     this.setupRateLimitBuckets();
     
     // Log initial client state
-    log(`Discord client initialized, has token: ${this.client.token ? 'Yes' : 'No'}`);
+    log(`Discord client initialized, has token: ${this.client.token ? 'Yes' : 'No'}`, "info");
   }
 
   private setupRateLimitBuckets() {
@@ -242,7 +337,7 @@ export class DiscordBot {
       this.cleanupWebSockets();
     }, this.wsCleanupConfig.cleanupInterval);
 
-    log("Started WebSocket cleanup intervals");
+    log("Started WebSocket cleanup intervals", "info");
   }
 
   private async cleanupWebSockets() {
@@ -252,16 +347,29 @@ export class DiscordBot {
       // Check for dead connections
       const wsConnection = (this.client.ws as any).connection;
       if (wsConnection && !wsConnection.connected) {
-        log("Found dead WebSocket connection, attempting cleanup...");
+        log("Found dead WebSocket connection, attempting cleanup...", "warn");
 
         try {
           await this.client.destroy();
-          log("Successfully destroyed client connection");
+          log("Successfully destroyed client connection", "info");
 
+          // Wait a bit before reconnecting to avoid rapid reconnection loops
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          
           // Attempt to reconnect
           await this.start();
         } catch (error) {
           log(`Error during WebSocket cleanup: ${error}`, "error");
+          
+          // If cleanup fails, try a more aggressive recovery
+          if (error.message.includes('handshake') || error.message.includes('timeout')) {
+            log("Handshake timeout during cleanup - attempting delayed recovery", "warn");
+            setTimeout(() => {
+              this.reconnect().catch(e => {
+                log(`Delayed recovery failed: ${e}`, "error");
+              });
+            }, 10000);
+          }
         }
       }
     } catch (error) {
@@ -269,10 +377,67 @@ export class DiscordBot {
     }
   }
 
+  // Enhanced reconnection method with better error handling
+  public async reconnect(): Promise<boolean> {
+    try {
+      log("Starting Discord bot reconnection process...", "info");
+      
+      // Mark as connecting
+      this.isConnecting = true;
+      this.isConnected = false;
+      
+      // Destroy existing client if it exists
+      if (this.client) {
+        try {
+          await this.client.destroy();
+          log("Successfully destroyed existing Discord client", "info");
+        } catch (destroyError) {
+          log(`Error destroying client: ${destroyError}`, "warn");
+        }
+      }
+      
+      // Wait a moment before recreating
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Create new client
+      this.client = this.setupClient();
+      
+      // Start the new client
+      await this.start();
+      
+      // Wait for connection to establish
+      let attempts = 0;
+      const maxAttempts = 30; // 30 seconds
+      
+      while (!this.client.isReady() && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+      }
+      
+      if (this.client.isReady()) {
+        log("Discord bot reconnection successful", "info");
+        this.isConnected = true;
+        this.isConnecting = false;
+        this.connectionError = null;
+        return true;
+      } else {
+        log("Discord bot reconnection failed - client not ready after timeout", "error");
+        this.isConnecting = false;
+        return false;
+      }
+      
+    } catch (error) {
+      log(`Discord bot reconnection failed: ${error}`, "error");
+      this.isConnecting = false;
+      this.connectionError = error.message;
+      return false;
+    }
+  }
+
 
   private async registerSlashCommands() {
     try {
-      log("Registering slash commands...");
+      log("Registering slash commands...", "info");
 
       // Add delay to avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -480,7 +645,7 @@ export class DiscordBot {
         }
       }
 
-      log("Completed slash command registration");
+      log("Completed slash command registration", "info");
     } catch (error) {
       log(`Error in slash command registration: ${error}`, "error");
       throw error;
@@ -586,7 +751,7 @@ export class DiscordBot {
               
               await interaction.deferReply();
               
-              log(`Force switch requested for telegramId ${telegramId} to ticket ${ticketId}`);
+              log(`Force switch requested for telegramId ${telegramId} to ticket ${ticketId}`, "info");
               
               try {
                 // Call bridge to handle the force switch
@@ -754,7 +919,7 @@ export class DiscordBot {
             `**System:** ${interaction.user.username} has pinged the user for a response.`
           );
           
-          log(`Successfully sent ping to Telegram user ${user.telegramId}`);
+          log(`Successfully sent ping to Telegram user ${user.telegramId}`, "info");
         } catch (error) {
           log(`Error sending ping: ${error}`, "error");
           
@@ -854,7 +1019,7 @@ export class DiscordBot {
             try {
               // Get user state from Telegram bot to check currently active ticket
               const telegramBot = this.bridge.getTelegramBot();
-              const userState = telegramBot.getUserState(parseInt(user.telegramId));
+              const userState = telegramBot.getUserState(user.telegramId);
               
               // Get the category for better context
               const ticketCategory = await storage.getCategory(ticket.categoryId || 0);
@@ -875,21 +1040,21 @@ export class DiscordBot {
                 
                 // Context-aware reopening notification
                 await telegramBot.sendMessage(
-                  parseInt(user.telegramId),
-                  `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Reopened*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou are currently viewing ${activeTicketInfo}. Use /switch to return to your reopened ticket.\n━━━━━━━━━━━━━━━━━━━━━━`
+                  user.telegramId,
+                  `Your *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou are currently viewing ${activeTicketInfo}. Use /switch to return to your reopened ticket.`
                 );
               } else {
                 // Standard message if they're viewing the reopened ticket or no active ticket
                 await telegramBot.sendMessage(
-                  parseInt(user.telegramId),
-                  `━━━━━━━━━━━━━━━━━━━━━━\n📝 *Ticket Reopened*\n\nYour *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou can continue your conversation in this ticket.\n━━━━━━━━━━━━━━━━━━━━━━`
+                  user.telegramId,
+                  `Your *${categoryName}* ticket (#${ticket.id}) has been reopened by ${staffName}.\n\nYou can continue your conversation in this ticket.`
                 );
               }
             } catch (stateError) {
               // If error getting state, fall back to standard message
               log(`Error checking user state for context-aware notification: ${stateError}`, "warn");
               await this.bridge.getTelegramBot().sendMessage(
-                parseInt(user.telegramId),
+                                            user.telegramId,
                 `📝 Ticket Update\n\nYour ticket #${ticket.id} has been reopened by ${staffName}.`
               );
             }
@@ -1574,7 +1739,7 @@ export class DiscordBot {
                       try {
                         // Check if the user is currently viewing a different ticket
                         const telegramBot = this.bridge.getTelegramBot();
-                        const userState = telegramBot.getUserState(parseInt(user.telegramId));
+                        const userState = telegramBot.getUserState(user.telegramId);
                         
                         // If user is viewing a different ticket, include that context in the message
                         if (userState && userState.activeTicketId && userState.activeTicketId !== ticket.id) {
@@ -1591,13 +1756,13 @@ export class DiscordBot {
                           
                           // Let the user know which ticket was closed vs which one they're viewing
                           await this.bridge.getTelegramBot().sendMessage(
-                            parseInt(user.telegramId),
+                            user.telegramId,
                             `📝 Ticket Update\n\nYour *other* ticket #${ticket.id} has been closed by ${staffName}.\n\nYou are currently in ${activeTicketInfo}, which is still active.`
                           );
                         } else {
                           // Standard message if they're viewing the ticket that was closed or no active ticket
                           await this.bridge.getTelegramBot().sendMessage(
-                            parseInt(user.telegramId),
+                            user.telegramId,
                             `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
                           );
                         }
@@ -1606,7 +1771,7 @@ export class DiscordBot {
                         // Fall back to standard message on error
                         try {
                           await this.bridge.getTelegramBot().sendMessage(
-                            parseInt(user.telegramId),
+                            user.telegramId,
                             `📝 Ticket Update\n\nYour ticket #${ticket.id} has been closed by ${staffName}.`
                           );
                         } catch (fallbackError) {
@@ -1738,7 +1903,7 @@ export class DiscordBot {
           // Get all open tickets from database
           const allOpenTickets = await storage.getAllTicketsWithStatuses(validStatuses);
           
-          log(`Found ${allOpenTickets.length} tickets with open statuses in database`);
+          log(`Found ${allOpenTickets.length} tickets with open statuses in database`, "info");
           
           // Track progress
           let processedCount = 0;
@@ -1793,7 +1958,7 @@ export class DiscordBot {
             }
           });
           
-          log(`Found ${ticketChannels.size} potential ticket channels to process`);
+          log(`Found ${ticketChannels.size} potential ticket channels to process`, "info");
           
           // Reset counters for Discord channel processing
           let channelProcessedCount = 0;
@@ -1831,7 +1996,7 @@ export class DiscordBot {
                         category.transcriptCategoryId,
                         true // This is a transcript category, so set appropriate permissions
                       );
-                      log(`Successfully moved channel ${channelId} to transcript category using permission-safe method`);
+                      log(`Successfully moved channel ${channelId} to transcript category using permission-safe method`, "info");
                     } catch (moveError) {
                       log(`Error using moveChannelToCategory: ${moveError}, falling back to basic move`, "warn");
                       // Fallback if the move method fails
@@ -2325,8 +2490,14 @@ export class DiscordBot {
           
           // Remove permissions for all staff roles (but ensure admins still have access)
           for (const roleId of staffRoles) {
+            // Validate that the roleId is a valid Discord role ID (17-19 digit string)
+            if (!roleId || typeof roleId !== 'string' || !/^\d{17,19}$/.test(roleId)) {
+              log(`Skipping invalid role ID in claim command: ${roleId}`, "warn");
+              continue;
+            }
+            
             // Get the role to check if it's an admin role
-            const role = await guild.roles.fetch(roleId);
+            const role = await this.safeFetchRole(guild, roleId);
             if (!role) continue;
             
             // Skip admin roles 
@@ -2334,8 +2505,8 @@ export class DiscordBot {
               continue;
             }
             
-            // Deny access for non-admin staff roles
-            await channel.permissionOverwrites.edit(roleId, {
+            // Deny access for non-admin staff roles using safe method
+            await this.safePermissionEdit(channel, roleId, {
               ViewChannel: false
             });
           }
@@ -2349,7 +2520,7 @@ export class DiscordBot {
           const user = await storage.getUser(ticket.userId!);
           if (user && user.telegramId) {
             await this.bridge.sendMessageToTelegram(
-              parseInt(user.telegramId),
+                                          user.telegramId,
               `📢 *Staff Update:* Your ticket is now being handled exclusively by a dedicated staff member.`
             );
           }
@@ -2427,10 +2598,16 @@ export class DiscordBot {
             // Skip @everyone role
             if (id === guild.roles.everyone.id) return;
             
+            // Validate that the ID is a valid Discord role ID (17-19 digit string)
+            if (!id || typeof id !== 'string' || !/^\d{17,19}$/.test(id)) {
+              log(`Skipping invalid role ID in unclaim command: ${id}`, "warn");
+              return;
+            }
+            
             // Check if this is a role that should have access
             if (permission.allow.has(PermissionFlagsBits.ViewChannel)) {
-              // Restore access for this role
-              await channel.permissionOverwrites.edit(id, {
+              // Restore access for this role using safe method
+              await this.safePermissionEdit(channel, id, {
                 ViewChannel: true,
                 SendMessages: permission.allow.has(PermissionFlagsBits.SendMessages),
                 ReadMessageHistory: permission.allow.has(PermissionFlagsBits.ReadMessageHistory)
@@ -2465,7 +2642,7 @@ export class DiscordBot {
           const user = await storage.getUser(ticket.userId!);
           if (user && user.telegramId) {
             await this.bridge.sendMessageToTelegram(
-              parseInt(user.telegramId),
+                                          user.telegramId,
               `📢 *Staff Update:* Your ticket is now open to all staff members again.`
             );
           }
@@ -2482,6 +2659,12 @@ export class DiscordBot {
         // Global error handler for all interactions
         const errorMessage = `CRITICAL ERROR handling interaction: ${error}`;
         log(errorMessage, "error");
+        
+        // Check if this is an "Unknown interaction" error - these are usually safe to ignore
+        if (error instanceof Error && error.message.includes('Unknown interaction')) {
+          log(`Ignoring Unknown interaction error - interaction likely expired or already handled`, "warn");
+          return; // Don't try to respond to expired interactions
+        }
         
         // Try to give feedback to the user without crashing
         try {
@@ -2563,7 +2746,7 @@ export class DiscordBot {
         return;
       }
 
-      log(`Processing Discord message for ticket ${ticket.id} in channel ${message.channelId}`);
+      log(`Processing Discord message for ticket ${ticket.id} in channel ${message.channelId}`, "info");
 
       try {
         // Store message in database first to ensure it's recorded
@@ -2580,7 +2763,7 @@ export class DiscordBot {
             timestamp: new Date(),
             senderName: senderName
           });
-          log(`Stored Discord message in database for ticket ${ticket.id}`);
+          log(`Stored Discord message in database for ticket ${ticket.id}`, "info");
         }
 
         // Get image attachments
@@ -2598,13 +2781,13 @@ export class DiscordBot {
         }
         
         await this.bridge.forwardToTelegram(
-          message.content,
+          message.content || "",
           ticket.id,
           displayName,
           imageAttachments.size > 0 ? Array.from(imageAttachments.values()) : undefined
         );
 
-        log(`Successfully forwarded message to Telegram for ticket ${ticket.id}`);
+        log(`Successfully forwarded message to Telegram for ticket ${ticket.id}`, "info");
       } catch (error) {
         log(`Error handling Discord message: ${error}`, "error");
       }
@@ -2640,7 +2823,7 @@ export class DiscordBot {
       const ticket = await storage.getTicketByDiscordChannel(newMessage.channelId);
       if (!ticket) return;
 
-      log(`Processing edited Discord message for ticket ${ticket.id}`);
+      log(`Processing edited Discord message for ticket ${ticket.id}`, "info");
 
       // Get display name with proper type handling
       let displayName = "Unknown Discord User";
@@ -2651,7 +2834,7 @@ export class DiscordBot {
       }
       
       await this.bridge.forwardToTelegram(
-        `[EDITED] ${newMessage.content}`,
+        `[EDITED] ${newMessage.content || ""}`,
         ticket.id,
         displayName
       );
@@ -2660,7 +2843,7 @@ export class DiscordBot {
 
   public async sendTicketMessage(channelId: string, embed: any): Promise<void> {
     try {
-      log(`Attempting to send and pin ticket message in channel ${channelId}`);
+      log(`Attempting to send and pin ticket message in channel ${channelId}`, "info");
 
       // Send only through the bot's native message functionality
       const channel = await this.client.channels.fetch(channelId);
@@ -2674,13 +2857,13 @@ export class DiscordBot {
       try {
         // Pin the message using the pinnable interface
         await message.pin();
-        log(`Successfully pinned message in channel ${channelId}`);
+        log(`Successfully pinned message in channel ${channelId}`, "info");
       } catch (pinError) {
         log(`Error pinning message: ${pinError}`, "error");
         // Don't throw here - the message was sent successfully even if pinning failed
       }
 
-      log(`Successfully sent ticket message in channel ${channelId}`);
+      log(`Successfully sent ticket message in channel ${channelId}`, "info");
     } catch (error) {
       log(`Error sending ticket message: ${error}`, "error");
       throw error;
@@ -2691,7 +2874,7 @@ export class DiscordBot {
 
   async createTicketChannel(categoryId: string, name: string): Promise<string> {
     try {
-      log(`Creating ticket channel ${name} in category ${categoryId}`);
+      log(`Creating ticket channel ${name} in category ${categoryId}`, "info");
 
       // Add detailed connection diagnostics
       const tokenExists = process.env.DISCORD_BOT_TOKEN ? "exists" : "missing";
@@ -2753,7 +2936,7 @@ export class DiscordBot {
           throw new Error("Discord bot token is missing. Please set DISCORD_BOT_TOKEN environment variable.");
         }
         
-        log(`Attempting to login with token of length: ${token.length}`);
+        log(`Attempting to login with token of length: ${token.length}`, "info");
         
         // Attempt to log in again with a timeout
         const loginPromise = this.client.login(token);
@@ -2811,7 +2994,7 @@ export class DiscordBot {
       }
       
       // Create the channel with error handling
-      log(`Creating channel "${name}" in category ${categoryId}...`);
+      log(`Creating channel "${name}" in category ${categoryId}...`, "info");
       
       // Use a timeout for channel creation to prevent hanging
       const channelCreatePromise = guild.channels.create({
@@ -2855,7 +3038,7 @@ export class DiscordBot {
             ReadMessageHistory: true,
             AttachFiles: true
           });
-          log(`Set channel permissions for role ${roleWithAccess}`);
+          log(`Set channel permissions for role ${roleWithAccess}`, "info");
         } catch (permError) {
           // Don't fail the whole operation if permission setting fails
           log(`Warning: Failed to set permissions for role ${roleWithAccess}: ${permError}`, "warn");
@@ -2864,7 +3047,7 @@ export class DiscordBot {
         log(`Warning: No role with access found in category ${categoryId}`, "warn");
       }
 
-      log(`Successfully created channel ${channel.id}`);
+      log(`Successfully created channel ${channel.id}`, "info");
       return channel.id;
     } catch (error) {
       // Detailed error handling with specific error types
@@ -2919,7 +3102,7 @@ export class DiscordBot {
         }
         
         // Attempt login with timeout
-        log(`Attempting to login with token of length ${token.length}`);
+        log(`Attempting to login with token of length ${token.length}`, "info");
         const loginPromise = this.client.login(token);
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error("Login attempt timed out")), 5000);
@@ -2967,7 +3150,7 @@ export class DiscordBot {
 
   async sendMessage(channelId: string, message: WebhookMessage, username: string): Promise<void> {
     try {
-      log(`Attempting to send message to Discord channel ${channelId}`);
+      log(`Attempting to send message to Discord channel ${channelId}`, "info");
 
       // Check client readiness first - most reliable way to ensure connection is active
       if (!this.client.isReady()) {
@@ -3073,7 +3256,7 @@ export class DiscordBot {
         files: messageOptions.files ? `${messageOptions.files.length} files` : 'no files',
         embeds: messageOptions.embeds ? `${messageOptions.embeds.length} embeds` : 'no embeds',
         components: messageOptions.components ? "has components" : "no components"
-      })}`);
+      })}`, "info");
 
       // Send message with retries
       let retries = 0;
@@ -3082,7 +3265,7 @@ export class DiscordBot {
       while (retries < maxRetries) {
         try {
           await webhook.send(messageOptions);
-          log(`Successfully sent message to Discord channel ${channelId}`);
+          log(`Successfully sent message to Discord channel ${channelId}`, "info");
           return;
         } catch (error) {
           retries++;
@@ -3141,7 +3324,7 @@ export class DiscordBot {
 
           for (const webhook of oldestWebhooks) {
             await webhook.delete('Cleaning up old webhooks');
-            log(`Deleted old webhook ${webhook.id} from channel ${channel.id}`);
+            log(`Deleted old webhook ${webhook.id} from channel ${channel.id}`, "info");
           }
         }
 
@@ -3152,7 +3335,7 @@ export class DiscordBot {
             name: "Message Relay",
             reason: 'For message bridging'
           });
-          log(`Created new webhook ${webhook.id} for channel ${channel.id}`);
+          log(`Created new webhook ${webhook.id} for channel ${channel.id}`, "info");
         }
 
         const webhookClient = new WebhookClient({ url: webhook.url });
@@ -3188,10 +3371,10 @@ export class DiscordBot {
       if (activeWebhooks.length !== webhooks.length) {
         if (activeWebhooks.length === 0) {
           this.webhooks.delete(channelId);
-          log(`Removed all stale webhooks for channel ${channelId}`);
+          log(`Removed all stale webhooks for channel ${channelId}`, "info");
         } else {
           this.webhooks.set(channelId, activeWebhooks);
-          log(`Cleaned up ${webhooks.length - activeWebhooks.length} stale webhooks for channel ${channelId}`);
+          log(`Cleaned up ${webhooks.length - activeWebhooks.length} stale webhooks for channel ${channelId}`, "info");
         }
       }
     }
@@ -3199,7 +3382,7 @@ export class DiscordBot {
 
   async moveChannelToCategory(channelId: string, categoryId: string, isTranscriptCategory: boolean = false): Promise<void> {
     try {
-      log(`Moving channel ${channelId} to category ${categoryId} (transcript category: ${isTranscriptCategory})`);
+      log(`Moving channel ${channelId} to category ${categoryId} (transcript category: ${isTranscriptCategory})`, "info");
 
       // Verify client is authenticated
       if (!this.client.token) {
@@ -3290,37 +3473,51 @@ export class DiscordBot {
       
       // Update permissions for the moved channel
       // First, explicitly deny access for @everyone to ensure the channel is private
-      await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
-        ViewChannel: false,
-        SendMessages: false,
-        ReadMessageHistory: false
-      });
-      
-      // Log the permission update for clarity
-      log(`Updated permissions for @everyone role - denied access`, "info");
+      try {
+        await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
+          ViewChannel: false,
+          SendMessages: false,
+          ReadMessageHistory: false
+        });
+        log(`Updated permissions for @everyone role - denied access`, "info");
+      } catch (everyonePermError) {
+        log(`Error setting @everyone permissions for channel ${channelId}: ${everyonePermError}`, "error");
+        // Continue with other permissions even if this fails
+      }
       
       // Set permissions for the roles found
       if (rolesWithAccess.length > 0) {
         for (const roleId of rolesWithAccess) {
-          if (isTranscriptCategory) {
-            // For transcript categories, staff should be able to view AND send messages
-            // This fixes the issue where users with roles can't see or type in closed tickets
-            await channel.permissionOverwrites.edit(roleId, {
-              ViewChannel: true,
-              SendMessages: true,  // Enable sending messages in transcript categories
-              ReadMessageHistory: true,
-              AttachFiles: true    // Enable file attachments in transcript categories
-            });
-            log(`Updated transcript permissions for role ${roleId} - full access mode (view, send, attach)`);
-          } else {
-            // For regular categories, staff can view and send messages
-            await channel.permissionOverwrites.edit(roleId, {
-              ViewChannel: true,
-              SendMessages: true,
-              ReadMessageHistory: true,
-              AttachFiles: true
-            });
-            log(`Updated active category permissions for role ${roleId} - full access mode`);
+          try {
+            // Validate that the roleId is a valid Discord role ID (17-19 digit string)
+            if (!roleId || typeof roleId !== 'string' || !/^\d{17,19}$/.test(roleId)) {
+              log(`Skipping invalid role ID in moveChannelToCategory: ${roleId}`, "warn");
+              continue;
+            }
+            
+            if (isTranscriptCategory) {
+              // For transcript categories, staff should be able to view AND send messages
+              // This fixes the issue where users with roles can't see or type in closed tickets
+              await channel.permissionOverwrites.edit(roleId, {
+                ViewChannel: true,
+                SendMessages: true,  // Enable sending messages in transcript categories
+                ReadMessageHistory: true,
+                AttachFiles: true    // Enable file attachments in transcript categories
+              });
+              log(`Updated transcript permissions for role ${roleId} - full access mode (view, send, attach)`, "info");
+            } else {
+              // For regular categories, staff can view and send messages
+              await channel.permissionOverwrites.edit(roleId, {
+                ViewChannel: true,
+                SendMessages: true,
+                ReadMessageHistory: true,
+                AttachFiles: true
+              });
+              log(`Updated active category permissions for role ${roleId} - full access mode`, "info");
+            }
+          } catch (rolePermError) {
+            log(`Error setting permissions for role ${roleId} in channel ${channelId}: ${rolePermError}`, "error");
+            // Continue with other roles even if one fails
           }
         }
       } else {
@@ -3329,17 +3526,23 @@ export class DiscordBot {
       
       // Ensure bot has needed permissions
       if (guild.members.me) {
-        await channel.permissionOverwrites.edit(guild.members.me.id, {
-          ViewChannel: true,
-          SendMessages: true,
-          ReadMessageHistory: true,
-          AttachFiles: true,
-          ManageChannels: true,
-          ManageMessages: true
-        });
+        try {
+          await channel.permissionOverwrites.edit(guild.members.me.id, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true,
+            ManageChannels: true,
+            ManageMessages: true
+          });
+          log(`Successfully set bot permissions for channel ${channelId}`, "info");
+        } catch (botPermError) {
+          log(`Error setting bot permissions for channel ${channelId}: ${botPermError}`, "error");
+          // Continue even if bot permissions fail
+        }
       }
       
-      log(`Successfully moved channel ${channelId} to category ${categoryId}`);
+      log(`Successfully moved channel ${channelId} to category ${categoryId}`, "info");
     } catch (error) {
       log(`Error moving channel to category: ${error}`, "error");
       throw error;
@@ -3508,46 +3711,63 @@ export class DiscordBot {
       
       // Set permissions on the category
       // Explicitly deny @everyone from viewing channels
-      await category.permissionOverwrites.edit(guild.roles.everyone, {
-        ViewChannel: false,
-        SendMessages: false,
-        ReadMessageHistory: false
-      });
+      try {
+        await category.permissionOverwrites.edit(guild.roles.everyone.id, {
+          ViewChannel: false,
+          SendMessages: false,
+          ReadMessageHistory: false
+        });
+        log(`Successfully denied @everyone permissions for category ${category.name}`, "info");
+      } catch (permError) {
+        log(`Error setting @everyone permissions for category ${category.name}: ${permError}`, "error");
+        // Continue with other permissions even if this fails
+      }
       
       // Allow staff with appropriate roles to view and interact with all channels in the category,
       // regardless of whether it's a regular category or transcript category
-      if (isTranscriptCategory) {
-        // For transcript categories, staff should be able to view AND send messages
-        // This fixes the issue where users with roles can't type in closed tickets
-        await category.permissionOverwrites.edit(role, {
-          ViewChannel: true,
-          SendMessages: true,  // Changed from false to true
-          ReadMessageHistory: true,
-          AttachFiles: true,   // Changed from false to true
-        });
-        log(`Set up transcript category permissions for role ${role.name} - full access (changed from read-only)`, "info");
-      } else {
-        // For regular categories, staff can view and send messages
-        await category.permissionOverwrites.edit(role, {
-          ViewChannel: true,
-          SendMessages: true,
-          ReadMessageHistory: true,
-          AttachFiles: true,
-        });
-        log(`Set up regular category permissions for role ${role.name} - full access`, "info");
+      try {
+        if (isTranscriptCategory) {
+          // For transcript categories, staff should be able to view AND send messages
+          // This fixes the issue where users with roles can't type in closed tickets
+          await category.permissionOverwrites.edit(role, {
+            ViewChannel: true,
+            SendMessages: true,  // Changed from false to true
+            ReadMessageHistory: true,
+            AttachFiles: true,   // Changed from false to true
+          });
+          log(`Set up transcript category permissions for role ${role.name} - full access (changed from read-only)`, "info");
+        } else {
+          // For regular categories, staff can view and send messages
+          await category.permissionOverwrites.edit(role, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true,
+          });
+          log(`Set up regular category permissions for role ${role.name} - full access`, "info");
+        }
+      } catch (rolePermError) {
+        log(`Error setting role permissions for category ${category.name}: ${rolePermError}`, "error");
+        // Continue with bot permissions even if role permissions fail
       }
       
       // Also set permissions for the bot
       const botMember = guild.members.me;
       if (botMember) {
-        await category.permissionOverwrites.edit(botMember, {
-          ViewChannel: true,
-          SendMessages: true,
-          ReadMessageHistory: true,
-          AttachFiles: true,
-          ManageChannels: true,
-          ManageMessages: true,
-        });
+        try {
+          await category.permissionOverwrites.edit(botMember, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true,
+            ManageChannels: true,
+            ManageMessages: true,
+          });
+          log(`Successfully set bot permissions for category ${category.name}`, "info");
+        } catch (botPermError) {
+          log(`Error setting bot permissions for category ${category.name}: ${botPermError}`, "error");
+          // Continue even if bot permissions fail
+        }
       }
       
       log(`Successfully set up permissions for category ${category.name}`, "info");
@@ -3581,7 +3801,9 @@ export class DiscordBot {
           name: 'support tickets',
           type: 0 // Playing
         }]
-      }
+      },
+      // Note: Discord.js doesn't expose WebSocket configuration options directly
+      // The WebSocket resilience is handled through error handling and reconnection logic
     });
     
     // Add enhanced reconnection handling
@@ -3607,20 +3829,60 @@ export class DiscordBot {
         }, reconnectDelay);
       }
     });
-    
+
+    // Add comprehensive error handling to prevent crashes
     client.on('error', (error) => {
       log(`Discord client error: ${error.message}`, "error");
       
-      // Check for specific errors that require token refresh
-      if (error.message.includes("token") || error.message.includes("authentication") || error.message.includes("login")) {
-        log("Discord token may be invalid - will attempt to refresh token on next operation", "warn");
+      // Store the error for diagnostics
+      this.lastError = error;
+      this.connectionError = error.message;
+      
+      // Check if this is a handshake timeout error
+      if (error.message.includes('handshake') || error.message.includes('timeout') || error.message.includes('WebSocket')) {
+        log(`WebSocket connection error detected - attempting recovery without crash`, "warn");
+        
+        // Don't let this crash the process - attempt recovery instead
+        this.isConnected = false;
+        
+        // Schedule a reconnection attempt with delay
+        setTimeout(() => {
+          this.reconnect().catch(e => {
+            log(`Recovery reconnection failed: ${e}`, "error");
+          });
+        }, 10000); // 10 second delay
+        
+        return; // Prevent the error from propagating
       }
       
-      // Handle rate limit errors
-      if (error.message.includes("rate limit")) {
-        log("Rate limit exceeded. Adding additional backoff time.", "warn");
-        // Add additional backing off logic here if needed
+      // For other errors, log but don't crash
+      log(`Non-critical Discord error: ${error.message}`, "warn");
+    });
+
+    // Add connection state monitoring
+    client.on('shardError', (error, shardId) => {
+      log(`Discord shard ${shardId} error: ${error.message}`, "error");
+      
+      // Handle handshake timeouts at shard level
+      if (error.message.includes('handshake') || error.message.includes('timeout')) {
+        log(`Shard ${shardId} handshake timeout - attempting recovery`, "warn");
+        this.isConnected = false;
+        
+        // Schedule recovery
+        setTimeout(() => {
+          this.reconnect().catch(e => {
+            log(`Shard recovery failed: ${e}`, "error");
+          });
+        }, 10000);
       }
+    });
+    
+    // Add ready event handler for better connection tracking
+    client.on('ready', () => {
+      log(`Discord client ready - connected as ${client.user?.tag}`, "info");
+      this.isConnected = true;
+      this.connectionError = null;
+      this.lastError = null;
     });
     
     client.on('reconnecting', () => {
@@ -3666,7 +3928,7 @@ export class DiscordBot {
       this.isConnecting = true;
       this.isConnected = false;
 
-      log("Starting Discord bot client...");
+      log("Starting Discord bot client...", "info");
 
       // Import the token loader
       const { loadDiscordToken } = await import('./token-loader');
@@ -3739,7 +4001,7 @@ export class DiscordBot {
           .catch(error => log(`Error destroying client: ${error}`, "error"));
       }, this.wsCleanupConfig.connectionTimeout);
 
-      log("Attempting to connect to Discord with token...");
+      log("Attempting to connect to Discord with token...", "info");
       await this.client.login(token);
 
       // Clear timeout on successful connection
@@ -3752,7 +4014,7 @@ export class DiscordBot {
       this.isConnecting = false;
       this.isConnected = true;
       this.connectionError = null;
-      log("Discord bot started successfully");
+      log("Discord bot started successfully", "info");
     } catch (error) {
       let errorMessage = error instanceof Error ? error.message : String(error);
       
@@ -3792,14 +4054,14 @@ export class DiscordBot {
       // WebhookClient doesn't have deleteIfExists method, and we can't directly delete
       // the webhooks from Discord since we only have WebhookClient instances
       this.webhooks.clear();
-      log("Cleared webhook cache");
+      log("Cleared webhook cache", "info");
 
       // Destroy the client
       if (this.client) {
         await this.client.destroy();
       }
 
-      log("Discord bot stopped successfully");
+      log("Discord bot stopped successfully", "info");
     } catch (error) {
       log(`Error stopping Discord bot: ${error}`, "error");
       throw error;
@@ -3867,110 +4129,65 @@ export class DiscordBot {
       return { exists: false, inTranscripts: false };
     }
   }
-  
-  // Reconnect the bot with retry logic
-  async reconnect() {
-    try {
-      console.log("Starting Discord bot reconnection...");
-      this.isConnecting = true;
-      
-      try {
-        // Try to destroy current client if it exists
-        if (this.client) {
-          await this.client.destroy();
-          console.log("Successfully destroyed previous Discord client");
-        }
-      } catch (destroyError) {
-        // Just log but continue with reconnection
-        console.error("Error while destroying previous Discord client:", destroyError);
-      }
 
-      // Setup new client with retry logic
-      const maxLoginAttempts = 3;
-      let loginAttempt = 0;
-      let lastLoginError = null;
+  // Permission checking methods for admin roles
+  async canUserAccessCategory(discordUserId: string, categoryId: number): Promise<boolean> {
+    try {
+      const { storage } = await import('../storage');
+      return await storage.canUserAccessCategory(discordUserId, categoryId);
+    } catch (error) {
+      log(`Error checking category access for user ${discordUserId}, category ${categoryId}: ${error}`, "error");
+      return false;
+    }
+  }
+
+  async getUserAllowedCategories(discordUserId: string): Promise<number[]> {
+    try {
+      const { storage } = await import('../storage');
+      return await storage.getUserAllowedCategories(discordUserId);
+    } catch (error) {
+      log(`Error getting allowed categories for user ${discordUserId}: ${error}`, "error");
+      return [];
+    }
+  }
+
+  async isUserFullAdmin(discordUserId: string): Promise<boolean> {
+    try {
+      const { storage } = await import('../storage');
+      return await storage.isUserFullAdmin(discordUserId);
+    } catch (error) {
+      log(`Error checking full admin status for user ${discordUserId}: ${error}`, "error");
+      return false;
+    }
+  }
+
+  async checkUserPermissions(discordUserId: string, categoryId?: number): Promise<{
+    canAccess: boolean;
+    allowedCategories: number[];
+    isFullAdmin: boolean;
+  }> {
+    try {
+      const { storage } = await import('../storage');
+      const allowedCategories = await storage.getUserAllowedCategories(discordUserId);
+      const isFullAdmin = await storage.isUserFullAdmin(discordUserId);
       
-      while (loginAttempt < maxLoginAttempts) {
-        try {
-          console.log(`Discord login attempt ${loginAttempt + 1}/${maxLoginAttempts}`);
-          this.client = this.setupClient();
-          
-          // Import the token loader for reconnection
-          const { loadDiscordToken } = await import('./token-loader');
-      
-          // First try to load directly from the .env file (most reliable)
-          let token = loadDiscordToken();
-          
-          // If file reading fails, fall back to environment variables
-          if (!token) {
-            console.log(`Could not load token from .env file during reconnect, trying environment variables`, "warn");
-            
-            // Try environment variables as a fallback
-            const envToken = process.env.DISCORD_BOT_TOKEN;
-            
-            // Log token status but not the actual token
-            if (envToken) {
-              // Remove any quotes or extra whitespace that might have been accidentally added
-              token = envToken.trim().replace(/(^["']|["']$)/g, '');
-              console.log(`Discord bot token from env: exists (length ${token.length})`);
-            } else {
-              // Try to read from alternative environment variables that might be used in deployment
-              const altEnvVars = ['DISCORD_TOKEN', 'BOT_TOKEN', 'DISCORDTOKEN'];
-              for (const varName of altEnvVars) {
-                if (process.env[varName]) {
-                  token = process.env[varName].trim().replace(/(^["']|["']$)/g, '');
-                  console.log(`Found Discord token in alternative env var ${varName} (length ${token.length})`);
-                  break;
-                }
-              }
-              
-              if (!token) {
-                console.log(`Discord bot token missing from all sources during reconnect`, "error");
-              }
-            }
-          }
-          
-          // Basic validation of token
-          if (!token || token.length < 20) {
-            throw new Error("Discord token appears to be invalid or missing");
-          }
-          
-          // Try to login
-          await this.client.login(token);
-          
-          // If we get here, login succeeded
-          this.isConnecting = false;
-          this.isConnected = true;
-          this.connectionError = null;
-          this.lastError = null;
-          
-          console.log("Discord bot reconnected successfully");
-          return;
-        } catch (loginError) {
-          // Save the error and try again
-          lastLoginError = loginError;
-          loginAttempt++;
-          
-          if (loginAttempt < maxLoginAttempts) {
-            // Wait with increasing delay before retrying
-            const delayMs = 2000 * loginAttempt;
-            console.log(`Login failed, retrying in ${delayMs}ms...`);
-            await new Promise(resolve => setTimeout(resolve, delayMs));
-          }
-        }
+      let canAccess = isFullAdmin;
+      if (!isFullAdmin && categoryId) {
+        canAccess = allowedCategories.includes(categoryId);
       }
       
-      // If we get here, all login attempts failed
-      this.lastError = lastLoginError instanceof Error ? 
-        lastLoginError : 
-        new Error("Failed to reconnect Discord bot after multiple attempts");
-      throw this.lastError;
+      return {
+        canAccess,
+        allowedCategories,
+        isFullAdmin
+      };
     } catch (error) {
-      this.isConnecting = false;
-      this.isConnected = false;
-      this.connectionError = error instanceof Error ? error.message : String(error);
-      console.error("Discord bot reconnection failed:", error);
-      throw error;
+      log(`Error checking user permissions for ${discordUserId}: ${error}`, "error");
+      return {
+        canAccess: false,
+        allowedCategories: [],
+        isFullAdmin: false
+      };
     }
   }
 }

@@ -31,7 +31,7 @@ function findAndReadEnvFile(): { content: string | null, path: string | null } {
       try {
         if (fs.existsSync(envPath)) {
           foundPath = envPath;
-          log(`Found .env file at ${envPath}`);
+          log(`Found .env file at ${envPath}`, 'info');
           envContent = fs.readFileSync(envPath, 'utf8');
           break;
         }
@@ -75,7 +75,7 @@ function extractTokenFromEnv(envContent: string, tokenName: string): string | nu
   if (token) {
     // Remove any quotes that might be present
     token = token.replace(/(^["']|["']$)/g, '');
-    log(`Successfully loaded ${tokenName} from .env file (length: ${token.length})`);
+    log(`Successfully loaded ${tokenName} from .env file (length: ${token.length})`, 'info');
     return token;
   }
   

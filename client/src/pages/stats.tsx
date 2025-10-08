@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { format } from "date-fns";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 interface UserStats {
   totalEarnings: number;
@@ -40,6 +41,7 @@ export default function Stats() {
     from: new Date(),
     to: new Date()
   });
+  const [isClearingStats, setIsClearingStats] = useState(false);
 
   // Force dates to the correct year (2025) for date range filtering
   // This ensures the date picker sends dates with the correct year
@@ -65,6 +67,30 @@ export default function Stats() {
       correctedTo: fixedDateRange.to.toISOString()
     });
   }
+
+  const handleClearStats = async () => {
+    setIsClearingStats(true);
+    try {
+      const response = await fetch('/api/earnings/clear-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to clear statistics');
+      }
+      
+      // Refresh the page to show updated stats
+      window.location.reload();
+    } catch (error) {
+      console.error('Error clearing statistics:', error);
+      alert('Failed to clear statistics. Please try again.');
+    } finally {
+      setIsClearingStats(false);
+    }
+  };
   
   // Construct query params with explicit debugging
   const queryParams = period === 'custom' 
@@ -83,6 +109,26 @@ export default function Stats() {
 
   const { data: workerStats } = useQuery<WorkerStats[]>({
     queryKey: ["/api/workers/stats", queryParams]
+  });
+
+  const { data: overallStats } = useQuery<{
+    totalPayments: number;
+    totalAmount: number;
+    workerStats: Array<{
+      workerId: string;
+      username: string | null;
+      totalEarnings: number;
+      totalTickets: number;
+      lastPaymentDate: Date | null;
+    }>;
+    categoryStats: Array<{
+      categoryId: number;
+      categoryName: string;
+      totalAmount: number;
+      totalTickets: number;
+    }>;
+  }>({
+    queryKey: ["/api/earnings/statistics"]
   });
 
   const formatDate = (dateStr: string) => {
@@ -206,17 +252,48 @@ export default function Stats() {
       <div className="grid gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Overall Statistics</CardTitle>
+            <div className="flex justify-between items-center">
+              <CardTitle>Overall Statistics</CardTitle>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button 
+                    variant="destructive" 
+                    size="sm"
+                    disabled={isClearingStats}
+                  >
+                    {isClearingStats ? "Clearing..." : "Clear All Stats"}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Clear All Statistics</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete all earnings data, worker statistics, and reset all ticket amounts to zero. 
+                      This action cannot be undone. Are you sure you want to continue?
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction 
+                      onClick={handleClearStats}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      Yes, Clear All Stats
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 bg-primary/10 rounded-lg">
                 <p className="text-sm font-medium text-muted-foreground">Total Earnings</p>
-                <p className="text-2xl font-bold">${stats?.totalEarnings || 0}</p>
+                <p className="text-2xl font-bold">${overallStats?.totalAmount || 0}</p>
               </div>
               <div className="p-4 bg-primary/10 rounded-lg">
                 <p className="text-sm font-medium text-muted-foreground">Tickets Completed</p>
-                <p className="text-2xl font-bold">{stats?.ticketCount || 0}</p>
+                <p className="text-2xl font-bold">{overallStats?.totalPayments || 0}</p>
               </div>
             </div>
           </CardContent>
@@ -230,7 +307,10 @@ export default function Stats() {
             <div className="space-y-4">
               {workerStats?.map(worker => (
                 <div key={worker.discordId} className="border rounded-lg p-4">
-                  <h3 className="font-medium mb-2">Worker: {worker.username}</h3>
+                  <h3 className="font-medium mb-2">
+                    Worker: {worker.username} 
+                    <span className="text-sm text-muted-foreground ml-2">({worker.discordId})</span>
+                  </h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-muted-foreground">Total Earnings</p>

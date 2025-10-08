@@ -1,0 +1,9 @@
+# Bot Tokens
+DISCORD_BOT_TOKEN=MTM1NjgwOTIxMzM1NTA5ODI3Mg.GCDrct.y1y5OANpd3joresHEG0pij9v6mS10x55GeAZHc
+TELEGRAM_BOT_TOKEN=8098069502:AAF933fZ7udIFmQevv0dW41p4opkKeRfvUA
+
+# Image upload service (for sending images)
+IMGBB_API_KEY=ca8839859508131cd88c6bbc266f9b2b
+
+# Database configuration
+DATABASE_URL=postgresql://fateats_owner:npg_aTlkex7M5BAv@ep-cold-violet-a45f5qwj-pooler.us-east-1.aws.neon.tech/fateats?sslmode=require

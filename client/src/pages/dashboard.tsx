@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { MessagesSquare, MessageSquare, User as UserIcon, Clock, AlertCircle, ClipboardList, Search as SearchIcon, ChevronDown, ChevronRight, CircleDollarSign, Tag, SlidersHorizontal, PanelRight, Calendar } from "lucide-react";
 import { Link } from "wouter";
 import { Settings } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Search } from "@/components/ui/search";
 import { SiTelegram, SiDiscord } from "react-icons/si";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -153,6 +153,87 @@ export default function Dashboard() {
   }, [enhancedTickets]);
   
   const averageResponseTime = "< 5 min"; // TODO: Calculate from actual data
+
+  // Worker Earnings Section
+  const [earnings, setEarnings] = useState([]);
+  const [selectedWorker, setSelectedWorker] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [adjustments, setAdjustments] = useState([]);
+  const [newAdjustment, setNewAdjustment] = useState({ amount: '', reason: '' });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/worker-earnings')
+      .then(res => {
+        if (!res.ok) {
+          if (res.status === 403) {
+            console.log('Worker earnings endpoint requires admin access');
+            return [];
+          }
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then(setEarnings)
+      .catch(error => {
+        console.error('Error fetching worker earnings:', error);
+        setEarnings([]);
+      });
+  }, []);
+
+  const openAdjustments = async (worker) => {
+    setSelectedWorker(worker);
+    setShowModal(true);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/worker-earnings/adjustments/${worker.discordId}`);
+      if (!res.ok) {
+        if (res.status === 403) {
+          console.log('Worker earnings adjustments require admin access');
+          setAdjustments([]);
+        } else {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+      } else {
+        setAdjustments(await res.json());
+      }
+    } catch (error) {
+      console.error('Error fetching worker adjustments:', error);
+      setAdjustments([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addAdjustment = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/worker-earnings/adjustments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workerId: selectedWorker.discordId,
+          amount: Number(newAdjustment.amount),
+          reason: newAdjustment.reason
+        })
+      });
+      
+      if (!res.ok) {
+        if (res.status === 403) {
+          console.log('Adding adjustments requires admin access');
+        } else {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+      } else {
+        setNewAdjustment({ amount: '', reason: '' });
+        openAdjustments(selectedWorker);
+      }
+    } catch (error) {
+      console.error('Error adding adjustment:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -711,6 +792,69 @@ export default function Dashboard() {
               </ScrollArea>
             </TabsContent>
           </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* Worker Earnings Section */}
+      <Card className="mt-8">
+        <CardHeader>
+          <CardTitle>Worker Earnings (Admin)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr>
+                <th className="text-left">Worker</th>
+                <th className="text-left">Total Earnings</th>
+                <th className="text-left">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {earnings.map(worker => (
+                <tr key={worker.discordId}>
+                  <td>{worker.username || worker.discordId}</td>
+                  <td>${worker.totalEarnings}</td>
+                  <td>
+                    <Button size="sm" onClick={() => openAdjustments(worker)}>Adjust</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {showModal && selectedWorker && (
+            <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded shadow-lg min-w-[400px]">
+                <h2 className="text-lg font-bold mb-2">Adjustments for {selectedWorker.username || selectedWorker.discordId}</h2>
+                {loading ? <div>Loading...</div> : (
+                  <>
+                    <ul className="mb-4 max-h-40 overflow-y-auto">
+                      {adjustments.map(adj => (
+                        <li key={adj.id} className="mb-1">{adj.amount > 0 ? '+' : ''}{adj.amount} ({adj.reason})</li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        type="number"
+                        placeholder="Amount"
+                        value={newAdjustment.amount}
+                        onChange={e => setNewAdjustment(a => ({ ...a, amount: e.target.value }))}
+                        className="border rounded px-2 py-1 w-24"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Reason"
+                        value={newAdjustment.reason}
+                        onChange={e => setNewAdjustment(a => ({ ...a, reason: e.target.value }))}
+                        className="border rounded px-2 py-1 flex-1"
+                      />
+                      <Button size="sm" onClick={addAdjustment}>Add</Button>
+                    </div>
+                    <Button variant="outline" onClick={() => setShowModal(false)}>Close</Button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

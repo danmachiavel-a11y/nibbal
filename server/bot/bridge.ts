@@ -48,6 +48,8 @@ interface ImageCacheEntry {
 }
 
 export class BridgeManager {
+  private static instance: BridgeManager | null = null;
+  
   private telegramBot: TelegramBot;
   private discordBot: DiscordBot;
   private isDiscordAvailable: boolean = true; // Added to handle Discord unavailability
@@ -95,7 +97,7 @@ export class BridgeManager {
     timestamp: number;
     target: 'discord' | 'telegram'; // Target platform for the message
   }> = [];
-  private readonly MAX_RETRY_QUEUE_SIZE = 1000; // Increased from 500 to handle more messages
+  private readonly MAX_RETRY_QUEUE_SIZE = 5000; // Increased from 1000 to 5000 to reduce risk of message loss during outages
   private readonly MAX_RETRY_ATTEMPTS = 8; // Increased from 5 to give more chances
   private readonly RETRY_INTERVAL = 5000; // Reduced from 10s to 5s for faster retries
   private readonly BATCH_SIZE = 3; // Process 3 messages per batch
@@ -108,8 +110,8 @@ export class BridgeManager {
   // Message counter for deduplication (allows sending duplicate messages while preventing spam)
   private messageCounters: Map<string, number> = new Map();
 
-  constructor() {
-    log("Initializing Bridge Manager");
+  private constructor() {
+    log("Initializing Bridge Manager", "info");
     this.telegramBot = new TelegramBot(this);
     this.discordBot = new DiscordBot(this);
     this.startHealthCheck();
@@ -117,6 +119,16 @@ export class BridgeManager {
     
     // Setup retry processor for queued messages
     setInterval(() => this.processRetryQueue(), this.RETRY_INTERVAL);
+  }
+
+  /**
+   * Get the singleton instance of BridgeManager
+   */
+  public static getInstance(): BridgeManager {
+    if (!BridgeManager.instance) {
+      BridgeManager.instance = new BridgeManager();
+    }
+    return BridgeManager.instance;
   }
   
   /**
@@ -175,16 +187,22 @@ export class BridgeManager {
       // If flag says disconnected and verification fails, need to trigger reconnection
       if (!isConnectedByFlag && !verificationSuccess) {
         const now = Date.now();
-        const reconnectThreshold = 30000; // 30 seconds - reduced from 2 minutes
+        const reconnectThreshold = 120000; // 2 minutes - increased to reduce unnecessary restarts
         
-        // Force more frequent reconnection attempts for better reliability
+        // Only attempt reconnection if we haven't tried recently
         if (now - this.lastTelegramReconnectAttempt > reconnectThreshold) {
-          log("Telegram shows as disconnected and API check failed - forcing full restart", "warn");
+          log("Telegram shows as disconnected and API check failed - attempting restart", "warn");
           try {
             this.lastTelegramReconnectAttempt = now;
             
-            // Always force a full restart of the bot
-            log("🔄 FORCING COMPLETE TELEGRAM BOT RESTART", "info");
+            // Check if bot is actually disconnected before forcing restart
+            const isActuallyConnected = this.telegramBot.getIsConnected();
+            if (isActuallyConnected) {
+              log("Telegram bot is actually connected, no restart needed", "info");
+              return true;
+            }
+            
+            log("🔄 Attempting Telegram bot restart", "info");
             await this.telegramBot.stop();
             
             // Wait a bit for clean shutdown
@@ -196,28 +214,18 @@ export class BridgeManager {
             // Wait for startup to complete
             await new Promise(resolve => setTimeout(resolve, 2000));
             
-            // Verify one more time after restart
-            let postRestartSuccess = false;
-            try {
-              await bot.getMe();
-              postRestartSuccess = true;
-            } catch (postRestartError) {
-              log(`Even after restart, connection still failing: ${postRestartError}`, "error");
-              postRestartSuccess = false;
-            }
+            // Verify connection after restart
+            const postRestartSuccess = this.telegramBot.getIsConnected();
             
             if (postRestartSuccess) {
-              log("✅ TELEGRAM BOT SUCCESSFULLY RESTARTED AND VERIFIED", "info");
-              bot.forceConnectionState(true);
+              log("✅ Telegram bot successfully restarted and verified", "info");
               return true;
             } else {
-              log("❌ TELEGRAM BOT RESTART FAILED - CONNECTION STILL DOWN", "error");
-              bot.forceConnectionState(false);
+              log("❌ Telegram bot restart failed - connection still down", "error");
               return false;
             }
           } catch (reconnectError) {
-            log(`Failed to perform emergency Telegram restart: ${reconnectError}`, "error");
-            bot.forceConnectionState(false);
+            log(`Failed to perform Telegram restart: ${reconnectError}`, "error");
             return false;
           }
         } else {
@@ -263,7 +271,7 @@ export class BridgeManager {
   }
   
   // Maximum number of duplicates allowed per message
-  private readonly MAX_DUPLICATES_ALLOWED = 5; // Allow 5 identical messages per conversation
+  private readonly MAX_DUPLICATES_ALLOWED = 10; // Allow 10 identical messages per conversation (was 5)
   
   /**
    * Check if a message should be considered a duplicate and blocked
@@ -923,7 +931,7 @@ export class BridgeManager {
     }
   }
   private startHealthCheck() {
-    // Run health check every 5 minutes (reduced from 15 to catch issues sooner)
+    // Run health check every 10 minutes (increased from 5 to reduce false positives)
     this.healthCheckInterval = setInterval(async () => {
       try {
         const health = await this.healthCheck();
@@ -937,20 +945,45 @@ export class BridgeManager {
           this.isDiscordAvailable = true;
         }
         
-        if (!health.telegram || !health.discord) {
-          log("Bot disconnected, attempting to reconnect...");
+        // Only trigger reconnection if BOTH bots are down, or if there's a persistent issue
+        // This prevents unnecessary reconnections from temporary network hiccups
+        if (!health.telegram && !health.discord) {
+          log("Both bots are down, attempting to reconnect...");
           // Add delay before reconnection attempt
           await new Promise(resolve => setTimeout(resolve, 5000));
           await this.reconnectDisconnectedBots(health);
+        } else if (!health.telegram && this.isDiscordAvailable) {
+          // Only reconnect Telegram if Discord is working (indicating network is fine)
+          // And only if we haven't attempted recently
+          const now = Date.now();
+          if (now - this.lastTelegramReconnectAttempt > 60000) { // 1 minute cooldown
+            log("Telegram bot appears down but Discord is working, attempting Telegram reconnection...");
+            this.lastTelegramReconnectAttempt = now;
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            await this.reconnectDisconnectedBots(health);
+          } else {
+            log("Skipping Telegram reconnection - attempted too recently", "debug");
+          }
+        } else if (!health.discord && health.telegram) {
+          // Only reconnect Discord if Telegram is working
+          const now = Date.now();
+          if (now - this.lastDiscordReconnectAttempt > 60000) { // 1 minute cooldown
+            log("Discord bot appears down but Telegram is working, attempting Discord reconnection...");
+            this.lastDiscordReconnectAttempt = now;
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            await this.reconnectDisconnectedBots(health);
+          } else {
+            log("Skipping Discord reconnection - attempted too recently", "debug");
+          }
         }
       } catch (error) {
         handleBridgeError(error as BridgeError, "healthCheck");
       }
-    }, 300000); // 5 minutes (reduced from 15) to catch issues sooner
+    }, 600000); // 10 minutes (increased from 5) to reduce false positives
   }
 
   async start() {
-    log("Starting bots...");
+    log("Starting bots...", "info");
     try {
       // Reset the disabled state when attempting to start
       this.isDisabled = false;
@@ -1003,7 +1036,7 @@ export class BridgeManager {
         }
       }
       
-      log("Bots initialization completed");
+      log("Bots initialization completed", "info");
     } catch (error) {
       handleBridgeError(error as BridgeError, "start");
       throw error; // Re-throw to allow caller to handle
@@ -1194,10 +1227,10 @@ export class BridgeManager {
         // If Discord started successfully, make sure isDiscordAvailable is true
         if (botName === "Discord") {
           this.isDiscordAvailable = true;
-          log("Setting Discord as available after successful startup");
+          log("Setting Discord as available after successful startup", "info");
         }
         
-        log(`${botName} bot started successfully`);
+        log(`${botName} bot started successfully`, "info");
         return;
       } catch (error) {
         handleBridgeError(error as BridgeError, `startBotWithRetry-${botName}-${attempt}`);
@@ -1231,7 +1264,7 @@ export class BridgeManager {
                              errorStr.includes('timeout');
         
         const delay = networkError ? 15000 : 5000;
-        log(`Waiting ${delay/1000}s before next attempt${networkError ? ' (network error)' : ''}...`);
+        log(`Waiting ${delay/1000}s before next attempt${networkError ? ' (network error)' : ''}...`, "info");
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -1239,7 +1272,7 @@ export class BridgeManager {
 
   // Restart only the Discord bot
   async restartDiscordBot() {
-    log("Restarting Discord bot with new configuration...");
+    log("Restarting Discord bot with new configuration...", "info");
     try {
       // Gracefully stop the Discord bot
       await this.discordBot.stop();
@@ -1253,7 +1286,7 @@ export class BridgeManager {
       // Start the Discord bot
       await this.discordBot.start();
       
-      log("Discord bot restarted successfully");
+      log("Discord bot restarted successfully", "info");
     } catch (error) {
       handleBridgeError(error as BridgeError, "restartDiscordBot");
       throw error;
@@ -1262,7 +1295,7 @@ export class BridgeManager {
   
   // Restart only the Telegram bot
   async restartTelegramBot() {
-    log("Restarting Telegram bot with new configuration...");
+    log("Restarting Telegram bot with new configuration...", "info");
     try {
       // Gracefully stop the Telegram bot
       await this.telegramBot.stop();
@@ -1276,7 +1309,7 @@ export class BridgeManager {
       // Start the Telegram bot
       await this.telegramBot.start();
       
-      log("Telegram bot restarted successfully");
+      log("Telegram bot restarted successfully", "info");
     } catch (error) {
       handleBridgeError(error as BridgeError, "restartTelegramBot");
       throw error;
@@ -1284,7 +1317,7 @@ export class BridgeManager {
   }
 
   async restart() {
-    log("Restarting all bots with new configuration...");
+    log("Restarting all bots with new configuration...", "info");
     try {
       // Clear health check interval
       if (this.healthCheckInterval) {
@@ -1311,7 +1344,7 @@ export class BridgeManager {
       // Restart health check
       this.startHealthCheck();
 
-      log("All bots restarted successfully");
+      log("All bots restarted successfully", "info");
     } catch (error) {
       handleBridgeError(error as BridgeError, "restart");
       throw error;
@@ -1327,7 +1360,7 @@ export class BridgeManager {
           log(`Skipping Telegram reconnect - attempted too recently (${Math.floor((now - this.lastTelegramReconnectAttempt) / 1000)}s ago)`, "warn");
         } else {
           this.lastTelegramReconnectAttempt = now;
-          log("Attempting to reconnect Telegram bot...", "express");
+          log("Attempting to reconnect Telegram bot...", "info");
           
           // First ensure the bot is properly stopped
           try {
@@ -1385,7 +1418,7 @@ export class BridgeManager {
           log(`Skipping Discord reconnect - attempted too recently (${Math.floor((now - this.lastDiscordReconnectAttempt) / 1000)}s ago)`, "warn");
         } else {
           this.lastDiscordReconnectAttempt = now;
-          log("Attempting to reconnect Discord bot...", "express");
+          log("Attempting to reconnect Discord bot...", "info");
           await this.startBotWithRetry(() => this.discordBot.start(), "Discord");
         }
       }
@@ -1429,12 +1462,21 @@ export class BridgeManager {
       
       // Update isDiscordAvailable flag based on the check
       if (discordReady !== this.isDiscordAvailable) {
-        log(`Updating Discord availability state: ${this.isDiscordAvailable} → ${discordReady}`);
+        log(`Updating Discord availability state: ${this.isDiscordAvailable} → ${discordReady}`, "info");
         this.isDiscordAvailable = discordReady;
       }
       
+      // Use real API verification for Telegram instead of just checking cached flag
+      let telegramConnected = false;
+      try {
+        telegramConnected = await this.checkTelegramConnection();
+      } catch (error) {
+        log(`Error during Telegram health check: ${error}`, "warn");
+        telegramConnected = false;
+      }
+      
       return {
-        telegram: this.telegramBot.getIsConnected(),
+        telegram: telegramConnected,
         discord: discordReady,
         discordAvailable: this.isDiscordAvailable,
         uptime
@@ -1587,7 +1629,7 @@ export class BridgeManager {
         if (platform === 'discord') {
           // Forward the message to Discord
           await this.forwardToDiscord(
-            message.content,
+            message.content || "",
             message.ticketId,
             message.username,
             message.avatarUrl,
@@ -1606,7 +1648,7 @@ export class BridgeManager {
           // Forward to Telegram
           // We don't have explicit attachments parameter here, so pass undefined
           await this.forwardToTelegram(
-            message.content,
+            message.content || "",
             message.ticketId,
             message.username
           );
@@ -1945,7 +1987,7 @@ export class BridgeManager {
     try {
       // First verify the ticket still exists and has the expected status
       const ticket = await storage.getTicket(ticketId);
-      log(`[BRIDGE] Moving ticket to transcripts. Ticket data:`, JSON.stringify(ticket, null, 2));
+      log(`[BRIDGE] Moving ticket to transcripts. Ticket data: ${JSON.stringify(ticket, null, 2)}`);
 
       if (!ticket) {
         throw new BridgeError(`Ticket not found: ${ticketId}`, { context: "moveToTranscripts" });
@@ -1959,7 +2001,7 @@ export class BridgeManager {
 
       // Get the category for the transcript category ID
       const category = await storage.getCategory(ticket.categoryId!);
-      log(`[BRIDGE] Category data for ticket:`, JSON.stringify(category, null, 2));
+      log(`[BRIDGE] Category data for ticket: ${JSON.stringify(category, null, 2)}`);
 
       // Validate that the category exists
       if (!category) {
@@ -1969,7 +2011,7 @@ export class BridgeManager {
       // Get available Discord categories for debugging
       try {
         const availableCategories = await this.discordBot.getCategories();
-        log(`[BRIDGE] Available Discord categories:`, JSON.stringify(availableCategories, null, 2));
+        log(`[BRIDGE] Available Discord categories: ${JSON.stringify(availableCategories, null, 2)}`);
       } catch (categoriesError) {
         log(`[BRIDGE] Error getting available Discord categories: ${categoriesError}`, "warn");
         // Continue execution, this is just for debugging
@@ -2020,7 +2062,7 @@ export class BridgeManager {
   async moveFromTranscripts(ticketId: number): Promise<void> {
     try {
       const ticket = await storage.getTicket(ticketId);
-      log(`Moving ticket from transcripts back to active. Ticket data:`, JSON.stringify(ticket, null, 2));
+      log(`Moving ticket from transcripts back to active. Ticket data: ${JSON.stringify(ticket, null, 2)}`);
 
       if (!ticket || !ticket.discordChannelId) {
         throw new BridgeError(`Invalid ticket or missing Discord channel: ${ticketId}`, { context: "moveFromTranscripts" });
@@ -2028,7 +2070,7 @@ export class BridgeManager {
 
       // Get category info
       const category = await storage.getCategory(ticket.categoryId!);
-      log(`Category data for ticket:`, JSON.stringify(category, null, 2));
+      log(`Category data for ticket: ${JSON.stringify(category, null, 2)}`);
 
       if (!category) {
         throw new BridgeError("Category not found", { context: "moveFromTranscripts" });
@@ -2155,24 +2197,20 @@ export class BridgeManager {
    * Send a direct message to a Telegram user by their Telegram ID
    * Used for system notifications, ticket updates, etc.
    */
-  async sendMessageToTelegram(telegramId: number, message: string): Promise<void> {
+  async sendMessageToTelegram(telegramId: string, message: string): Promise<void> {
     try {
       if (!this.telegramBot) {
         throw new BridgeError("Telegram bot is not ready", { context: "sendMessageToTelegram" });
       }
-
-      // Check if the telegramId is valid
-      if (!telegramId || isNaN(telegramId) || telegramId <= 0) {
+      if (!telegramId || !/^[0-9]{5,20}$/.test(telegramId)) {
         throw new BridgeError(`Invalid Telegram user ID: ${telegramId}`, { context: "sendMessageToTelegram" });
       }
-
-      // Send message to Telegram user directly
       log(`Sending direct message to Telegram user ${telegramId}`, "debug");
       await this.telegramBot.sendMessage(telegramId, message);
     } catch (error) {
       log(`Error sending message to Telegram: ${error}`, "error");
       handleBridgeError(error as BridgeError, "sendMessageToTelegram");
-      throw error; // Re-throw the error so it can be handled by the caller
+      throw error;
     }
   }
 
@@ -2216,7 +2254,8 @@ export class BridgeManager {
           });
           log(`Added message to Telegram retry queue for ticket ${ticketId}, queue size: ${this.messageRetryQueue.length}`);
         } else {
-          log(`Retry queue full (${this.messageRetryQueue.length}), discarding message for ticket ${ticketId}`, "warn");
+          log(`Retry queue full (${this.messageRetryQueue.length}), discarding message for ticket ${ticketId}`, "error");
+          // TODO: Notify admin via Discord/Telegram or email about full retry queue
         }
         
         return {
@@ -2259,7 +2298,7 @@ export class BridgeManager {
       // Use content hash to better detect identical messages
       const contentHash = crypto
         .createHash('md5')
-        .update(content)
+        .update(content || "")
         .digest('hex')
         .substring(0, 8);
       
@@ -2303,9 +2342,6 @@ export class BridgeManager {
       if (currentDuplicateCount > 0 && this.ENABLE_DEDUP_LOGGING) {
         log(`[DEDUP] Processing duplicate message #${currentDuplicateCount+1} of "${contentForKey.substring(0, 20)}..." in ticket #${ticketId}`, "debug");
       }
-      
-      // Update the duplicate counter for this exact message
-      this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
       
       // Update deduplication cache
       this.messageDedupCache.set(dedupKey, now);
@@ -2363,9 +2399,11 @@ export class BridgeManager {
         };
       }
 
-      // Validate Telegram ID format
-      if (!Number.isFinite(user.telegramId)) {
-        log(`Invalid Telegram ID format for user: ${user.id}`, "error");
+      // Validate Telegram ID format - handle both string and number formats
+      const telegramId = user.telegramId;
+      if (!telegramId || (typeof telegramId === 'string' && !telegramId.trim()) || 
+          (typeof telegramId === 'number' && !Number.isFinite(telegramId))) {
+        log(`Invalid Telegram ID format for user: ${user.id}, telegramId: ${telegramId}`, "error");
         return {
           sent: false,
           error: "invalid_telegram_id"
@@ -2408,7 +2446,7 @@ export class BridgeManager {
             try {
               // Remove category prefix for better readability (consistent with text messages)
               const messagePrefix = `${username}: `;
-              await this.telegramBot.sendMessage(user.telegramId, `${messagePrefix}${cleanedContent}`);
+              await this.telegramBot.sendMessage(telegramId.toString(), `${messagePrefix}${cleanedContent}`);
               log(`Sent text portion of message with attachments to Telegram user ${user.telegramId} for ticket ${ticketId}`);
             } catch (textError) {
               log(`Error sending text portion of message with attachments: ${textError}`, "error");
@@ -2426,7 +2464,7 @@ export class BridgeManager {
 
                 if (cachedImage?.telegramFileId) {
                   log(`Using cached Telegram fileId for ${attachment.url} in ticket ${ticketId}`);
-                  await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `Image from ${username}`);
+                  await this.telegramBot.sendCachedPhoto(telegramId.toString(), cachedImage.telegramFileId, `Image from ${username}`);
                   attachmentSuccess = true;
                   continue;
                 }
@@ -2440,11 +2478,14 @@ export class BridgeManager {
 
                 // Remove category prefix for better readability
                 const caption = `Image from ${username}`;
-                const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, caption);
+                const fileId = await this.telegramBot.sendPhoto(telegramId.toString(), buffer, caption);
 
                 if (fileId) {
                   this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
                   attachmentSuccess = true;
+                  this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
+                  this.messageDedupCache.set(dedupKey, Date.now());
+                  log(`[DEDUP] Updated deduplication cache after successful delivery for key: ${dedupKey}`);
                 }
 
                 log(`Successfully sent photo to Telegram user ${user.telegramId} for ticket ${ticketId}`);
@@ -2475,7 +2516,7 @@ export class BridgeManager {
         if (imageUrlMatch) {
           forwardType = "image-url";
           const imageUrl = imageUrlMatch[0];
-          const textContent = content.replace(imageUrl, '').trim();
+          const textContent = (content || "").replace(imageUrl, '').trim();
 
           // Store message
           await storage.createMessage({
@@ -2501,7 +2542,7 @@ export class BridgeManager {
                 .replace(/\s+/g, " ").trim();
               
               const messagePrefix = `${username}: `;
-              await this.telegramBot.sendMessage(user.telegramId, `${messagePrefix}${cleanedTextContent}`);
+              await this.telegramBot.sendMessage(telegramId.toString(), `${messagePrefix}${cleanedTextContent}`);
               textSuccess = true;
               log(`Sent text portion of message with image URL to Telegram user ${user.telegramId} for ticket ${ticketId}`);
             } catch (textError) {
@@ -2517,7 +2558,7 @@ export class BridgeManager {
 
             if (cachedImage?.telegramFileId) {
               log(`Using cached Telegram fileId for ${imageUrl} in ticket ${ticketId}`);
-              await this.telegramBot.sendCachedPhoto(user.telegramId, cachedImage.telegramFileId, `Image from ${username}`);
+                              await this.telegramBot.sendCachedPhoto(telegramId.toString(), cachedImage.telegramFileId, `Image from ${username}`);
               
               log(`Successfully sent cached image to Telegram user ${user.telegramId} for ticket ${ticketId}`);
               return {
@@ -2534,10 +2575,13 @@ export class BridgeManager {
             log(`Successfully processed image, size: ${buffer.length} bytes for ticket ${ticketId}`);
 
             const caption = `Image from ${username}`;
-            const fileId = await this.telegramBot.sendPhoto(user.telegramId, buffer, caption);
+                            const fileId = await this.telegramBot.sendPhoto(telegramId.toString(), buffer, caption);
 
             if (fileId) {
               this.setCachedImage(cacheKey, { telegramFileId: fileId, buffer });
+              this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
+              this.messageDedupCache.set(dedupKey, Date.now());
+              log(`[DEDUP] Updated deduplication cache after successful delivery for key: ${dedupKey}`);
             }
 
             log(`Successfully sent image URL to Telegram user ${user.telegramId} for ticket ${ticketId}`);
@@ -2567,7 +2611,7 @@ export class BridgeManager {
           try {
             await storage.createMessage({
               ticketId,
-              content,
+              content: content || "",
               authorId: user.id,
               platform: "discord",
               timestamp: new Date(),
@@ -2580,15 +2624,18 @@ export class BridgeManager {
             const messagePrefix = `${username}: `;
             
             // Clean Discord mentions in the content - remove completely
-            let cleanedContent = content
+            let cleanedContent = (content || "")
               .replace(/<@!?(\d+)>/g, "")
               .replace(/<@&(\d+)>/g, "")
               .replace(/<#(\d+)>/g, "")
               .replace(/\s+/g, " ").trim();
               
-            await this.telegramBot.sendMessage(user.telegramId, `${messagePrefix}${cleanedContent}`);
+            await this.telegramBot.sendMessage(telegramId.toString(), `${messagePrefix}${cleanedContent}`);
             
             log(`Successfully sent text message to Telegram user ${user.telegramId} for ticket ${ticketId}`);
+            this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
+            this.messageDedupCache.set(dedupKey, Date.now());
+            log(`[DEDUP] Updated deduplication cache after successful delivery for key: ${dedupKey}`);
             return {
               sent: true,
               type: "text"
@@ -2617,7 +2664,7 @@ export class BridgeManager {
       if (this.messageRetryQueue.length < this.MAX_RETRY_QUEUE_SIZE) {
         this.messageRetryQueue.push({
           attempt: 0,
-          content,
+          content: content || "",
           ticketId,
           username,
           timestamp: Date.now(),
@@ -2675,7 +2722,8 @@ export class BridgeManager {
           });
           log(`Added message to Discord retry queue for ticket ${ticketId}, queue size: ${this.messageRetryQueue.length}`);
         } else {
-          log(`Retry queue full (${this.messageRetryQueue.length}), discarding message for ticket ${ticketId}`, "warn");
+          log(`Retry queue full (${this.messageRetryQueue.length}), discarding message for ticket ${ticketId}`, "error");
+          // TODO: Notify admin via Discord/Telegram or email about full retry queue
         }
         
         return {
@@ -2702,7 +2750,7 @@ export class BridgeManager {
       // Use content hash to better detect identical messages
       const contentHash = crypto
         .createHash('md5')
-        .update(content)
+        .update(content || "")
         .digest('hex')
         .substring(0, 8);
         
@@ -2746,9 +2794,6 @@ export class BridgeManager {
       if (currentDuplicateCount > 0 && this.ENABLE_DEDUP_LOGGING) {
         log(`[DEDUP] Processing duplicate message #${currentDuplicateCount+1} of "${contentForKey.substring(0, 20)}..." in ticket #${ticketId}`, "debug");
       }
-      
-      // Update the duplicate counter for this exact message
-      this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
       
       // Update deduplication cache
       this.messageDedupCache.set(dedupKey, now);
@@ -2899,6 +2944,10 @@ export class BridgeManager {
             );
             
             log(`Photo forwarded from Telegram to Discord for ticket ${ticketId}`);
+            // Deduplication: only update after successful delivery
+            this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
+            this.messageDedupCache.set(dedupKey, Date.now());
+            log(`[DEDUP] Updated deduplication cache after successful delivery for key: ${dedupKey}`);
             return {
               sent: true,
               type: "photo"
@@ -2964,15 +3013,18 @@ export class BridgeManager {
             await this.discordBot.sendMessage(
               ticket.discordChannelId,
               {
-                content: content ? content.toString().trim() : "\u200B",
+                content: content && content.toString().trim() ? content.toString().trim() : "\u200B",
                 username: displayName,
                 avatarURL: avatarUrl,
                 components
               },
               displayName
             );
-            
             log(`Successfully sent text message to Discord channel ${ticket.discordChannelId} for ticket ${ticketId}`);
+            // Deduplication: only update after successful delivery
+            this.messageDedupCache.set(duplicateKey, currentDuplicateCount + 1);
+            this.messageDedupCache.set(dedupKey, Date.now());
+            log(`[DEDUP] Updated deduplication cache after successful delivery for key: ${dedupKey}`);
             return {
               sent: true,
               type: "text"
@@ -3001,7 +3053,7 @@ export class BridgeManager {
       if (this.messageRetryQueue.length < this.MAX_RETRY_QUEUE_SIZE) {
         this.messageRetryQueue.push({
           attempt: 0,
-          content,
+          content: content || "",
           ticketId,
           username,
           avatarUrl,
@@ -3188,8 +3240,8 @@ export class BridgeManager {
       }
       
       // Check if user is already in this ticket
-      // First check memory state
-      const telegramIdNum = parseInt(telegramId);
+      // First check memory state - handle both string and number formats
+      const telegramIdNum = typeof telegramId === 'string' ? parseInt(telegramId) : telegramId;
       if (isNaN(telegramIdNum)) {
         throw new BridgeError(`Invalid Telegram ID format: ${telegramId}`, { 
           context: "forceUserTicketSwitch" 
@@ -3226,7 +3278,7 @@ export class BridgeManager {
         
         // Send notification to the Telegram user
         await this.sendMessageToTelegram(
-          telegramIdNum, 
+          telegramId, 
           `🔄 Staff has switched your active ticket to #${ticketId} (${category.name}).\nYou can switch to another ticket by using /switch`
         );
         
@@ -3584,7 +3636,7 @@ export class BridgeManager {
     
     // If Discord has been reconnected, try to process any pending messages
     if (isAvailable) {
-      log("Discord reconnected, checking for pending operations...");
+      log("Discord reconnected, checking for pending operations...", "info");
       // Any reconnection logic can go here
     }
   }

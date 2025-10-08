@@ -127,6 +127,24 @@ async function handleCriticalError(error: any, source: string) {
     } else if (errorMessage.toLowerCase().includes('database') || 
                errorMessage.toLowerCase().includes('sql')) {
       log(`CRASH CATEGORY: Database error`, 'error');
+    } else if (errorMessage.toLowerCase().includes('handshake') || 
+               errorMessage.toLowerCase().includes('websocket') || 
+               errorMessage.toLowerCase().includes('ws')) {
+      log(`CRASH CATEGORY: WebSocket connection error`, 'error');
+      
+      // For WebSocket errors, try a more gentle recovery approach
+      if (errorMessage.toLowerCase().includes('timeout') || errorMessage.toLowerCase().includes('handshake')) {
+        log(`WebSocket connection error detected - attempting gentle recovery without full restart`, 'warn');
+        
+        // Wait a bit longer before restart for WebSocket issues
+        restartTracker.backoffMs = Math.min(restartTracker.backoffMs * 1.5, restartTracker.maxBackoffMs);
+        
+        // Don't restart immediately for WebSocket timeouts - let the bot's own recovery handle it
+        if (restartTracker.attemptsThisHour < 5) {
+          log(`WebSocket error - allowing bot recovery mechanisms to handle reconnection`, 'info');
+          return; // Exit without restarting
+        }
+      }
     }
     
     // Check if we're restarting too frequently
@@ -226,6 +244,8 @@ function setupGlobalErrorHandlers() {
       log(`Image processing error detected. This is likely related to an attachment`, "error");
     } else if (errorMessage.includes('telegram') || errorMessage.includes('discord')) {
       log(`Bot communication error detected. This might be a temporary network issue`, "error");
+    } else if (errorMessage.includes('handshake') || errorMessage.includes('WebSocket') || errorMessage.includes('ws')) {
+      log(`WebSocket connection error detected. This is likely a network connectivity issue`, "error");
     }
   });
 

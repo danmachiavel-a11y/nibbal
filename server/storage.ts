@@ -1,12 +1,32 @@
-import { eq, and, desc, sql, or, gt } from 'drizzle-orm';
+import { eq, and, desc, sql, or, gt, gte, lte, inArray } from 'drizzle-orm';
 import { db } from './db';
 import {
   users, categories, tickets, messages, botConfig, messageQueue, userStates,
+  earningsLedger, earningsAdjustments, workerEarningsSummary, categorySubmenuRelations,
+  adminRoles, roleCategoryPermissions,
   type User, type Category, type Ticket, type Message, type BotConfig, type MessageQueue, type UserState,
+  type EarningsLedger, type EarningsAdjustment, type WorkerEarningsSummary,
+  type AdminRole, type RoleCategoryPermission,
   type InsertUser, type InsertCategory, type InsertTicket, type InsertMessage, type InsertBotConfig, 
-  type InsertMessageQueue, type InsertUserState
+  type InsertMessageQueue, type InsertUserState, type InsertEarningsLedger, type InsertEarningsAdjustment, type InsertWorkerEarningsSummary,
+  type InsertAdminRole, type InsertRoleCategoryPermission
 } from '@shared/schema';
 import { log } from './vite';
+import { z } from "zod";
+
+const telegramIdSchema = z.string().regex(/^[0-9]{5,20}$/);
+
+// Add simple in-memory caching to reduce database queries
+const cache = {
+  categories: null as Category[] | null,
+  botConfig: null as BotConfig | null,
+  lastCacheTime: 0,
+  CACHE_DURATION: 5 * 60 * 1000, // 5 minutes
+  statsQueries: 0,
+  lastStatsQuery: 0,
+  STATS_RATE_LIMIT: 30, // Max 30 stats queries per minute
+  STATS_RATE_WINDOW: 60 * 1000 // 1 minute window
+};
 
 // Helper function to calculate the period start date
 function calculatePeriodStart(period: 'week' | 'month' | 'all', now: Date): Date {
@@ -36,6 +56,40 @@ function calculatePeriodStart(period: 'week' | 'month' | 'all', now: Date): Date
   return periodStart;
 }
 
+// Helper function to check if cache is valid
+function isCacheValid(): boolean {
+  return cache.lastCacheTime > 0 && (Date.now() - cache.lastCacheTime) < cache.CACHE_DURATION;
+}
+
+// Helper function to clear cache
+function clearCache(): void {
+  cache.categories = null;
+  cache.botConfig = null;
+  cache.lastCacheTime = 0;
+}
+
+// Helper function to check stats query rate limit
+function checkStatsRateLimit(): boolean {
+  const now = Date.now();
+  
+  // Reset counter if window has passed
+  if (now - cache.lastStatsQuery > cache.STATS_RATE_WINDOW) {
+    cache.statsQueries = 0;
+    cache.lastStatsQuery = now;
+  }
+  
+  // Check if we're within rate limit
+  if (cache.statsQueries >= cache.STATS_RATE_LIMIT) {
+    log(`Stats query rate limit exceeded. Skipping query to save database compute time.`, "warn");
+    return false;
+  }
+  
+  cache.statsQueries++;
+  return true;
+}
+
+
+
 export interface IStorage {
   // Bot config operations
   getBotConfig(): Promise<BotConfig | undefined>;
@@ -52,7 +106,7 @@ export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUsers(): Promise<User[]>;  // Get all users
-  getUserByTelegramId(telegramId: string | number): Promise<User | undefined>;
+  getUserByTelegramId(telegramId: string): Promise<User | undefined>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -66,6 +120,11 @@ export interface IStorage {
   createCategory(category: InsertCategory): Promise<Category>;
   updateCategory(id: number, category: Partial<InsertCategory>): Promise<Category | undefined>;
   deleteCategory(id: number): Promise<void>;
+  
+  // Category-Submenu relationship operations
+  getCategorySubmenus(categoryId: number): Promise<number[]>;
+  setCategorySubmenus(categoryId: number, submenuIds: number[]): Promise<boolean>;
+  getSubmenuCategories(submenuId: number): Promise<Category[]>;
 
   // Ticket operations  
   createTicket(ticket: InsertTicket): Promise<Ticket>;
@@ -155,18 +214,48 @@ export interface IStorage {
   getTicketsByUserId(userId: number): Promise<Ticket[]>;
   
   // User state persistence
-  saveUserState(userId: number, telegramId: string | number, state: string): Promise<void>;
-  getUserStateByTelegramId(telegramId: string | number): Promise<string | undefined>;
+  saveUserState(userId: number, telegramId: string, state: string): Promise<void>;
+  getUserStateByTelegramId(telegramId: string): Promise<string | undefined>;
   deactivateUserState(telegramId: string | number): Promise<void>;
+
+  // Earnings operations
+  addEarningsAdjustment(workerId: string, amount: number, reason: string): Promise<void>;
+  editEarningsAdjustment(id: number, amount: number, reason: string): Promise<void>;
+  deleteEarningsAdjustment(id: number): Promise<void>;
+  clearAllStatistics(): Promise<void>;
+  ensureDiscordWorkerExists(discordId: string): Promise<void>;
+  updateWorkerUsername(discordId: string, username: string): Promise<void>;
+  refreshAllWorkerUsernames(): Promise<number>;
+
+  // Admin role operations
+  createAdminRole(role: InsertAdminRole): Promise<AdminRole>;
+  getAdminRoles(): Promise<AdminRole[]>;
+  getAdminRole(id: number): Promise<AdminRole | undefined>;
+  getAdminRoleByDiscordId(discordRoleId: string): Promise<AdminRole | undefined>;
+  updateAdminRole(id: number, role: Partial<InsertAdminRole>): Promise<AdminRole | undefined>;
+  deleteAdminRole(id: number): Promise<void>;
+  
+  // Role-category permission operations
+  setRoleCategoryPermissions(roleId: number, categoryIds: number[]): Promise<boolean>;
+  getRoleCategoryPermissions(roleId: number): Promise<number[]>;
+  getCategoryRolePermissions(categoryId: number): Promise<number[]>;
+  
+  // Permission checking
+  getUserAllowedCategories(discordUserId: string): Promise<number[]>;
+  canUserAccessCategory(discordUserId: string, categoryId: number): Promise<boolean>;
+  isUserFullAdmin(discordUserId: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
   // Bot config operations
   async getBotConfig(): Promise<BotConfig | undefined> {
+    if (isCacheValid()) {
+      return cache.botConfig;
+    }
     const [config] = await db.select().from(botConfig).limit(1);
     if (!config) {
       // Return default config if none exists
-      return {
+      const defaultConfig = {
         id: 1,
         welcomeMessage: "Welcome to the support bot! Please select a service:",
         welcomeImageUrl: null,
@@ -175,7 +264,11 @@ export class DatabaseStorage implements IStorage {
         adminTelegramIds: [],
         adminDiscordIds: []
       };
+      cache.botConfig = defaultConfig;
+      return defaultConfig;
     }
+    cache.botConfig = config;
+    cache.lastCacheTime = Date.now();
     return config;
   }
   
@@ -205,12 +298,16 @@ export class DatabaseStorage implements IStorage {
         .set(config)
         .where(eq(botConfig.id, existing.id))
         .returning();
+      cache.botConfig = updated;
+      cache.lastCacheTime = Date.now();
       return updated;
     } else {
       const [created] = await db
         .insert(botConfig)
         .values({ ...config, id: 1 })
         .returning();
+      cache.botConfig = created;
+      cache.lastCacheTime = Date.now();
       return created;
     }
   }
@@ -229,57 +326,12 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(users);
   }
 
-  async getUserByTelegramId(telegramId: string | number): Promise<User | undefined> {
+  async getUserByTelegramId(telegramId: string): Promise<User | undefined> {
     try {
-      // Convert to numeric value for bigint column regardless of input type
-      let numericId: number;
-      
-      if (typeof telegramId === 'string') {
-        // Handle string IDs that might be too large for parseInt
-        // Use String method instead for large numbers
-        if (telegramId.length > 15) {
-          try {
-            // For very large numbers, use BigInt and convert back to Number
-            // This handles IDs up to 2^53-1 (Number.MAX_SAFE_INTEGER)
-            numericId = Number(BigInt(telegramId));
-            
-            // If conversion results in NaN or infinity, handle gracefully
-            if (!isFinite(numericId)) {
-              console.log(`[DB] Telegram ID too large for safe conversion: ${telegramId}`);
-              return undefined;
-            }
-          } catch (conversionError) {
-            console.log(`[DB] Failed to convert large Telegram ID: ${telegramId}`, conversionError);
-            return undefined;
-          }
-        } else {
-          numericId = parseInt(telegramId, 10);
-        }
-      } else {
-        numericId = telegramId;
-      }
-      
-      if (isNaN(numericId)) {
-        console.log(`[DB] Invalid telegramId format: ${telegramId}`);
-        return undefined;
-      }
-      
-      // Use a try-catch specifically for the database query
-      try {
-        const [user] = await db.select().from(users).where(eq(users.telegramId, numericId));
-        return user;
-      } catch (dbError) {
-        console.error(`[DB] Database error looking up user ${telegramId}: ${dbError}`);
-        // Try alternative approach for very large IDs
-        if (String(telegramId).length > 15) {
-          console.log(`[DB] Trying string comparison for large ID: ${telegramId}`);
-          // This is a fallback to handle potential bigint conversion issues
-          const allUsers = await db.select().from(users);
-          const user = allUsers.find(u => String(u.telegramId) === String(telegramId));
-          return user;
-        }
-        return undefined;
-      }
+      // Validate telegramId
+      telegramIdSchema.parse(telegramId);
+      const [user] = await db.select().from(users).where(eq(users.telegramId, telegramId));
+      return user;
     } catch (error) {
       console.log(`[DB] Error in getUserByTelegramId(${telegramId}): ${error}`);
       return undefined;
@@ -298,62 +350,43 @@ export class DatabaseStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     try {
-      // Make sure telegramId is numeric if provided
       if (insertUser.telegramId) {
-        // Handle conversion for large IDs
-        let numericId: number;
-        const telegramId = insertUser.telegramId;
-        
-        if (typeof telegramId === 'string') {
-          // Handle string IDs that might be too large for parseInt
-          const telegramIdStr = telegramId as string;
-          if (telegramIdStr.length > 15) {
-            try {
-              // For very large numbers, use BigInt and convert back to Number
-              numericId = Number(BigInt(telegramId));
-              
-              // If conversion results in NaN or infinity, handle gracefully
-              if (!isFinite(numericId)) {
-                console.log(`[DB] Telegram ID too large for safe conversion in createUser: ${telegramId}`);
-                throw new Error(`Telegram ID too large for safe conversion: ${telegramId}`);
-              }
-            } catch (conversionError) {
-              console.log(`[DB] Failed to convert large Telegram ID in createUser: ${telegramId}`, conversionError);
-              throw new Error(`Failed to convert Telegram ID: ${telegramId}`);
-            }
-          } else {
-            numericId = parseInt(telegramId, 10);
-          }
-        } else {
-          numericId = telegramId;
-        }
-        
-        if (isNaN(numericId)) {
-          console.log(`[DB] Invalid telegramId format in createUser: ${telegramId}`);
-          throw new Error(`Invalid telegramId format: ${telegramId}`);
-        }
-        
-        // Update the insertUser object with the numeric ID
-        insertUser = {
-          ...insertUser,
-          telegramId: numericId
-        };
+        telegramIdSchema.parse(insertUser.telegramId);
       }
-      
       console.log(`[DB] Creating user with values: ${JSON.stringify(insertUser)}`);
-      
       try {
         const [user] = await db.insert(users).values(insertUser).returning();
         console.log(`[DB] Created user: ${JSON.stringify(user)}`);
         return user;
-      } catch (dbError) {
+      } catch (dbError: any) {
         console.error(`[DB] Database error creating user:`, dbError);
+        
+        // Handle sequence synchronization issues
+        if (dbError.code === '23505' && dbError.detail?.includes('already exists')) {
+          log(`User sequence out of sync detected. Attempting to fix...`, "warn");
+          
+          try {
+            // Fix the sequence by setting it to the max ID + 1
+            await db.execute(sql`
+              SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM users), false)
+            `);
+            
+            log(`User sequence fixed. Retrying user creation...`, "info");
+            
+            // Retry the insert
+            const [user] = await db.insert(users).values(insertUser).returning();
+            console.log(`[DB] Created user after sequence fix: ${JSON.stringify(user)}`);
+            return user;
+          } catch (retryError: any) {
+            log(`Failed to fix user sequence and retry: ${retryError.message}`, "error");
+            // Continue to the existing duplicate handling logic
+          }
+        }
         
         // If this was a duplicate key error, try to find the existing user
         const error = dbError as Error;
         if (insertUser.telegramId && error.message?.includes('duplicate')) {
           console.log(`[DB] Possible duplicate user, checking if user already exists with telegramId: ${insertUser.telegramId}`);
-          
           // Look up the existing user
           const existingUser = await this.getUserByTelegramId(insertUser.telegramId);
           if (existingUser) {
@@ -361,7 +394,6 @@ export class DatabaseStorage implements IStorage {
             return existingUser;
           }
         }
-        
         throw dbError;
       }
     } catch (error) {
@@ -394,10 +426,16 @@ export class DatabaseStorage implements IStorage {
 
   // Category operations
   async getCategories(): Promise<Category[]> {
+    if (isCacheValid() && cache.categories) {
+      return cache.categories;
+    }
     // Sort categories by displayOrder (ascending), then by name (alphabetically)
-    return db.select()
+    const categoryList = await db.select()
       .from(categories)
       .orderBy(categories.displayOrder, categories.name);
+    cache.categories = categoryList;
+    cache.lastCacheTime = Date.now();
+    return categoryList;
   }
 
   async getCategory(id: number): Promise<Category | undefined> {
@@ -406,8 +444,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCategory(insertCategory: InsertCategory): Promise<Category> {
-    const [category] = await db.insert(categories).values(insertCategory).returning();
-    return category;
+    try {
+      const [category] = await db.insert(categories).values(insertCategory).returning();
+      cache.categories = null;
+      return category;
+    } catch (error: any) {
+      // Handle sequence synchronization issues
+      if (error.code === '23505' && error.detail?.includes('already exists')) {
+        log(`Sequence out of sync detected. Attempting to fix...`, "warn");
+        
+        try {
+          // Fix the sequence by setting it to the max ID + 1
+          await db.execute(sql`
+            SELECT setval('categories_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM categories), false)
+          `);
+          
+          log(`Sequence fixed. Retrying category creation...`, "info");
+          
+          // Retry the insert
+          const [category] = await db.insert(categories).values(insertCategory).returning();
+          cache.categories = null;
+          return category;
+        } catch (retryError: any) {
+          log(`Failed to fix sequence and retry: ${retryError.message}`, "error");
+          throw error; // Throw the original error if retry fails
+        }
+      }
+      
+      throw error;
+    }
   }
 
   async updateCategory(id: number, updateData: Partial<InsertCategory>): Promise<Category | undefined> {
@@ -416,17 +481,120 @@ export class DatabaseStorage implements IStorage {
       .set(updateData)
       .where(eq(categories.id, id))
       .returning();
+    cache.categories = null;
     return category;
   }
 
   async deleteCategory(id: number): Promise<void> {
+    // First delete all submenu relations for this category
+    await db.delete(categorySubmenuRelations).where(eq(categorySubmenuRelations.categoryId, id));
+    
+    // Then delete the category itself
     await db.delete(categories).where(eq(categories.id, id));
+    cache.categories = null;
+  }
+
+  // New methods for handling many-to-many relationships
+  async getCategorySubmenus(categoryId: number): Promise<number[]> {
+    try {
+      const relations = await db
+        .select({ submenuId: categorySubmenuRelations.submenuId })
+        .from(categorySubmenuRelations)
+        .where(eq(categorySubmenuRelations.categoryId, categoryId));
+      
+      return relations.map(r => r.submenuId);
+    } catch (error) {
+      log(`Error getting category submenus: ${error}`, "error");
+      return [];
+    }
+  }
+
+  async setCategorySubmenus(categoryId: number, submenuIds: number[]): Promise<boolean> {
+    try {
+      // First, remove all existing relations for this category
+      await db.delete(categorySubmenuRelations).where(eq(categorySubmenuRelations.categoryId, categoryId));
+      
+      // Then, add the new relations
+      if (submenuIds.length > 0) {
+        const relations = submenuIds.map((submenuId, index) => ({
+          categoryId,
+          submenuId,
+          displayOrder: index
+        }));
+        
+        await db.insert(categorySubmenuRelations).values(relations);
+      }
+      
+      cache.categories = null;
+      return true;
+    } catch (error) {
+      log(`Error setting category submenus: ${error}`, "error");
+      return false;
+    }
+  }
+
+  async getSubmenuCategories(submenuId: number): Promise<Category[]> {
+    try {
+      const relations = await db
+        .select({ 
+          categoryId: categorySubmenuRelations.categoryId,
+          displayOrder: categorySubmenuRelations.displayOrder
+        })
+        .from(categorySubmenuRelations)
+        .where(eq(categorySubmenuRelations.submenuId, submenuId))
+        .orderBy(categorySubmenuRelations.displayOrder);
+      
+      if (relations.length === 0) {
+        return [];
+      }
+      
+      const categoryIds = relations.map(r => r.categoryId);
+      const categories = await db
+        .select()
+        .from(categories)
+        .where(inArray(categories.id, categoryIds));
+      
+      // Sort by the display order from relations
+      const sortedCategories = relations.map(relation => 
+        categories.find(cat => cat.id === relation.categoryId)
+      ).filter(Boolean) as Category[];
+      
+      return sortedCategories;
+    } catch (error) {
+      log(`Error getting submenu categories: ${error}`, "error");
+      return [];
+    }
   }
 
   // Ticket operations
   async createTicket(insertTicket: InsertTicket): Promise<Ticket> {
-    const [ticket] = await db.insert(tickets).values(insertTicket).returning();
-    return ticket;
+    try {
+      const [ticket] = await db.insert(tickets).values(insertTicket).returning();
+      return ticket;
+    } catch (error: any) {
+      // Handle sequence synchronization issues
+      if (error.code === '23505' && error.detail?.includes('already exists')) {
+        log(`Ticket sequence out of sync detected. Attempting to fix...`, "warn");
+        
+        try {
+          // Fix the sequence by setting it to the max ID + 1
+          await db.execute(sql`
+            SELECT setval('tickets_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM tickets), false)
+          `);
+          
+          log(`Ticket sequence fixed. Retrying ticket creation...`, "info");
+          
+          // Retry the insert
+          const [ticket] = await db.insert(tickets).values(insertTicket).returning();
+          return ticket;
+        } catch (retryError: any) {
+          log(`Failed to fix ticket sequence and retry: ${retryError.message}`, "error");
+          throw error; // Throw the original error if retry fails
+        }
+      }
+      
+      throw error;
+    }
   }
 
   async getTicket(id: number): Promise<Ticket | undefined> {
@@ -508,6 +676,48 @@ export class DatabaseStorage implements IStorage {
       }
       console.log(`[DB] Found ticket: ${JSON.stringify(ticketBefore)}`);
 
+      // If someone is claiming the ticket or marking it as completed/paid, ensure they exist in the users table
+      if (claimedBy && (status === 'in-progress' || status === 'completed' || status === 'paid' || status === 'closed')) {
+        await this.ensureDiscordWorkerExists(claimedBy);
+      }
+
+      // If closing/deleting a paid ticket, preserve payment data BEFORE status change
+      if (['closed', 'deleted', 'transcript', 'completed'].includes(status) && 
+          ticketBefore.amount > 0 && ticketBefore.claimedBy) {
+        
+        // Check if this payment is already recorded to prevent duplicates
+        const existingEntry = await db.select()
+          .from(earningsLedger)
+          .where(and(
+            eq(earningsLedger.ticketId, ticketBefore.id),
+            eq(earningsLedger.workerId, ticketBefore.claimedBy),
+            eq(earningsLedger.type, 'ticket_payment')
+          ));
+        
+        // Only record if not already in earnings ledger
+        if (existingEntry.length === 0) {
+          await db.insert(earningsLedger).values({
+            workerId: ticketBefore.claimedBy,
+            ticketId: ticketBefore.id,
+            categoryId: ticketBefore.categoryId || 0,
+            amount: ticketBefore.amount,
+            type: 'ticket_payment',
+            reason: `Payment preserved from ${status} ticket`,
+            status: 'confirmed',
+            createdAt: new Date(),
+            confirmedAt: new Date(),
+            confirmedBy: 'system'
+          });
+          
+          // Update worker earnings summary
+          await this.updateWorkerEarningsSummary(ticketBefore.claimedBy, ticketBefore.amount);
+          
+          log(`Preserved payment of $${ticketBefore.amount} for worker ${ticketBefore.claimedBy} from ${status} ticket ${id}`, "info");
+        } else {
+          log(`Payment for ticket ${id} already exists in earnings ledger, skipping duplicate entry`, "info");
+        }
+      }
+
       // Execute update
       const currentDate = new Date();
       
@@ -528,6 +738,45 @@ export class DatabaseStorage implements IStorage {
       // Verify update
       const [ticketAfter] = await db.select().from(tickets).where(eq(tickets.id, id));
       console.log(`[DB] After update: Ticket ${id} status is now '${ticketAfter?.status}'`);
+      
+      // If ticket was closed/deleted, notify the Telegram user and update their state
+      if (['closed', 'deleted', 'transcript', 'completed'].includes(status) && ticketBefore.userId) {
+        try {
+          // Get the user who owns this ticket
+          const user = await this.getUser(ticketBefore.userId);
+          if (user?.telegramId) {
+            // Use the bridge manager to send notification instead of creating new bot instance
+            const { BridgeManager } = await import('./bot/bridge');
+            const bridge = BridgeManager.getInstance();
+            
+            // Send notification to user
+            const statusMessage = status === 'closed' ? 'closed' : 
+                                status === 'deleted' ? 'deleted' : 
+                                status === 'transcript' ? 'moved to transcripts' : 'completed';
+            
+            await bridge.sendMessageToTelegram(
+              user.telegramId,
+              `📋 **Ticket #${id} has been ${statusMessage}**\n\n` +
+              `Your ticket has been ${statusMessage} by our staff. ` +
+              `If you have other active tickets, you can continue using those, or use /start to create a new ticket.`
+            );
+            
+            // Update user state to remove this ticket from their active ticket
+            const telegramBot = bridge.getTelegramBot();
+            const userState = telegramBot.getUserState(user.telegramId);
+            if (userState && userState.activeTicketId === id) {
+              userState.activeTicketId = undefined;
+              await telegramBot.setState(user.telegramId, userState);
+              log(`Updated user ${user.telegramId} state to remove closed ticket ${id}`, "info");
+            }
+            
+            log(`Notified user ${user.telegramId} about ticket ${id} being ${status}`, "info");
+          }
+        } catch (notificationError) {
+          log(`Failed to notify user about ticket ${id} closure: ${notificationError}`, "error");
+          // Don't throw error - ticket closure should succeed even if notification fails
+        }
+      }
       
     } catch (error) {
       console.error(`[DB] Error updating ticket ${id} status: ${error}`);
@@ -572,18 +821,94 @@ export class DatabaseStorage implements IStorage {
   // Delete a ticket and its messages
   async deleteTicket(id: number): Promise<void> {
     try {
+      // Get the ticket before deleting
+      const [ticket] = await db.select().from(tickets).where(eq(tickets.id, id));
+      
+      if (!ticket) {
+        throw new Error(`Ticket ${id} not found`);
+      }
+      
+      // If ticket has payment data, preserve it in earnings ledger BEFORE deleting
+      if (ticket.amount > 0 && ticket.claimedBy) {
+        // Check if this payment is already recorded in earnings ledger
+        const existingEntry = await db.select()
+          .from(earningsLedger)
+          .where(and(
+            eq(earningsLedger.ticketId, ticket.id),
+            eq(earningsLedger.workerId, ticket.claimedBy),
+            eq(earningsLedger.type, 'ticket_payment')
+          ));
+        
+        // Only record if not already in earnings ledger
+        if (existingEntry.length === 0) {
+          await db.insert(earningsLedger).values({
+            workerId: ticket.claimedBy,
+            ticketId: ticket.id,
+            categoryId: ticket.categoryId || 0,
+            amount: ticket.amount,
+            type: 'ticket_payment',
+            reason: 'Payment preserved from deleted ticket',
+            status: 'confirmed',
+            createdAt: new Date(),
+            confirmedAt: new Date(),
+            confirmedBy: 'system'
+          });
+          
+          // Update worker earnings summary
+          await this.updateWorkerEarningsSummary(ticket.claimedBy, ticket.amount);
+          
+          log(`Preserved payment of $${ticket.amount} for worker ${ticket.claimedBy} from deleted ticket ${id}`, "info");
+        } else {
+          log(`Payment for ticket ${id} already exists in earnings ledger, skipping duplicate entry`, "info");
+        }
+      }
+      
       // Start a transaction to ensure both operations succeed or fail together
       await db.transaction(async (tx) => {
         // First delete associated messages
         await tx.delete(messages)
           .where(eq(messages.ticketId, id));
-        
         // Then delete the ticket
         await tx.delete(tickets)
           .where(eq(tickets.id, id));
       });
-      
       console.log(`Successfully deleted ticket ${id} and its messages`);
+      
+      // Notify the Telegram user about ticket deletion and update their state
+      if (ticket.userId) {
+        try {
+          // Get the user who owns this ticket
+          const user = await this.getUser(ticket.userId);
+          if (user?.telegramId) {
+            // Use the bridge manager to send notification instead of creating new bot instance
+            const { BridgeManager } = await import('./bot/bridge');
+            const bridge = BridgeManager.getInstance();
+            
+            // Send notification to user
+            await bridge.sendMessageToTelegram(
+              user.telegramId,
+              `🗑️ **Ticket #${id} has been deleted**\n\n` +
+              `Your ticket has been deleted by our staff. ` +
+              `If you have other active tickets, you can continue using those, or use /start to create a new ticket.`
+            );
+            
+            // Update user state to remove this ticket from their active ticket
+            const telegramBot = bridge.getTelegramBot();
+            const userState = telegramBot.getUserState(user.telegramId);
+            if (userState && userState.activeTicketId === id) {
+              userState.activeTicketId = undefined;
+              await telegramBot.setState(user.telegramId, userState);
+              log(`Updated user ${user.telegramId} state to remove deleted ticket ${id}`, "info");
+            }
+            
+            log(`Notified user ${user.telegramId} about ticket ${id} being deleted`, "info");
+          }
+        } catch (notificationError) {
+          log(`Failed to notify user about ticket ${id} deletion: ${notificationError}`, "error");
+          // Don't throw error - ticket deletion should succeed even if notification fails
+        }
+      }
+      
     } catch (error) {
       console.error(`Error deleting ticket ${id}:`, error);
       throw error;
@@ -592,8 +917,33 @@ export class DatabaseStorage implements IStorage {
 
   // Message operations
   async createMessage(insertMessage: InsertMessage): Promise<Message> {
-    const [message] = await db.insert(messages).values(insertMessage).returning();
-    return message;
+    try {
+      const [message] = await db.insert(messages).values(insertMessage).returning();
+      return message;
+    } catch (error: any) {
+      // Handle sequence synchronization issues
+      if (error.code === '23505' && error.detail?.includes('already exists')) {
+        log(`Message sequence out of sync detected. Attempting to fix...`, "warn");
+        
+        try {
+          // Fix the sequence by setting it to the max ID + 1
+          await db.execute(sql`
+            SELECT setval('messages_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM messages), false)
+          `);
+          
+          log(`Message sequence fixed. Retrying message creation...`, "info");
+          
+          // Retry the insert
+          const [message] = await db.insert(messages).values(insertMessage).returning();
+          return message;
+        } catch (retryError: any) {
+          log(`Failed to fix message sequence and retry: ${retryError.message}`, "error");
+          throw error; // Throw the original error if retry fails
+        }
+      }
+      
+      throw error;
+    }
   }
 
   async getTicketMessages(ticketId: number): Promise<Message[]> {
@@ -606,49 +956,78 @@ export class DatabaseStorage implements IStorage {
   
   // Get recent messages with attachments (for debugging and recovery)
   async getRecentMessages(limit: number = 20): Promise<Message[]> {
+    // Limit to prevent expensive queries
+    const safeLimit = Math.min(limit, 100);
     return db
       .select()
       .from(messages)
       .where(sql`${messages.attachments} is not null`)
       .orderBy(desc(messages.timestamp))
-      .limit(limit);
+      .limit(safeLimit);
   }
   
   // Get recent messages from a specific user (to determine active ticket)
   async getRecentMessagesFromUser(userId: number, limit: number = 10): Promise<Message[]> {
+    // Limit to prevent expensive queries
+    const safeLimit = Math.min(limit, 50);
     return db
       .select()
       .from(messages)
       .where(eq(messages.authorId, userId))
       .orderBy(desc(messages.timestamp))
-      .limit(limit);
+      .limit(safeLimit);
   }
 
   // Stats operations
   async updateTicketPayment(id: number, amount: number, claimedBy: string): Promise<void> {
-    // Create a current date with explicit year setting to avoid any system date issues
-    const currentDate = new Date();
-    
-    // First check the server's concept of what year it is
-    console.log(`System timestamp is ${Date.now()}, date is ${currentDate.toISOString()}`);
-    console.log(`Current year is ${currentDate.getFullYear()}`);
-    
-    // Force the year to the current system year
-    console.log(`Setting ticket ${id} as paid with completion date: ${currentDate.toISOString()}`);
-    
-    // Use SQL directly to ensure the timestamp is set correctly in the database
-    // This bypasses any potential date serialization issues
-    await db.execute(sql`
-      UPDATE tickets 
-      SET 
-        amount = ${amount}, 
-        claimed_by = ${claimedBy}, 
-        status = 'paid', 
-        completed_at = now() 
-      WHERE id = ${id}
-    `);
-    
-    console.log(`Updated ticket ${id} with payment info using database timestamp`);
+    try {
+      // Ensure the worker exists in the users table
+      await this.ensureDiscordWorkerExists(claimedBy);
+      
+      // Get the ticket to get category information
+      const ticket = await this.getTicket(id);
+      if (!ticket) {
+        throw new Error(`Ticket ${id} not found`);
+      }
+
+      // Create a current date with explicit year setting to avoid any system date issues
+      const currentDate = new Date();
+      
+      // First check the server's concept of what year it is
+      console.log(`System timestamp is ${Date.now()}, date is ${currentDate.toISOString()}`);
+      console.log(`Current year is ${currentDate.getFullYear()}`);
+      
+      // Force the year to the current system year
+      console.log(`Setting ticket ${id} as paid with completion date: ${currentDate.toISOString()}`);
+      
+      // Use SQL directly to ensure the timestamp is set correctly in the database
+      // This bypasses any potential date serialization issues
+      await db.execute(sql`
+        UPDATE tickets 
+        SET 
+          amount = ${amount}, 
+          claimed_by = ${claimedBy}, 
+          status = 'paid', 
+          completed_at = now() 
+        WHERE id = ${id}
+      `);
+      
+      console.log(`Updated ticket ${id} with payment info using database timestamp`);
+
+      // Record the payment in the persistent earnings ledger
+      await this.recordTicketPayment(
+        id, 
+        claimedBy, 
+        amount, 
+        ticket.categoryId || 0, 
+        `Payment for ticket #${id}`
+      );
+      
+      console.log(`Recorded persistent payment of $${amount} for worker ${claimedBy} on ticket ${id}`);
+    } catch (error: any) {
+      console.error(`Failed to update ticket payment: ${error.message}`);
+      throw error;
+    }
   }
 
   async getUserStats(discordId: string): Promise<{
@@ -661,44 +1040,53 @@ export class DatabaseStorage implements IStorage {
       ticketCount: number;
     }>;
   }> {
-    const result = await db.select({
-      earnings: sql<number>`sum(${tickets.amount})::int`,
-      count: sql<number>`count(*)::int`
-    })
-    .from(tickets)
-    .where(
-      and(
-        eq(tickets.claimedBy, discordId),
-        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
-      )
-    );
+    try {
+      // Get persistent earnings from the ledger
+      const ledgerResult = await db.select({
+        totalEarnings: sql<number>`COALESCE(SUM(${earningsLedger.amount}), 0)::int`,
+        totalTickets: sql<number>`COUNT(*)::int`
+      })
+      .from(earningsLedger)
+      .where(and(
+        eq(earningsLedger.workerId, discordId),
+        eq(earningsLedger.status, 'confirmed'),
+        eq(earningsLedger.type, 'ticket_payment')
+      ));
 
-    const categoryStats = await db.select({
-      categoryId: categories.id,
-      categoryName: categories.name,
-      earnings: sql<number>`sum(${tickets.amount})::int`,
-      ticketCount: sql<number>`count(*)::int`
-    })
-    .from(tickets)
-    .leftJoin(categories, eq(tickets.categoryId, categories.id))
-    .where(
-      and(
-        eq(tickets.claimedBy, discordId),
-        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
-      )
-    )
-    .groupBy(categories.id, categories.name);
+      // Get category stats from the ledger
+      const categoryStats = await db.select({
+        categoryId: earningsLedger.categoryId,
+        categoryName: categories.name,
+        earnings: sql<number>`SUM(${earningsLedger.amount})::int`,
+        ticketCount: sql<number>`COUNT(*)::int`
+      })
+      .from(earningsLedger)
+      .leftJoin(categories, eq(earningsLedger.categoryId, categories.id))
+      .where(and(
+        eq(earningsLedger.workerId, discordId),
+        eq(earningsLedger.status, 'confirmed'),
+        eq(earningsLedger.type, 'ticket_payment')
+      ))
+      .groupBy(earningsLedger.categoryId, categories.name);
 
-    return {
-      totalEarnings: result[0]?.earnings || 0,
-      ticketCount: result[0]?.count || 0,
-      categoryStats: categoryStats.map(stat => ({
-        categoryId: stat.categoryId || 0,
-        categoryName: stat.categoryName || "Uncategorized",
-        earnings: stat.earnings || 0,
-        ticketCount: stat.ticketCount
-      }))
-    };
+      return {
+        totalEarnings: ledgerResult[0]?.totalEarnings || 0,
+        ticketCount: ledgerResult[0]?.totalTickets || 0,
+        categoryStats: categoryStats.map(stat => ({
+          categoryId: stat.categoryId || 0,
+          categoryName: stat.categoryName || 'Unknown',
+          earnings: stat.earnings || 0,
+          ticketCount: stat.ticketCount || 0
+        }))
+      };
+    } catch (error: any) {
+      log(`Failed to get user stats for ${discordId}: ${error.message}`, "error");
+      return {
+        totalEarnings: 0,
+        ticketCount: 0,
+        categoryStats: []
+      };
+    }
   }
 
   async getAllWorkerStats(): Promise<Array<{
@@ -707,27 +1095,50 @@ export class DatabaseStorage implements IStorage {
     totalEarnings: number;
     ticketCount: number;
   }>> {
-    const stats = await db.select({
+    // Get all workers (users with at least one ticket, adjustment, or ledger entry)
+    const workers = await db.select({
+      discordId: users.discordId,
+      username: users.username
+    }).from(users);
+
+    // Get ticket earnings
+    const ticketStats = await db.select({
       discordId: tickets.claimedBy,
       earnings: sql<number>`sum(${tickets.amount})::int`,
       count: sql<number>`count(*)::int`
     })
-    .from(tickets)
-    .where(
-      and(
-        sql`${tickets.claimedBy} is not null`,
-        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
-      )
-    )
-    .groupBy(tickets.claimedBy)
-    .orderBy(desc(sql<number>`sum(${tickets.amount})`));
+      .from(tickets)
+      .where(sql`${tickets.claimedBy} is not null`)
+      .groupBy(tickets.claimedBy);
 
-    return stats.map(stat => ({
-      discordId: stat.discordId!,
-      username: stat.discordId!, // In real app, get from Discord
-      totalEarnings: stat.earnings || 0,
-      ticketCount: stat.count
-    }));
+    // Get adjustments
+    const adjustments = await db.select({
+      workerId: earningsAdjustments.workerId,
+      totalAdjustment: sql<number>`sum(${earningsAdjustments.amount})::int`
+    })
+      .from(earningsAdjustments)
+      .groupBy(earningsAdjustments.workerId);
+
+    // Get ledger earnings
+    const ledger = await db.select({
+      workerId: earningsLedger.workerId,
+      totalLedger: sql<number>`sum(${earningsLedger.amount})::int`
+    })
+      .from(earningsLedger)
+      .groupBy(earningsLedger.workerId);
+
+    // Merge stats
+    return workers.map(worker => {
+      const ticketStat = ticketStats.find(ts => ts.discordId === worker.discordId) || { earnings: 0, count: 0 };
+      const adjustment = adjustments.find(adj => adj.workerId === worker.discordId) || { totalAdjustment: 0 };
+      const ledgerStat = ledger.find(l => l.workerId === worker.discordId) || { totalLedger: 0 };
+      return {
+        discordId: worker.discordId,
+        username: worker.username,
+        totalEarnings: (ticketStat.earnings || 0) + (adjustment.totalAdjustment || 0) + (ledgerStat.totalLedger || 0),
+        ticketCount: ticketStat.count || 0 // Optionally, you could sum ticketCount + ledger count if you want
+      };
+    });
   }
 
   async getUserStatsByPeriod(discordId: string, period: 'week' | 'month' | 'all'): Promise<{
@@ -855,42 +1266,45 @@ export class DatabaseStorage implements IStorage {
       End: ${periodEnd.toISOString()} (${periodEnd.getFullYear()}-${periodEnd.getMonth()+1}-${periodEnd.getDate()})
     `);
 
-    // First get all worker stats regardless of date filtering
-    // This ensures we have all paid tickets in the system
+    // First get all worker stats from earnings ledger (preserved payments)
+    // This ensures we have all paid tickets even if they were deleted
     let statsQuery = db.select({
-      discordId: tickets.claimedBy,
-      earnings: sql<number>`sum(${tickets.amount})::int`,
+      discordId: earningsLedger.workerId,
+      earnings: sql<number>`sum(${earningsLedger.amount})::int`,
       count: sql<number>`count(*)::int`
     })
-    .from(tickets)
+    .from(earningsLedger)
     .where(
       and(
-        sql`${tickets.claimedBy} is not null`,
-        gt(tickets.amount, 0) // Check for positive amount instead of 'paid' status
+        sql`${earningsLedger.workerId} is not null`,
+        eq(earningsLedger.type, 'ticket_payment'),
+        eq(earningsLedger.status, 'confirmed')
       )
     )
-    .groupBy(tickets.claimedBy)
-    .orderBy(desc(sql<number>`sum(${tickets.amount})`));
+    .groupBy(earningsLedger.workerId)
+    .orderBy(desc(sql<number>`sum(${earningsLedger.amount})`));
     
     // Only apply date filtering if not showing all-time stats
     if (period !== 'all') {
       statsQuery = db.select({
-        discordId: tickets.claimedBy,
-        earnings: sql<number>`sum(${tickets.amount})::int`,
+        discordId: earningsLedger.workerId,
+        earnings: sql<number>`sum(${earningsLedger.amount})::int`,
         count: sql<number>`count(*)::int`
       })
-      .from(tickets)
+      .from(earningsLedger)
       .where(
         and(
-          sql`${tickets.claimedBy} is not null`,
-          gt(tickets.amount, 0), // Check for positive amount instead of 'paid' status
-          // Use COALESCE to handle NULL completedAt values safely
-          sql`COALESCE(${tickets.completedAt} >= ${periodStart}, false)`,
-          sql`COALESCE(${tickets.completedAt} <= ${periodEnd}, false)`
+          sql`${earningsLedger.workerId} is not null`,
+          eq(earningsLedger.type, 'ticket_payment'),
+          eq(earningsLedger.status, 'confirmed'),
+          // Use proper date comparison with null handling
+          sql`${earningsLedger.completedAt} IS NOT NULL`,
+          gte(earningsLedger.completedAt, periodStart),
+          lte(earningsLedger.completedAt, periodEnd)
         )
       )
-      .groupBy(tickets.claimedBy)
-      .orderBy(desc(sql<number>`sum(${tickets.amount})`));
+      .groupBy(earningsLedger.workerId)
+      .orderBy(desc(sql<number>`sum(${earningsLedger.amount})`));
     }
     
     const stats = await statsQuery;
@@ -898,9 +1312,20 @@ export class DatabaseStorage implements IStorage {
     // Log the approach we're using
     console.log(`Using improved worker stats query for period ${period} - found ${stats.length} workers`);
 
+    // Get usernames for all workers
+    const discordIds = stats.map(stat => stat.discordId!).filter(id => id);
+    const usersData = discordIds.length > 0 ? await db.select({
+      discordId: users.discordId,
+      username: users.username
+    })
+    .from(users)
+    .where(inArray(users.discordId, discordIds)) : [];
+
+    const userMap = new Map(usersData.map(user => [user.discordId, user.username]));
+
     return stats.map(stat => ({
       discordId: stat.discordId!,
-      username: stat.discordId!, // In real app, get from Discord
+      username: userMap.get(stat.discordId!) || stat.discordId!, // Use actual username or fallback to Discord ID
       totalEarnings: stat.earnings || 0, 
       ticketCount: stat.count,
       periodStart,
@@ -1018,48 +1443,62 @@ export class DatabaseStorage implements IStorage {
       End: ${adjustedEndDate.toISOString()} (${adjustedEndDate.getFullYear()}-${adjustedEndDate.getMonth()+1}-${adjustedEndDate.getDate()})
     `);
     
-    // First get all worker stats regardless of date filtering
-    // This ensures we have all paid tickets in the system
+    // First get all worker stats from earnings ledger (preserved payments)
+    // This ensures we have all paid tickets even if they were deleted
     const allPaidStats = await db.select({
-      discordId: tickets.claimedBy,
-      earnings: sql<number>`sum(${tickets.amount})::int`,
+      discordId: earningsLedger.workerId,
+      earnings: sql<number>`sum(${earningsLedger.amount})::int`,
       count: sql<number>`count(*)::int`
     })
-    .from(tickets)
+    .from(earningsLedger)
     .where(
       and(
-        sql`${tickets.claimedBy} is not null`,
-        gt(tickets.amount, 0) // Check for positive amount
+        sql`${earningsLedger.workerId} is not null`,
+        eq(earningsLedger.type, 'ticket_payment'),
+        eq(earningsLedger.status, 'confirmed')
       )
     )
-    .groupBy(tickets.claimedBy);
+    .groupBy(earningsLedger.workerId);
     
     console.log(`Found ${allPaidStats.length} workers with paid tickets (all time)`);
     
-    // Now get date-filtered stats
+    // Now get date-filtered stats from earnings ledger
     const stats = await db.select({
-      discordId: tickets.claimedBy,
-      earnings: sql<number>`sum(${tickets.amount})::int`,
+      discordId: earningsLedger.workerId,
+      earnings: sql<number>`sum(${earningsLedger.amount})::int`,
       count: sql<number>`count(*)::int`
     })
-    .from(tickets)
+    .from(earningsLedger)
     .where(
-      and(
-        sql`${tickets.claimedBy} is not null`,
-        gt(tickets.amount, 0), // Check for positive amount instead of paid status
-        // Use COALESCE to handle NULL completedAt values safely
-        sql`COALESCE(${tickets.completedAt} >= ${startDate}, false)`,
-        sql`COALESCE(${tickets.completedAt} <= ${adjustedEndDate}, false)`
-      )
+        and(
+          sql`${earningsLedger.workerId} is not null`,
+          eq(earningsLedger.type, 'ticket_payment'),
+          eq(earningsLedger.status, 'confirmed'),
+          // Use proper date comparison with null handling
+          sql`${earningsLedger.completedAt} IS NOT NULL`,
+          gte(earningsLedger.completedAt, startDate),
+          lte(earningsLedger.completedAt, adjustedEndDate)
+        )
     )
-    .groupBy(tickets.claimedBy)
-    .orderBy(desc(sql<number>`sum(${tickets.amount})`));
+    .groupBy(earningsLedger.workerId)
+    .orderBy(desc(sql<number>`sum(${earningsLedger.amount})`));
 
     console.log(`Found ${stats.length} workers with tickets in the specified date range`);
 
+    // Get usernames for all workers
+    const discordIds = stats.map(stat => stat.discordId!).filter(id => id);
+    const usersData = discordIds.length > 0 ? await db.select({
+      discordId: users.discordId,
+      username: users.username
+    })
+    .from(users)
+    .where(inArray(users.discordId, discordIds)) : [];
+
+    const userMap = new Map(usersData.map(user => [user.discordId, user.username]));
+
     return stats.map(stat => ({
       discordId: stat.discordId!,
-      username: stat.discordId!, // In real app, get from Discord
+      username: userMap.get(stat.discordId!) || stat.discordId!, // Use actual username or fallback to Discord ID
       totalEarnings: stat.earnings || 0,
       ticketCount: stat.count,
       periodStart: startDate,
@@ -1071,7 +1510,7 @@ export class DatabaseStorage implements IStorage {
     console.log(`[DB] Checking for active tickets for user ${userId}`);
     
     // Get all tickets for this user that are in an active state
-    // This should include 'open', 'in-progress', 'pending', but NOT 'paid', 'closed', 'deleted', etc.
+    // This should include 'open', 'in-progress', 'pending', and 'paid' since users should still be able to message in paid tickets
     try {
       // First, let's retrieve all active tickets to debug multiple ticket scenarios
       const activeTickets = await db
@@ -1080,9 +1519,8 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             eq(tickets.userId, userId),
-            // Only consider tickets with active statuses
-            // Exclude 'paid' status for the purpose of creating new tickets
-            sql`(${tickets.status} IN ('open', 'in-progress', 'pending'))`
+            // Consider tickets with active statuses including 'paid' since users should still be able to message
+            sql`(${tickets.status} IN ('open', 'in-progress', 'pending', 'paid'))`
           )
         )
         .orderBy(desc(tickets.id)); // Most recent first
@@ -1114,16 +1552,15 @@ export class DatabaseStorage implements IStorage {
     console.log(`[DB] Retrieving all active tickets for user ${userId}`);
     
     // Get all tickets for this user that are not in a finalized state
-    // This should include only 'open', 'in-progress', and 'pending', but NOT 'paid', 'closed', 'deleted', etc.
+    // This should include 'open', 'in-progress', 'pending', and 'paid' since users should still be able to message in paid tickets
     const activeTickets = await db
       .select()
       .from(tickets)
       .where(
         and(
           eq(tickets.userId, userId),
-          // Consider only tickets with active statuses
-          // Note: 'paid' status is now excluded because it should be treated as completed for ticket creation purposes
-          sql`(${tickets.status} IN ('open', 'in-progress', 'pending'))`
+          // Consider tickets with active statuses including 'paid' since users should still be able to message
+          sql`(${tickets.status} IN ('open', 'in-progress', 'pending', 'paid'))`
         )
       )
       .orderBy(desc(tickets.id)); // Most recent first
@@ -1221,182 +1658,36 @@ export class DatabaseStorage implements IStorage {
   }
 
   // User state persistence methods
-  async saveUserState(userId: number, telegramId: string | number, state: string): Promise<void> {
+  async saveUserState(userId: number, telegramId: string, state: string): Promise<void> {
     try {
-      // Convert to numeric value for bigint column
-      let numericId: number;
-      
-      if (typeof telegramId === 'string') {
-        // Handle string IDs that might be too large for parseInt
-        if (telegramId.length > 15) {
-          try {
-            // For very large numbers, use BigInt and convert back to Number
-            numericId = Number(BigInt(telegramId));
-            
-            // If conversion results in NaN or infinity, handle gracefully
-            if (!isFinite(numericId)) {
-              console.log(`[DB] Telegram ID too large for safe conversion in saveUserState: ${telegramId}`);
-              throw new Error(`Telegram ID too large for safe conversion: ${telegramId}`);
-            }
-          } catch (conversionError) {
-            console.log(`[DB] Failed to convert large Telegram ID in saveUserState: ${telegramId}`, conversionError);
-            throw new Error(`Failed to convert Telegram ID: ${telegramId}`);
-          }
-        } else {
-          numericId = parseInt(telegramId, 10);
-        }
-      } else {
-        numericId = telegramId;
-      }
-      
-      if (isNaN(numericId)) {
-        console.log(`[DB] Invalid telegramId format in saveUserState: ${telegramId}`);
-        throw new Error(`Invalid telegramId format: ${telegramId}`);
-      }
-      
-      try {
-        // First, deactivate any existing states for this telegram ID
-        await db
-          .update(userStates)
-          .set({ isActive: false })
-          .where(and(
-            eq(userStates.telegramId, numericId),
-            eq(userStates.isActive, true)
-          ));
-        
-        // Then create a new active state
-        await db.insert(userStates).values({
-          userId,
-          telegramId: numericId,
-          state,
-          timestamp: new Date(),
-          isActive: true
-        });
-        
-        console.log(`[DB] Saved user state for telegramId: ${telegramId}`);
-      } catch (dbError) {
-        console.error(`[DB] Database error saving state for user ${telegramId}: ${dbError}`);
-        
-        // Try alternative approach for very large IDs if this is a DB error
-        if (String(telegramId).length > 15) {
-          try {
-            console.log(`[DB] Trying alternative approach for saving state with large ID: ${telegramId}`);
-            
-            // First fetch all active states for this user by userId
-            const activeStates = await db
-              .select()
-              .from(userStates)
-              .where(and(
-                eq(userStates.userId, userId),
-                eq(userStates.isActive, true)
-              ));
-            
-            // Deactivate them all using their IDs
-            for (const activeState of activeStates) {
-              await db
-                .update(userStates)
-                .set({ isActive: false })
-                .where(eq(userStates.id, activeState.id));
-            }
-            
-            // Insert a new state using string representation
-            // Use a raw SQL query as a last resort
-            await db.execute(sql`
-              INSERT INTO user_states 
-              (user_id, telegram_id, state, is_active, timestamp)
-              VALUES 
-              (${userId}, ${String(telegramId)}, ${state}, true, ${new Date()})
-            `);
-            
-            console.log(`[DB] Saved user state using alternative method for ID: ${telegramId}`);
-          } catch (alternativeError) {
-            console.error(`[DB] Alternative approach failed for user ${telegramId}:`, alternativeError);
-            throw alternativeError;
-          }
-        } else {
-          throw dbError;
-        }
-      }
+      telegramIdSchema.parse(telegramId);
+      await db.insert(userStates).values({ userId, telegramId, state }).returning();
     } catch (error) {
       console.error(`[DB] Error saving user state for telegramId: ${telegramId}`, error);
       throw error;
     }
   }
 
-  async getUserStateByTelegramId(telegramId: string | number): Promise<string | undefined> {
+  async getUserStateByTelegramId(telegramId: string): Promise<string | undefined> {
     try {
-      // Convert to numeric value for bigint column
-      let numericId: number;
-      
-      if (typeof telegramId === 'string') {
-        // Handle string IDs that might be too large for parseInt
-        if (telegramId.length > 15) {
-          try {
-            // For very large numbers, use BigInt and convert back to Number
-            numericId = Number(BigInt(telegramId));
-            
-            // If conversion results in NaN or infinity, handle gracefully
-            if (!isFinite(numericId)) {
-              console.log(`[DB] Telegram ID too large for safe conversion in getUserStateByTelegramId: ${telegramId}`);
-              return undefined;
-            }
-          } catch (conversionError) {
-            console.log(`[DB] Failed to convert large Telegram ID in getUserStateByTelegramId: ${telegramId}`, conversionError);
-            return undefined;
-          }
-        } else {
-          numericId = parseInt(telegramId, 10);
-        }
-      } else {
-        numericId = telegramId;
+      telegramIdSchema.parse(telegramId);
+      const [userState] = await db
+        .select()
+        .from(userStates)
+        .where(and(
+          eq(userStates.telegramId, telegramId),
+          eq(userStates.isActive, true)
+        ))
+        .orderBy(desc(userStates.timestamp))
+        .limit(1);
+      if (userState) {
+        console.log(`[DB] Found active user state for telegramId: ${telegramId}`);
+        return userState.state;
       }
-      
-      if (isNaN(numericId)) {
-        console.log(`[DB] Invalid telegramId format in getUserStateByTelegramId: ${telegramId}`);
-        return undefined;
-      }
-      
-      // Use a try-catch specifically for the database query
-      try {
-        const [userState] = await db
-          .select()
-          .from(userStates)
-          .where(and(
-            eq(userStates.telegramId, numericId),
-            eq(userStates.isActive, true)
-          ))
-          .orderBy(desc(userStates.timestamp))
-          .limit(1);
-        
-        if (userState) {
-          console.log(`[DB] Found active user state for telegramId: ${telegramId}`);
-          return userState.state;
-        }
-        
-        console.log(`[DB] No active user state found for telegramId: ${telegramId}`);
-        return undefined;
-      } catch (dbError) {
-        console.error(`[DB] Database error retrieving state for user ${telegramId}: ${dbError}`);
-        
-        // Try alternative approach for very large IDs
-        if (String(telegramId).length > 15) {
-          console.log(`[DB] Trying alternative lookup for state with large ID: ${telegramId}`);
-          // This is a fallback to handle potential bigint conversion issues
-          const allUserStates = await db
-            .select()
-            .from(userStates)
-            .where(eq(userStates.isActive, true))
-            .orderBy(desc(userStates.timestamp));
-            
-          const userState = allUserStates.find(u => String(u.telegramId) === String(telegramId));
-          if (userState) {
-            return userState.state;
-          }
-        }
-        return undefined;
-      }
+      console.log(`[DB] No active user state found for telegramId: ${telegramId}`);
+      return undefined;
     } catch (error) {
-      console.error(`[DB] Error retrieving user state for telegramId: ${telegramId}`, error);
+      console.error(`[DB] Error retrieving state for telegramId: ${telegramId}`, error);
       return undefined;
     }
   }
@@ -1483,6 +1774,622 @@ export class DatabaseStorage implements IStorage {
       console.error(`[DB] Error deactivating user states for telegramId: ${telegramId}`, error);
       // Don't throw error to avoid crashing the application
       // This is a non-critical operation that can be retried
+    }
+  }
+
+  // Persistent earnings tracking methods
+  async recordTicketPayment(ticketId: number, workerId: string, amount: number, categoryId: number, reason: string = "Ticket payment"): Promise<void> {
+    try {
+      // Check if this payment is already recorded
+      const existingEntry = await db.select()
+        .from(earningsLedger)
+        .where(and(
+          eq(earningsLedger.ticketId, ticketId),
+          eq(earningsLedger.workerId, workerId),
+          eq(earningsLedger.type, 'ticket_payment')
+        ));
+      
+      if (existingEntry.length > 0) {
+        const existingPayment = existingEntry[0];
+        const oldAmount = existingPayment.amount;
+        
+        // If the amount is the same, no need to update
+        if (oldAmount === amount) {
+          log(`Payment for ticket ${ticketId} already exists with same amount $${amount}, no update needed`, "info");
+          return;
+        }
+        
+        // Update the existing payment amount
+        await db.update(earningsLedger)
+          .set({
+            amount: amount,
+            reason: reason,
+            confirmedAt: new Date(),
+            confirmedBy: 'system'
+          })
+          .where(eq(earningsLedger.id, existingPayment.id));
+        
+        // Update worker earnings summary to reflect the change
+        const amountDifference = amount - oldAmount;
+        await this.updateWorkerEarningsSummary(workerId, amountDifference);
+        
+        log(`Updated payment for ticket ${ticketId} from $${oldAmount} to $${amount} for worker ${workerId}`, "info");
+        return;
+      }
+      
+      // Record new payment in the earnings ledger
+      await db.insert(earningsLedger).values({
+        workerId,
+        ticketId,
+        categoryId,
+        amount,
+        type: 'ticket_payment',
+        reason,
+        status: 'confirmed',
+        createdAt: new Date(),
+        confirmedAt: new Date(),
+        confirmedBy: 'system'
+      });
+
+      // Update the worker earnings summary
+      await this.updateWorkerEarningsSummary(workerId, amount);
+      
+      log(`Recorded new payment of $${amount} for worker ${workerId} on ticket ${ticketId}`, "info");
+    } catch (error: any) {
+      log(`Failed to record ticket payment: ${error.message}`, "error");
+      throw error;
+    }
+  }
+
+  async updateWorkerEarningsSummary(workerId: string, additionalAmount: number = 0): Promise<void> {
+    try {
+      // Calculate total earnings from ledger
+      const ledgerResult = await db.select({
+        totalEarnings: sql<number>`COALESCE(SUM(${earningsLedger.amount}), 0)::int`,
+        totalTickets: sql<number>`COUNT(*)::int`,
+        lastEarningDate: sql<Date>`MAX(${earningsLedger.createdAt})`
+      })
+      .from(earningsLedger)
+      .where(and(
+        eq(earningsLedger.workerId, workerId),
+        eq(earningsLedger.status, 'confirmed')
+      ));
+
+      const totalEarnings = ledgerResult[0]?.totalEarnings || 0;
+      const totalTickets = ledgerResult[0]?.totalTickets || 0;
+      const lastEarningDate = ledgerResult[0]?.lastEarningDate;
+
+      // Upsert the summary
+      await db.execute(sql`
+        INSERT INTO worker_earnings_summary (worker_id, total_earnings, total_tickets, last_earning_date, last_updated)
+        VALUES (${workerId}, ${totalEarnings}, ${totalTickets}, ${lastEarningDate}, NOW())
+        ON CONFLICT (worker_id) 
+        DO UPDATE SET 
+          total_earnings = ${totalEarnings},
+          total_tickets = ${totalTickets},
+          last_earning_date = ${lastEarningDate},
+          last_updated = NOW()
+      `);
+    } catch (error: any) {
+      log(`Failed to update worker earnings summary: ${error.message}`, "error");
+      throw error;
+    }
+  }
+
+  async getWorkerEarningsSummary(workerId: string): Promise<WorkerEarningsSummary | undefined> {
+    try {
+      const [summary] = await db.select().from(workerEarningsSummary).where(eq(workerEarningsSummary.workerId, workerId));
+      return summary;
+    } catch (error: any) {
+      log(`Failed to get worker earnings summary: ${error.message}`, "error");
+      return undefined;
+    }
+  }
+
+  async getAllWorkerEarningsSummaries(): Promise<WorkerEarningsSummary[]> {
+    try {
+      return await db.select().from(workerEarningsSummary).orderBy(desc(workerEarningsSummary.totalEarnings));
+    } catch (error: any) {
+      log(`Failed to get all worker earnings summaries: ${error.message}`, "error");
+      return [];
+    }
+  }
+
+  async getWorkerEarningsHistory(workerId: string, limit: number = 50): Promise<EarningsLedger[]> {
+    try {
+      return await db.select()
+        .from(earningsLedger)
+        .where(eq(earningsLedger.workerId, workerId))
+        .orderBy(desc(earningsLedger.createdAt))
+        .limit(limit);
+    } catch (error: any) {
+      log(`Failed to get worker earnings history: ${error.message}`, "error");
+      return [];
+    }
+  }
+
+  // Get payment history for a specific ticket
+  async getTicketPaymentHistory(ticketId: number): Promise<EarningsLedger[]> {
+    try {
+      return await db.select()
+        .from(earningsLedger)
+        .where(and(
+          eq(earningsLedger.ticketId, ticketId),
+          eq(earningsLedger.type, 'ticket_payment')
+        ))
+        .orderBy(desc(earningsLedger.createdAt));
+    } catch (error: any) {
+      log(`Failed to get ticket payment history: ${error.message}`, "error");
+      return [];
+    }
+  }
+
+  // Get comprehensive payment statistics that are always preserved
+  async getPaymentStatistics(): Promise<{
+    totalPayments: number;
+    totalAmount: number;
+    workerStats: Array<{
+      workerId: string;
+      username: string | null;
+      totalEarnings: number;
+      totalTickets: number;
+      lastPaymentDate: Date | null;
+    }>;
+    categoryStats: Array<{
+      categoryId: number;
+      categoryName: string;
+      totalAmount: number;
+      totalTickets: number;
+    }>;
+  }> {
+    try {
+      log("Getting payment statistics from earnings ledger...", "info");
+      // Get total payment statistics from earnings ledger
+      const totalStats = await db.select({
+        totalPayments: sql<number>`COUNT(*)::int`,
+        totalAmount: sql<number>`COALESCE(SUM(${earningsLedger.amount}), 0)::int`
+      })
+      .from(earningsLedger)
+      .where(and(
+        eq(earningsLedger.type, 'ticket_payment'),
+        eq(earningsLedger.status, 'confirmed')
+      ));
+
+      // Get worker statistics with usernames
+      const workerStats = await db.select({
+        workerId: earningsLedger.workerId,
+        username: users.username,
+        totalEarnings: sql<number>`COALESCE(SUM(${earningsLedger.amount}), 0)::int`,
+        totalTickets: sql<number>`COUNT(*)::int`,
+        lastPaymentDate: sql<Date>`MAX(${earningsLedger.createdAt})`
+      })
+      .from(earningsLedger)
+      .leftJoin(users, eq(earningsLedger.workerId, users.discordId))
+      .where(and(
+        eq(earningsLedger.type, 'ticket_payment'),
+        eq(earningsLedger.status, 'confirmed')
+      ))
+      .groupBy(earningsLedger.workerId, users.username)
+      .orderBy(desc(sql`SUM(${earningsLedger.amount})`));
+
+      // Get category statistics
+      const categoryStats = await db.select({
+        categoryId: earningsLedger.categoryId,
+        totalAmount: sql<number>`COALESCE(SUM(${earningsLedger.amount}), 0)::int`,
+        totalTickets: sql<number>`COUNT(*)::int`
+      })
+      .from(earningsLedger)
+      .where(and(
+        eq(earningsLedger.type, 'ticket_payment'),
+        eq(earningsLedger.status, 'confirmed')
+      ))
+      .groupBy(earningsLedger.categoryId)
+      .orderBy(desc(sql`SUM(${earningsLedger.amount})`));
+
+      // Get category names for the stats
+      const categoryIds = categoryStats.map(stat => stat.categoryId).filter(id => id !== null && id !== undefined);
+      const categoriesData = categoryIds.length > 0 ? await db.select()
+        .from(categories)
+        .where(inArray(categories.id, categoryIds)) : [];
+
+      const categoryMap = new Map(categoriesData.map(cat => [cat.id, cat.name]));
+
+      const result = {
+        totalPayments: totalStats[0]?.totalPayments || 0,
+        totalAmount: totalStats[0]?.totalAmount || 0,
+        workerStats: workerStats.map(stat => ({
+          workerId: stat.workerId,
+          username: stat.username,
+          totalEarnings: stat.totalEarnings,
+          totalTickets: stat.totalTickets,
+          lastPaymentDate: stat.lastPaymentDate
+        })),
+        categoryStats: categoryStats.map(stat => ({
+          categoryId: stat.categoryId || 0,
+          categoryName: categoryMap.get(stat.categoryId || 0) || 'Unknown Category',
+          totalAmount: stat.totalAmount,
+          totalTickets: stat.totalTickets
+        }))
+      };
+
+      log(`Payment statistics result: ${result.totalPayments} payments, $${result.totalAmount} total`, "info");
+      return result;
+    } catch (error: any) {
+      log(`Failed to get payment statistics: ${error.message}`, "error");
+      return {
+        totalPayments: 0,
+        totalAmount: 0,
+        workerStats: [],
+        categoryStats: []
+      };
+    }
+  }
+
+  // Add methods for earnings adjustments
+  async addEarningsAdjustment(workerId: string, amount: number, reason: string = ""): Promise<void> {
+    await db.insert(earningsAdjustments).values({
+      workerId,
+      amount,
+      reason,
+      createdAt: new Date()
+    });
+  }
+
+  async editEarningsAdjustment(id: number, amount: number, reason: string = ""): Promise<void> {
+    await db.update(earningsAdjustments).set({ amount, reason }).where(sql`id = ${id}`);
+  }
+
+  async deleteEarningsAdjustment(id: number): Promise<void> {
+    await db.delete(earningsAdjustments).where(sql`id = ${id}`);
+  }
+
+  async clearAllStatistics(): Promise<void> {
+    // Clear all earnings-related data
+    await db.delete(earningsLedger);
+    await db.delete(earningsAdjustments);
+    await db.delete(workerEarningsSummary);
+    
+    // Reset all ticket amounts to 0 (but keep the tickets)
+    await db.update(tickets).set({ amount: 0 });
+    
+    log('All statistics cleared - earnings ledger, adjustments, worker summaries, and ticket amounts reset', 'warn');
+  }
+
+  async ensureDiscordWorkerExists(discordId: string): Promise<void> {
+    try {
+      // Check if this Discord user already exists
+      const existingUser = await db.select()
+        .from(users)
+        .where(eq(users.discordId, discordId))
+        .limit(1);
+
+      // Try to get the real Discord username
+      let realUsername = `Worker_${discordId.slice(-4)}`; // Fallback
+      
+      try {
+        // Import bridge dynamically to avoid circular dependencies
+        const { BridgeManager } = await import('./bot/bridge');
+        const bridge = BridgeManager.getInstance();
+        const discordBot = bridge.getDiscordBot();
+        
+        // Get the real Discord user
+        const discordUser = await discordBot.client.users.fetch(discordId);
+        if (discordUser) {
+          realUsername = discordUser.username;
+          log(`Fetched real Discord username for ${discordId}: ${realUsername}`, 'info');
+        }
+      } catch (discordError) {
+        log(`Could not fetch Discord username for ${discordId}, using fallback: ${discordError}`, 'warn');
+      }
+
+      if (existingUser.length === 0) {
+        // Create a new user entry for this Discord worker
+        await db.insert(users).values({
+          discordId: discordId,
+          username: realUsername,
+          telegramId: null, // Discord workers don't have Telegram IDs
+          isBanned: false,
+          createdAt: new Date()
+        });
+        log(`Created user entry for Discord worker: ${discordId} with username: ${realUsername}`, 'info');
+      } else {
+        // User exists, but update their username if it's still a fake one
+        const currentUsername = existingUser[0].username;
+        if (currentUsername.startsWith('Worker_') && realUsername !== `Worker_${discordId.slice(-4)}`) {
+          await db.update(users)
+            .set({ username: realUsername })
+            .where(eq(users.discordId, discordId));
+          log(`Updated existing worker ${discordId} username from "${currentUsername}" to "${realUsername}"`, 'info');
+        }
+      }
+    } catch (error) {
+      log(`Error ensuring Discord worker exists: ${error}`, 'error');
+      // Don't throw - this shouldn't break ticket claiming
+    }
+  }
+
+  async updateWorkerUsername(discordId: string, username: string): Promise<void> {
+    try {
+      // First ensure the worker exists
+      await this.ensureDiscordWorkerExists(discordId);
+      
+      // Update the username
+      await db.update(users)
+        .set({ username })
+        .where(eq(users.discordId, discordId));
+      
+      log(`Updated username for Discord worker ${discordId} to: ${username}`, 'info');
+    } catch (error) {
+      log(`Error updating worker username: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  async refreshAllWorkerUsernames(): Promise<number> {
+    try {
+      // Get all users with Discord IDs (workers)
+      const workers = await db.select({
+        id: users.id,
+        discordId: users.discordId,
+        currentUsername: users.username
+      })
+      .from(users)
+      .where(sql`${users.discordId} IS NOT NULL`);
+
+      log(`Found ${workers.length} workers to refresh usernames for`, 'info');
+
+      let updatedCount = 0;
+
+      // Import bridge dynamically to avoid circular dependencies
+      const { BridgeManager } = await import('./bot/bridge');
+      const bridge = BridgeManager.getInstance();
+      const discordBot = bridge.getDiscordBot();
+
+      for (const worker of workers) {
+        try {
+          // Get the real Discord username
+          const discordUser = await discordBot.client.users.fetch(worker.discordId);
+          if (discordUser && discordUser.username !== worker.currentUsername) {
+            // Update the username in database
+            await db.update(users)
+              .set({ username: discordUser.username })
+              .where(eq(users.id, worker.id));
+            
+            log(`Updated worker ${worker.discordId} username from "${worker.currentUsername}" to "${discordUser.username}"`, 'info');
+            updatedCount++;
+          }
+        } catch (discordError) {
+          log(`Could not fetch Discord username for worker ${worker.discordId}: ${discordError}`, 'warn');
+        }
+      }
+
+      log(`Successfully refreshed ${updatedCount} worker usernames`, 'info');
+      return updatedCount;
+    } catch (error) {
+      log(`Error refreshing worker usernames: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  // Admin role operations
+  async createAdminRole(role: InsertAdminRole): Promise<AdminRole> {
+    try {
+      const [newRole] = await db.insert(adminRoles).values(role).returning();
+      log(`Created admin role: ${newRole.roleName} (${newRole.discordRoleId})`, 'info');
+      return newRole;
+    } catch (error) {
+      log(`Error creating admin role: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  async getAdminRoles(): Promise<AdminRole[]> {
+    try {
+      return await db.select().from(adminRoles).orderBy(adminRoles.roleName);
+    } catch (error) {
+      log(`Error getting admin roles: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  async getAdminRole(id: number): Promise<AdminRole | undefined> {
+    try {
+      const [role] = await db.select().from(adminRoles).where(eq(adminRoles.id, id));
+      return role;
+    } catch (error) {
+      log(`Error getting admin role ${id}: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  async getAdminRoleByDiscordId(discordRoleId: string): Promise<AdminRole | undefined> {
+    try {
+      const [role] = await db.select().from(adminRoles).where(eq(adminRoles.discordRoleId, discordRoleId));
+      return role;
+    } catch (error) {
+      log(`Error getting admin role by Discord ID ${discordRoleId}: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  async updateAdminRole(id: number, role: Partial<InsertAdminRole>): Promise<AdminRole | undefined> {
+    try {
+      const [updatedRole] = await db.update(adminRoles)
+        .set(role)
+        .where(eq(adminRoles.id, id))
+        .returning();
+      log(`Updated admin role ${id}`, 'info');
+      return updatedRole;
+    } catch (error) {
+      log(`Error updating admin role ${id}: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  async deleteAdminRole(id: number): Promise<void> {
+    try {
+      await db.delete(adminRoles).where(eq(adminRoles.id, id));
+      log(`Deleted admin role ${id}`, 'info');
+    } catch (error) {
+      log(`Error deleting admin role ${id}: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  // Role-category permission operations
+  async setRoleCategoryPermissions(roleId: number, categoryIds: number[]): Promise<boolean> {
+    try {
+      // First, delete existing permissions for this role
+      await db.delete(roleCategoryPermissions).where(eq(roleCategoryPermissions.roleId, roleId));
+      
+      // Then, insert new permissions
+      if (categoryIds.length > 0) {
+        const permissions = categoryIds.map(categoryId => ({
+          roleId,
+          categoryId
+        }));
+        await db.insert(roleCategoryPermissions).values(permissions);
+      }
+      
+      log(`Set permissions for role ${roleId}: ${categoryIds.length} categories`, 'info');
+      return true;
+    } catch (error) {
+      log(`Error setting role category permissions: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  async getRoleCategoryPermissions(roleId: number): Promise<number[]> {
+    try {
+      const permissions = await db.select({ categoryId: roleCategoryPermissions.categoryId })
+        .from(roleCategoryPermissions)
+        .where(eq(roleCategoryPermissions.roleId, roleId));
+      return permissions.map(p => p.categoryId);
+    } catch (error) {
+      log(`Error getting role category permissions for role ${roleId}: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  async getCategoryRolePermissions(categoryId: number): Promise<number[]> {
+    try {
+      const permissions = await db.select({ roleId: roleCategoryPermissions.roleId })
+        .from(roleCategoryPermissions)
+        .where(eq(roleCategoryPermissions.categoryId, categoryId));
+      return permissions.map(p => p.roleId);
+    } catch (error) {
+      log(`Error getting category role permissions for category ${categoryId}: ${error}`, 'error');
+      throw error;
+    }
+  }
+
+  // Permission checking
+  async getUserAllowedCategories(discordUserId: string): Promise<number[]> {
+    try {
+      // Import bridge dynamically to avoid circular dependencies
+      const { BridgeManager } = await import('./bot/bridge');
+      const bridge = BridgeManager.getInstance();
+      const discordBot = bridge.getDiscordBot();
+      
+      // Get user's roles from Discord
+      const guild = discordBot.client.guilds.cache.first();
+      if (!guild) {
+        log('No guild found for permission checking', 'warn');
+        return [];
+      }
+      
+      const member = await guild.members.fetch(discordUserId).catch(() => null);
+      if (!member) {
+        log(`User ${discordUserId} not found in guild`, 'warn');
+        return [];
+      }
+      
+      // Get user's role IDs (including @everyone role)
+      const userRoleIds = member.roles.cache.map(role => role.id);
+      log(`User ${discordUserId} has roles: ${userRoleIds.join(', ')}`, 'info');
+      
+      // Get all admin roles from database
+      const adminRoles = await this.getAdminRoles();
+      log(`Found ${adminRoles.length} admin roles in database`, 'info');
+      
+      // Check which admin roles the user has
+      const userAdminRoles = adminRoles.filter(role => {
+        const hasRole = userRoleIds.includes(role.discordRoleId);
+        if (hasRole) {
+          log(`User ${discordUserId} has admin role: ${role.roleName} (${role.discordRoleId})`, 'info');
+        }
+        return hasRole;
+      });
+      
+      if (userAdminRoles.length === 0) {
+        log(`User ${discordUserId} has no admin roles`, 'info');
+        return []; // User has no admin roles
+      }
+      
+      // Check if user has full admin role
+      const hasFullAdmin = userAdminRoles.some(role => role.isFullAdmin);
+      if (hasFullAdmin) {
+        log(`User ${discordUserId} has full admin access`, 'info');
+        // Full admin can see all categories
+        const allCategories = await this.getCategories();
+        return allCategories.map(cat => cat.id);
+      }
+      
+      // Get allowed categories from role permissions
+      const allowedCategories = new Set<number>();
+      for (const role of userAdminRoles) {
+        const roleCategories = await this.getRoleCategoryPermissions(role.id);
+        log(`Role ${role.roleName} allows categories: ${roleCategories.join(', ')}`, 'info');
+        roleCategories.forEach(catId => allowedCategories.add(catId));
+      }
+      
+      const finalCategories = Array.from(allowedCategories);
+      log(`User ${discordUserId} final allowed categories: ${finalCategories.join(', ')}`, 'info');
+      return finalCategories;
+    } catch (error) {
+      log(`Error getting user allowed categories for ${discordUserId}: ${error}`, 'error');
+      return [];
+    }
+  }
+
+  async canUserAccessCategory(discordUserId: string, categoryId: number): Promise<boolean> {
+    try {
+      const allowedCategories = await this.getUserAllowedCategories(discordUserId);
+      return allowedCategories.includes(categoryId);
+    } catch (error) {
+      log(`Error checking category access for user ${discordUserId}, category ${categoryId}: ${error}`, 'error');
+      return false;
+    }
+  }
+
+  async isUserFullAdmin(discordUserId: string): Promise<boolean> {
+    try {
+      // Import bridge dynamically to avoid circular dependencies
+      const { BridgeManager } = await import('./bot/bridge');
+      const bridge = BridgeManager.getInstance();
+      const discordBot = bridge.getDiscordBot();
+      
+      // Get user's roles from Discord
+      const guild = discordBot.client.guilds.cache.first();
+      if (!guild) {
+        return false;
+      }
+      
+      const member = await guild.members.fetch(discordUserId).catch(() => null);
+      if (!member) {
+        return false;
+      }
+      
+      const userRoleIds = member.roles.cache.map(role => role.id);
+      
+      // Get all admin roles and check if user has full admin role
+      const adminRoles = await this.getAdminRoles();
+      return adminRoles.some(role => 
+        userRoleIds.includes(role.discordRoleId) && role.isFullAdmin
+      );
+    } catch (error) {
+      log(`Error checking full admin status for user ${discordUserId}: ${error}`, 'error');
+      return false;
     }
   }
 }

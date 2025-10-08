@@ -1,0 +1,28 @@
+[2025-04-08T17:13:44.550Z] === CHECKING BOT COMMANDS ===
+[2025-04-08T17:13:44.907Z] Current bot commands: [
+  {
+    "command": "start",
+    "description": "Start an order with us!"
+  },
+  {
+    "command": "close",
+    "description": "Close your ticket"
+  },
+  {
+    "command": "cancel",
+    "description": "Cancel your ticket"
+  }
+]
+[2025-04-08T17:13:44.907Z] Close command registered: true
+[2025-04-08T17:13:44.907Z] ✅ /close command is properly registered
+[2025-04-08T17:13:45.012Z] Bot info: {
+  "id": 8098069502,
+  "is_bot": true,
+  "first_name": "Fat Eats Bot",
+  "username": "FatEats_Bot",
+  "can_join_groups": true,
+  "can_read_all_group_messages": false,
+  "supports_inline_queries": false,
+  "can_connect_to_business": false,
+  "has_main_web_app": false
+}

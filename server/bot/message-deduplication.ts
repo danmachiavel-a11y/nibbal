@@ -10,8 +10,8 @@ export class MessageDeduplication {
   private readonly dedupCache = new Map<string, any>();
   private readonly MAX_CACHE_SIZE = 10000;
   // Match the allowed number in bridge.ts
-  private readonly MAX_DUPLICATES_ALLOWED = 5; // Allow 5 identical messages per conversation
-  private readonly DEDUP_WINDOW_MS = 180000; // 3 minutes
+  private readonly MAX_DUPLICATES_ALLOWED = 10; // Allow 10 identical messages per conversation
+  private readonly DEDUP_WINDOW_MS = 600000; // 10 minutes
   private readonly ENABLE_LOGGING = true;
   
   /**
@@ -60,7 +60,7 @@ export class MessageDeduplication {
     }
     
     if (cleanedCount > 0) {
-      log(`Cleaned ${cleanedCount} entries from message deduplication cache`);
+      log(`Cleaned ${cleanedCount} entries from message deduplication cache`, "info");
     }
   }
   
@@ -109,6 +109,7 @@ export class MessageDeduplication {
     // Check if we've exceeded the allowed duplicates
     if (currentState.counter >= this.MAX_DUPLICATES_ALLOWED) {
       log(`[DEDUP] Blocking duplicate: message "${content.substring(0, 20)}..." exceeded max allowed duplicates (${this.MAX_DUPLICATES_ALLOWED})`, "warn");
+      // FRIENDLY FEEDBACK: In production, you may want to notify the user here.
       return false;
     }
     

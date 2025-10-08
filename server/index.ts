@@ -1,11 +1,22 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { setupVite, serveStatic, log, logger } from "./vite";
 import { storage } from "./storage";
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { db } from './db';
 import { loadEnv } from "../utilities/loadEnv";
 import { initializeRecoverySystem } from "./recovery";
+import 'dotenv/config';
+import { SimpleDatabaseMonitor } from './simple-db-monitor';
+
+// WebSocket resilience is handled through Discord.js error handling
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection:', reason);
+});
 
 const app = express();
 app.use(express.json());
@@ -58,12 +69,12 @@ app.use((req, res, next) => {
       log("Setting longer timeouts for production environment", "info");
       // Increase default Node.js timeouts for production stability
       import('node:http').then(http => {
-        http.globalAgent.keepAlive = true;
-        http.globalAgent.keepAliveMsecs = 60000; // 1 minute
+        (http.globalAgent as any).keepAlive = true;
+        (http.globalAgent as any).keepAliveMsecs = 60000; // 1 minute
       });
       import('node:https').then(https => {
-        https.globalAgent.keepAlive = true;
-        https.globalAgent.keepAliveMsecs = 60000; // 1 minute
+        (https.globalAgent as any).keepAlive = true;
+        (https.globalAgent as any).keepAliveMsecs = 60000; // 1 minute
       });
     }
     
@@ -79,29 +90,32 @@ app.use((req, res, next) => {
     // First, run database migrations with retry logic for production environments
     log("Running database migrations...");
     
+    // TEMPORARILY DISABLED - Tables already exist from import
     // Add retry logic for migrations in production
-    const maxMigrationRetries = isProduction ? 5 : 1;
-    let migrationRetries = 0;
-    let migrationSuccess = false;
+    // const maxMigrationRetries = isProduction ? 5 : 1;
+    // let migrationRetries = 0;
+    // let migrationSuccess = false;
     
-    while (!migrationSuccess && migrationRetries < maxMigrationRetries) {
-      try {
-        await migrate(db, { migrationsFolder: './migrations' });
-        migrationSuccess = true;
-        log("Database migrations completed successfully");
-      } catch (migrationError) {
-        migrationRetries++;
-        const retryDelay = 2000 * migrationRetries; // Increasing delay
-        log(`Migration attempt ${migrationRetries}/${maxMigrationRetries} failed: ${migrationError}`, "error");
+    // while (!migrationSuccess && migrationRetries < maxMigrationRetries) {
+    //   try {
+    //     await migrate(db, { migrationsFolder: './migrations' });
+    //     migrationSuccess = true;
+    //     log("Database migrations completed successfully");
+    //   } catch (migrationError) {
+    //     migrationRetries++;
+    //     const retryDelay = 2000 * migrationRetries; // Increasing delay
+    //     log(`Migration attempt ${migrationRetries}/${maxMigrationRetries} failed: ${migrationError}`, "error");
         
-        if (migrationRetries < maxMigrationRetries) {
-          log(`Retrying migrations in ${retryDelay}ms...`, "warn");
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-        } else {
-          throw new Error(`Failed to run migrations after ${maxMigrationRetries} attempts: ${migrationError}`);
-        }
-      }
-    }
+    //     if (migrationRetries < maxMigrationRetries) {
+    //       log(`Retrying migrations in ${retryDelay}ms...`, "warn");
+    //       await new Promise(resolve => setTimeout(resolve, retryDelay));
+    //     } else {
+    //       throw new Error(`Failed to run migrations after ${maxMigrationRetries} attempts: ${migrationError}`);
+    //     }
+    //   }
+    // }
+    
+    log("Database migrations skipped - tables already exist from import");
     
     // Create HTTP server and register routes
     log("Setting up HTTP server...");
@@ -123,6 +137,12 @@ app.use((req, res, next) => {
       log("Static files configured for production serving", "info");
     }
 
+    // Get server configuration from environment variables
+    const serverPort = parseInt(process.env.PORT || process.env.SERVER_PORT || '5000');
+    const serverHost = process.env.HOST || process.env.SERVER_HOST || '0.0.0.0';
+    
+    log(`🔧 Server configuration: host=${serverHost}, port=${serverPort}`, "info");
+
     // Start the server with better error handling
     await new Promise<void>((resolve, reject) => {
       try {
@@ -130,7 +150,7 @@ app.use((req, res, next) => {
         server.on('error', (error: any) => {
           log(`Server startup error: ${error}`, "error");
           if (error.code === 'EADDRINUSE') {
-            log("Port 5000 is already in use. This is normal in some deployment environments.", "warn");
+            log(`Port ${serverPort} is already in use. This is normal in some deployment environments.`, "warn");
             // In some deployment environments, the port might already be assigned
             // We resolve anyway to continue with initialization
             resolve();
@@ -139,12 +159,16 @@ app.use((req, res, next) => {
           }
         });
         
-        server.listen({
-          port: 5000,
-          host: "0.0.0.0",
-          reusePort: true,
-        }, () => {
-          log(`Server listening on port 5000 (${deploymentMode} mode)`, "info");
+        server.listen(serverPort, serverHost, () => {
+          const serverAddress = server.address();
+          const host = typeof serverAddress === 'string' ? serverAddress : serverAddress?.address || serverHost;
+          const port = typeof serverAddress === 'object' ? serverAddress?.port : serverPort;
+          
+          log(`🚀 Server listening on ${host}:${port} (${deploymentMode} mode)`, "info");
+          log(`📱 Local access: http://localhost:${port}`, "info");
+          log(`🌐 Network access: http://[YOUR_SERVER_IP]:${port}`, "info");
+          log(`💡 To find your server IP, run: node utilities/scripts/get-server-ip.js`, "info");
+          
           resolve();
         });
       } catch (startupError) {
@@ -190,6 +214,31 @@ app.use((req, res, next) => {
 
   // Initialize the recovery system
   initializeRecoverySystem();
+
+  // Initialize database health monitor for 24/7 protection
+  const dbHealthMonitor = new SimpleDatabaseMonitor({
+    checkInterval: 5 * 60 * 1000, // Check every 5 minutes
+    autoFix: true, // Automatically fix issues
+    maxIssuesPerCheck: 10 // Fix max 10 issues per check
+  });
+
+  // Start the health monitor
+  dbHealthMonitor.start().catch(error => {
+    log(`[DB-HEALTH] Failed to start health monitor: ${error}`, 'error');
+  });
+
+  // Graceful shutdown
+  process.on('SIGINT', async () => {
+    log('Shutting down gracefully...', 'info');
+    await dbHealthMonitor.stop();
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', async () => {
+    log('Shutting down gracefully...', 'info');
+    await dbHealthMonitor.stop();
+    process.exit(0);
+  });
 })().catch(error => {
   log(`Fatal error during startup: ${error}`, "error");
   process.exit(1);

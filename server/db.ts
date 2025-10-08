@@ -1,13 +1,11 @@
-import { Pool, neonConfig } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-serverless';
-import ws from "ws";
+import pkg from 'pg';
+const { Pool } = pkg;
+import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from "@shared/schema";
 import { log } from "./vite";
 
-// Configure Neon to use WebSockets
-neonConfig.webSocketConstructor = ws;
-
-// Determine if we're in production deployment
+// Determine if we're using Neon or local PostgreSQL
+const isNeon = process.env.DATABASE_URL?.includes('neon.tech') || process.env.DATABASE_URL?.includes('neondatabase');
 const isProduction = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'prod';
 
 // Retry configuration - more aggressive for production
@@ -16,15 +14,7 @@ const DB_INITIAL_RETRY_DELAY_MS = isProduction ? 500 : 250; // Start with 500ms 
 const DB_MAX_RETRY_DELAY_MS = isProduction ? 30000 : 10000; // Max 30s between retries in production
 
 // Log deployment mode
-log(`Database retry configuration: mode=${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}, maxRetries=${DB_MAX_RETRIES}, maxDelay=${DB_MAX_RETRY_DELAY_MS}ms`, "info");
-
-// Configure secure connection (if supported by Neon version)
-try {
-  // @ts-ignore - Some versions of @neondatabase/serverless might not have this property
-  neonConfig.useSecureWebSocket = true;
-} catch (error) {
-  log("Warning: Couldn't set secure WebSocket option, might be using an older version of the Neon client", "warn");
-}
+log(`Database configuration: type=${isNeon ? 'NEON' : 'LOCAL_POSTGRES'}, mode=${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}, maxRetries=${DB_MAX_RETRIES}, maxDelay=${DB_MAX_RETRY_DELAY_MS}ms`, "info");
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -44,9 +34,9 @@ export const pool = new Pool({
   keepAliveInitialDelayMillis: isProduction ? 20000 : 30000, // Send keepalive probes sooner in production
   // Additional configuration for production
   allowExitOnIdle: !isProduction, // In production, don't exit when idle
-  ssl: { 
-    rejectUnauthorized: false // Allow self-signed certs in some environments
-  },
+  ssl: isNeon ? { 
+    rejectUnauthorized: false // Allow self-signed certs for Neon
+  } : false, // No SSL for local connections
 });
 
 // Track database health
@@ -86,7 +76,7 @@ pool.on('error', (err) => {
 });
 
 // Create Drizzle ORM instance with query logging for debug purposes
-export const db = drizzle({ client: pool, schema });
+export const db = drizzle(pool, { schema });
 
 /**
  * Execute a database query with automatic retries

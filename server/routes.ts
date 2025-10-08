@@ -7,6 +7,7 @@ import { log } from "./vite";
 import { pool } from "./db";
 import * as fs from 'fs';
 import * as path from 'path';
+import { sql } from 'drizzle-orm';
 
 let bridge: BridgeManager | null = null;
 
@@ -107,6 +108,33 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  // Network info endpoint for debugging
+  app.get("/api/network-info", (req, res) => {
+    try {
+      const serverAddress = req.connection.localAddress;
+      const clientAddress = req.connection.remoteAddress;
+      
+      res.json({
+        server: {
+          address: serverAddress,
+          port: req.connection.localPort,
+          host: req.get('host')
+        },
+        client: {
+          address: clientAddress,
+          userAgent: req.get('user-agent'),
+          forwarded: req.get('x-forwarded-for')
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   // Emergency ticket closing page
   app.get("/emergency-close", (req, res) => {
     res.sendFile("emergency-close.html", { root: "." });
@@ -133,10 +161,10 @@ export async function registerRoutes(app: Express) {
       bridgeInitAttempt++;
       
       try {
-        // Create new bridge instance if needed
+        // Get bridge instance using singleton pattern
         if (!bridge) {
-          log(`Creating new bridge instance (attempt ${bridgeInitAttempt})`, "info");
-          bridge = new BridgeManager();
+          log(`Getting bridge instance (attempt ${bridgeInitAttempt})`, "info");
+          bridge = BridgeManager.getInstance();
         }
         
         // Attempt to start bridge
@@ -1018,8 +1046,29 @@ export async function registerRoutes(app: Express) {
 
   // Category Routes
   app.get("/api/categories", async (req, res) => {
-    const categories = await storage.getCategories();
-    res.json(categories);
+    try {
+      const categories = await storage.getCategories();
+      
+      // Check if user has permission restrictions
+      const discordUserId = req.headers['x-discord-user-id'] as string;
+      if (discordUserId) {
+        const allowedCategories = await storage.getUserAllowedCategories(discordUserId);
+        const isFullAdmin = await storage.isUserFullAdmin(discordUserId);
+        
+        if (!isFullAdmin && allowedCategories.length > 0) {
+          // Filter categories based on user permissions
+          const filteredCategories = categories.filter(cat => 
+            allowedCategories.includes(cat.id)
+          );
+          return res.json(filteredCategories);
+        }
+      }
+      
+      res.json(categories);
+    } catch (error: any) {
+      log(`Error fetching categories: ${error}`, "error");
+      res.status(500).json({ message: "Failed to fetch categories" });
+    }
   });
 
   app.get("/api/categories/:id", async (req, res) => {
@@ -1046,6 +1095,7 @@ export async function registerRoutes(app: Express) {
       serviceSummary: z.string().optional(),
       serviceImageUrl: z.string().nullable().optional(),
       parentId: z.number().nullable().optional(),
+      submenuIds: z.array(z.number()).optional().default([]), // New field for multiple submenus
     });
 
     const result = schema.safeParse(req.body);
@@ -1057,6 +1107,12 @@ export async function registerRoutes(app: Express) {
     try {
       const category = await storage.createCategory(result.data);
       console.log("Category created:", category);
+      
+      // If submenuIds are provided, set up the many-to-many relationships
+      if (result.data.submenuIds && result.data.submenuIds.length > 0) {
+        await storage.setCategorySubmenus(category.id, result.data.submenuIds);
+        console.log("Category submenu relationships created:", result.data.submenuIds);
+      }
       
       // If both category ID and role ID are set, automatically set up permissions
       if (category.discordCategoryId && category.discordRoleId) {
@@ -1183,14 +1239,73 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  // New endpoints for managing category-submenu relationships
+  app.get("/api/categories/:id/submenus", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid category ID" });
+    }
+
+    try {
+      const submenuIds = await storage.getCategorySubmenus(id);
+      res.json(submenuIds);
+    } catch (error) {
+      console.error("Error getting category submenus:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/categories/:id/submenus", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid category ID" });
+    }
+
+    const schema = z.object({
+      submenuIds: z.array(z.number())
+    });
+
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).json({ message: "Invalid request body", errors: result.error.errors });
+    }
+
+    try {
+      const success = await storage.setCategorySubmenus(id, result.data.submenuIds);
+      if (success) {
+        res.json({ message: "Submenu relationships updated successfully" });
+      } else {
+        res.status(500).json({ message: "Failed to update submenu relationships" });
+      }
+    } catch (error) {
+      console.error("Error updating category submenus:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/submenus/:id/categories", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid submenu ID" });
+    }
+
+    try {
+      const categories = await storage.getSubmenuCategories(id);
+      res.json(categories);
+    } catch (error) {
+      console.error("Error getting submenu categories:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Ticket Routes
   // EMERGENCY ENDPOINT FOR CLOSING TICKETS DIRECTLY
   // This bypasses the bot entirely and works directly with the database
   app.post("/api/tickets/close-by-telegram-id/:telegramId", async (req, res) => {
     try {
       const telegramId = req.params.telegramId;
-      if (!telegramId) {
-        return res.status(400).json({ success: false, message: "Telegram ID is required" });
+      if (!telegramId || !/^[0-9]{5,20}$/.test(telegramId)) {
+        return res.status(400).json({ success: false, message: "Telegram ID is required and must be a string of digits" });
       }
       
       console.log(`[EMERGENCY CLOSE API] Attempting to close ticket for Telegram ID ${telegramId}`);
@@ -1200,7 +1315,7 @@ export async function registerRoutes(app: Express) {
       console.log(`Looking up user with Telegram ID ${telegramId}...`);
       const userResult = await pool.query(
         `SELECT * FROM users WHERE telegram_id = $1`,
-        [telegramId.toString()]
+        [telegramId]
       );
       
       if (userResult.rows.length === 0) {
@@ -1290,14 +1405,34 @@ export async function registerRoutes(app: Express) {
       // Check if we should verify Discord channel status (default to true)
       const verifyDiscordStatus = req.query.verifyDiscord !== 'false';
       
+      // Check user permissions
+      const discordUserId = req.headers['x-discord-user-id'] as string;
+      let allowedCategories: number[] = [];
+      let isFullAdmin = false;
+      
+      if (discordUserId) {
+        allowedCategories = await storage.getUserAllowedCategories(discordUserId);
+        isFullAdmin = await storage.isUserFullAdmin(discordUserId);
+      }
+      
       let allTickets = [];
       
       if (categoryId) {
+        // Check if user can access this specific category
+        if (discordUserId && !isFullAdmin && !allowedCategories.includes(categoryId)) {
+          return res.status(403).json({ message: "Access denied to this category" });
+        }
+        
         const tickets = await storage.getTicketsByCategory(categoryId);
         allTickets = tickets;
       } else {
-        // Get all categories and their tickets
-        const categories = await storage.getCategories();
+        // Get categories based on user permissions
+        let categories = await storage.getCategories();
+        
+        if (discordUserId && !isFullAdmin && allowedCategories.length > 0) {
+          // Filter categories based on user permissions
+          categories = categories.filter(cat => allowedCategories.includes(cat.id));
+        }
         
         for (const category of categories) {
           const tickets = await storage.getTicketsByCategory(category.id);
@@ -1777,11 +1912,9 @@ export async function registerRoutes(app: Express) {
   // This endpoint is a last resort to close tickets when the Telegram bot command fails
   app.post("/api/emergency/close-ticket-by-telegram", async (req, res) => {
     try {
-      // Require telegramId in the request body
       const { telegramId } = req.body;
-      
-      if (!telegramId) {
-        return res.status(400).json({ message: "telegramId is required" });
+      if (!telegramId || !/^[0-9]{5,20}$/.test(telegramId)) {
+        return res.status(400).json({ message: "telegramId is required and must be a string of digits" });
       }
       
       log(`EMERGENCY CLOSE API: Attempting to close ticket for Telegram ID ${telegramId}`, "info");
@@ -1974,6 +2107,354 @@ export async function registerRoutes(app: Express) {
         status: "error",
         message: `Error reading crash logs: ${error}`
       });
+    }
+  });
+
+  // Worker Earnings Adjustments API
+  app.get('/api/worker-earnings', async (req, res) => {
+    const stats = await storage.getAllWorkerStats();
+    res.json(stats);
+  });
+
+  app.get('/api/worker-earnings/adjustments/:workerId', async (req, res) => {
+    const { workerId } = req.params;
+    // Use the table name directly for Drizzle/SQL
+    const adjustments = await db.select().from('earnings_adjustments').where(sql`worker_id = ${workerId}`);
+    res.json(adjustments);
+  });
+
+  app.post('/api/worker-earnings/adjustments', async (req, res) => {
+    const { workerId, amount, reason } = req.body;
+    await storage.addEarningsAdjustment(workerId, amount, reason || '');
+    res.json({ success: true });
+  });
+
+  app.put('/api/worker-earnings/adjustments/:id', async (req, res) => {
+    const { id } = req.params;
+    const { amount, reason } = req.body;
+    await storage.editEarningsAdjustment(Number(id), amount, reason || '');
+    res.json({ success: true });
+  });
+
+  app.delete('/api/worker-earnings/adjustments/:id', async (req, res) => {
+    const { id } = req.params;
+    await storage.deleteEarningsAdjustment(Number(id));
+    res.json({ success: true });
+  });
+
+  // Persistent Earnings API endpoints
+  app.get('/api/earnings/summary/:workerId', async (req, res) => {
+    try {
+      const { workerId } = req.params;
+      const summary = await storage.getWorkerEarningsSummary(workerId);
+      res.json(summary || { totalEarnings: 0, totalTickets: 0 });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/earnings/summaries', async (req, res) => {
+    try {
+      const summaries = await storage.getAllWorkerEarningsSummaries();
+      res.json(summaries);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/earnings/history/:workerId', async (req, res) => {
+    try {
+      const { workerId } = req.params;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const history = await storage.getWorkerEarningsHistory(workerId, limit);
+      res.json(history);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/earnings/record-payment', async (req, res) => {
+    try {
+      const { ticketId, workerId, amount, categoryId, reason } = req.body;
+      
+      if (!ticketId || !workerId || !amount || !categoryId) {
+        return res.status(400).json({ error: 'Missing required fields' });
+      }
+
+      await storage.recordTicketPayment(ticketId, workerId, amount, categoryId, reason || 'Ticket payment');
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get comprehensive payment statistics that are always preserved
+  app.get('/api/earnings/statistics', async (req, res) => {
+    try {
+      const stats = await storage.getPaymentStatistics();
+      res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get payment history for a specific ticket
+  app.get('/api/earnings/ticket/:ticketId/history', async (req, res) => {
+    try {
+      const ticketId = parseInt(req.params.ticketId);
+      if (isNaN(ticketId)) {
+        return res.status(400).json({ error: 'Invalid ticket ID' });
+      }
+
+      const history = await storage.getTicketPaymentHistory(ticketId);
+      res.json(history);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Clear all statistics (DANGEROUS - use with caution)
+  app.post('/api/earnings/clear-all', async (req, res) => {
+    try {
+      await storage.clearAllStatistics();
+      res.json({ message: 'All statistics cleared successfully' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update worker username
+  app.put('/api/workers/:discordId/username', async (req, res) => {
+    try {
+      const { discordId } = req.params;
+      const { username } = req.body;
+      
+      if (!username) {
+        return res.status(400).json({ error: 'Username is required' });
+      }
+
+      await storage.updateWorkerUsername(discordId, username);
+      res.json({ message: 'Worker username updated successfully' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Refresh all worker usernames from Discord API
+  app.post('/api/workers/refresh-usernames', async (req, res) => {
+    try {
+      const updated = await storage.refreshAllWorkerUsernames();
+      res.json({ 
+        message: `Refreshed ${updated} worker usernames from Discord API`,
+        updatedCount: updated
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin Role Management Endpoints
+  const adminRoleSchema = z.object({
+    roleName: z.string().min(1, "Role name is required"),
+    discordRoleId: z.string().min(1, "Discord role ID is required"),
+    isFullAdmin: z.boolean().default(false),
+    createdBy: z.string().min(1, "Created by is required")
+  });
+
+  const rolePermissionSchema = z.object({
+    categoryIds: z.array(z.number()).default([])
+  });
+
+  // Get all admin roles
+  app.get('/api/admin-roles', async (req, res) => {
+    try {
+      const roles = await storage.getAdminRoles();
+      res.json(roles);
+    } catch (error: any) {
+      log(`Error fetching admin roles: ${error}`, "error");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Create new admin role
+  app.post('/api/admin-roles', async (req, res) => {
+    try {
+      const roleData = adminRoleSchema.parse(req.body);
+      const newRole = await storage.createAdminRole(roleData);
+      res.status(201).json(newRole);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Validation error", details: error.errors });
+      } else {
+        log(`Error creating admin role: ${error}`, "error");
+        res.status(500).json({ error: error.message });
+      }
+    }
+  });
+
+  // Get specific admin role
+  app.get('/api/admin-roles/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid role ID" });
+      }
+      
+      const role = await storage.getAdminRole(id);
+      if (!role) {
+        return res.status(404).json({ message: "Admin role not found" });
+      }
+      
+      res.json(role);
+    } catch (error: any) {
+      log(`Error fetching admin role: ${error}`, "error");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update admin role
+  app.patch('/api/admin-roles/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid role ID" });
+      }
+      
+      const updateData = adminRoleSchema.partial().parse(req.body);
+      const updatedRole = await storage.updateAdminRole(id, updateData);
+      
+      if (!updatedRole) {
+        return res.status(404).json({ message: "Admin role not found" });
+      }
+      
+      res.json(updatedRole);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Validation error", details: error.errors });
+      } else {
+        log(`Error updating admin role: ${error}`, "error");
+        res.status(500).json({ error: error.message });
+      }
+    }
+  });
+
+  // Delete admin role
+  app.delete('/api/admin-roles/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid role ID" });
+      }
+      
+      await storage.deleteAdminRole(id);
+      res.json({ message: "Admin role deleted successfully" });
+    } catch (error: any) {
+      log(`Error deleting admin role: ${error}`, "error");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get role category permissions
+  app.get('/api/admin-roles/:id/permissions', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid role ID" });
+      }
+      
+      const categoryIds = await storage.getRoleCategoryPermissions(id);
+      res.json({ roleId: id, categoryIds });
+    } catch (error: any) {
+      log(`Error fetching role permissions: ${error}`, "error");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Set role category permissions
+  app.put('/api/admin-roles/:id/permissions', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid role ID" });
+      }
+      
+      const { categoryIds } = rolePermissionSchema.parse(req.body);
+      await storage.setRoleCategoryPermissions(id, categoryIds);
+      res.json({ message: "Role permissions updated successfully" });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Validation error", details: error.errors });
+      } else {
+        log(`Error updating role permissions: ${error}`, "error");
+        res.status(500).json({ error: error.message });
+      }
+    }
+  });
+
+  // Get user's allowed categories (for permission checking)
+  app.get('/api/user-permissions/:discordUserId', async (req, res) => {
+    try {
+      const { discordUserId } = req.params;
+      const allowedCategories = await storage.getUserAllowedCategories(discordUserId);
+      const isFullAdmin = await storage.isUserFullAdmin(discordUserId);
+      
+      res.json({ 
+        discordUserId, 
+        allowedCategories, 
+        isFullAdmin 
+      });
+    } catch (error: any) {
+      log(`Error fetching user permissions: ${error}`, "error");
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Debug endpoint to check user's Discord roles
+  app.get('/api/debug/user-roles/:discordUserId', async (req, res) => {
+    try {
+      const { discordUserId } = req.params;
+      
+      // Import bridge to get Discord bot
+      const { BridgeManager } = await import('./bot/bridge');
+      const bridge = BridgeManager.getInstance();
+      const discordBot = bridge.getDiscordBot();
+      
+      const guild = discordBot.client.guilds.cache.first();
+      if (!guild) {
+        return res.status(404).json({ error: 'No guild found' });
+      }
+      
+      const member = await guild.members.fetch(discordUserId).catch(() => null);
+      if (!member) {
+        return res.status(404).json({ error: 'User not found in guild' });
+      }
+      
+      // Get user's roles
+      const userRoles = member.roles.cache.map(role => ({
+        id: role.id,
+        name: role.name,
+        color: role.color,
+        position: role.position
+      }));
+      
+      // Get admin roles from database
+      const adminRoles = await storage.getAdminRoles();
+      
+      // Check which admin roles user has
+      const userAdminRoles = adminRoles.filter(role => 
+        userRoles.some(userRole => userRole.id === role.discordRoleId)
+      );
+      
+      res.json({
+        discordUserId,
+        userRoles,
+        adminRoles,
+        userAdminRoles,
+        hasAdminAccess: userAdminRoles.length > 0
+      });
+    } catch (error: any) {
+      log(`Error debugging user roles: ${error}`, "error");
+      res.status(500).json({ error: error.message });
     }
   });
 

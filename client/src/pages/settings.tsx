@@ -287,6 +287,7 @@ function SettingsPage() {
       isSubmenu: false,
       name: "",
       parentId: null,
+      submenuIds: [], // New field for multiple submenus
       discordRoleId: "",
       discordCategoryId: "",
       transcriptCategoryId: "",
@@ -363,6 +364,7 @@ function SettingsPage() {
         name: data.name,
         isSubmenu: data.isSubmenu,
         parentId: data.parentId,
+        submenuIds: data.submenuIds || [], // Include submenu assignments
         discordRoleId: data.discordRoleId,
         discordCategoryId: data.discordCategoryId,
         transcriptCategoryId: data.transcriptCategoryId,
@@ -633,20 +635,23 @@ function SettingsPage() {
                         <>
                           <FormField
                             control={categoryForm.control}
-                            name="parentId"
+                            name="submenuIds"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Parent Menu</FormLabel>
+                                <FormLabel>Submenus</FormLabel>
                                 <FormDescription>
-                                  Choose which submenu this category belongs to
+                                  Choose which submenus this category belongs to (hold Ctrl/Cmd to select multiple)
                                 </FormDescription>
                                 <FormControl>
                                   <select
-                                    className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                    value={field.value || ""}
-                                    onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                                    multiple
+                                    className="flex h-24 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    value={field.value || []}
+                                    onChange={(e) => {
+                                      const selectedValues = Array.from(e.target.selectedOptions, option => parseInt(option.value));
+                                      field.onChange(selectedValues);
+                                    }}
                                   >
-                                    <option value="">Root (No Parent)</option>
                                     {categories
                                       ?.filter(cat => cat.isSubmenu)
                                       .map(submenu => (
@@ -654,6 +659,7 @@ function SettingsPage() {
                                       ))}
                                   </select>
                                 </FormControl>
+                                <p className="text-xs text-muted-foreground">You can select multiple submenus to make this service available in different categories</p>
                               </FormItem>
                             )}
                           />

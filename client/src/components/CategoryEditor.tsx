@@ -75,6 +75,7 @@ export function CategoryEditor({ category, categories }: { category: Category; c
       name: category.name,
       isSubmenu: category.isSubmenu,
       parentId: category.parentId,
+      submenuIds: [], // Will be loaded from API
       discordRoleId: category.discordRoleId || "",
       discordCategoryId: category.discordCategoryId || "",
       transcriptCategoryId: category.transcriptCategoryId || "",
@@ -89,17 +90,30 @@ export function CategoryEditor({ category, categories }: { category: Category; c
     }
   });
 
-  // Load Discord roles and categories
+  // Load Discord roles, categories, and current submenu assignments
   useEffect(() => {
-    const loadDiscordData = async () => {
+    const loadData = async () => {
       await Promise.all([
         refreshRolesHelper(form, toast),
         refreshCategoriesHelper(form, toast)
       ]);
+      
+      // Load current submenu assignments for this category
+      if (!category.isSubmenu) {
+        try {
+          const res = await apiRequest("GET", `/api/categories/${category.id}/submenus`);
+          if (res.ok) {
+            const submenuIds = await res.json();
+            form.setValue("submenuIds", submenuIds);
+          }
+        } catch (error) {
+          console.error("Error loading category submenus:", error);
+        }
+      }
     };
     
-    loadDiscordData();
-  }, []);
+    loadData();
+  }, [category.id, category.isSubmenu]);
 
   const onSubmit = async (data: any) => {
     try {
@@ -117,6 +131,7 @@ export function CategoryEditor({ category, categories }: { category: Category; c
         name: data.name,
         isSubmenu: data.isSubmenu,
         parentId: data.parentId,
+        submenuIds: data.submenuIds || [], // Include submenu assignments
         discordRoleId: data.discordRoleId || "",
         discordCategoryId: data.discordCategoryId || "",
         transcriptCategoryId: data.transcriptCategoryId || "",
@@ -192,17 +207,20 @@ export function CategoryEditor({ category, categories }: { category: Category; c
             <div className="md:col-span-1">
               <FormField
                 control={form.control}
-                name="parentId"
+                name="submenuIds"
                 render={({ field }) => (
                   <FormItem className="mb-0">
-                    <FormLabel>Parent Menu</FormLabel>
+                    <FormLabel>Submenus</FormLabel>
                     <FormControl>
                       <select
-                        className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                        value={field.value || ""}
-                        onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                        multiple
+                        className="flex h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        value={field.value || []}
+                        onChange={(e) => {
+                          const selectedValues = Array.from(e.target.selectedOptions, option => parseInt(option.value));
+                          field.onChange(selectedValues);
+                        }}
                       >
-                        <option value="">Root (No Parent)</option>
                         {categories
                           ?.filter(cat => cat.isSubmenu && cat.id !== category.id)
                           .map(submenu => (
@@ -210,6 +228,7 @@ export function CategoryEditor({ category, categories }: { category: Category; c
                           ))}
                       </select>
                     </FormControl>
+                    <p className="text-xs text-muted-foreground mt-1">Hold Ctrl/Cmd to select multiple submenus</p>
                   </FormItem>
                 )}
               />
